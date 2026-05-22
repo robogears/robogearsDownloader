@@ -54,7 +54,7 @@ function childEnv() {
 }
 
 function createWindow() {
-    mainWindow = new BrowserWindow({
+    const opts = {
         width: 980,
         height: 740,
         minWidth: 720,
@@ -68,7 +68,15 @@ function createWindow() {
             sandbox: false,
         },
         autoHideMenuBar: true,
-    });
+    };
+    // Dev-mode only: set the BrowserWindow icon so the taskbar/Dock shows our
+    // custom mark instead of the default Electron gem. In packaged builds the
+    // icon is already embedded into the .exe/.app via the build config, so
+    // there's no need (and `build/icon.png` isn't shipped into the asar).
+    if (!app.isPackaged) {
+        opts.icon = path.join(__dirname, 'build', 'icon.png');
+    }
+    mainWindow = new BrowserWindow(opts);
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
     // mainWindow.webContents.openDevTools({ mode: 'detach' });
 }

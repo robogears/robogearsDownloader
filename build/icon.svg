@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- macOS-style rounded background -->
+  <rect width="1024" height="1024" rx="180" ry="180" fill="#000000"/>
+
+  <!-- Vinyl record -->
+  <circle cx="512" cy="512" r="380" fill="#ffffff"/>
+
+  <!-- Subtle grooves -->
+  <circle cx="512" cy="512" r="350" fill="none" stroke="#000000" stroke-width="2" opacity="0.5"/>
+  <circle cx="512" cy="512" r="310" fill="none" stroke="#000000" stroke-width="2" opacity="0.5"/>
+  <circle cx="512" cy="512" r="270" fill="none" stroke="#000000" stroke-width="2" opacity="0.5"/>
+  <circle cx="512" cy="512" r="230" fill="none" stroke="#000000" stroke-width="2" opacity="0.5"/>
+
+  <!-- Label (center black disc) -->
+  <circle cx="512" cy="512" r="200" fill="#000000"/>
+
+  <!-- Download arrow on label -->
+  <g transform="translate(512, 512)">
+    <rect x="-30" y="-90" width="60" height="110" fill="#ffffff"/>
+    <polygon points="-90,20 90,20 0,130" fill="#ffffff"/>
+  </g>
+</svg>

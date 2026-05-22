@@ -1,11 +1,13 @@
-# What's new in v0.1.8
+# What's new in v0.1.9
 
-## Fixed "Unknown manifest type: application/vnd.tidal.bts"
-- TIDAL recently started returning a new `application/vnd.tidal.bts` manifest type for some tracks. The parser only knew about the older `application/vnd.tidal.bt` (no `s`) variant and threw on the new one, killing downloads for affected tracks on both Windows and macOS.
-- Same JSON shape inside — single direct URL — so the matcher now accepts any `application/vnd.tidal.*` mime type. Future-proofs against further variants too; if TIDAL ever changes the schema rather than just the suffix, you'll now get a clear error with the response prefix instead of a cryptic crash.
+## FLAC tracks now actually land as `.flac` on macOS
+- Lossless tracks were saving as `.m4a` (the AAC fallback) even when TIDAL was serving FLAC content. Cause: the codec detector only matched a literal lowercase `'flac'` in the manifest's codec field — but the newer `application/vnd.tidal.bts` manifests (introduced for some tracks recently) sometimes report the codec under a different label.
+- The detector now uses `audioQuality` from the playback response as the primary signal: `LOSSLESS` and `HI_RES_LOSSLESS` mean FLAC, period, regardless of what the manifest's codec field says. Codec/regex checks remain as fallbacks for older manifest formats.
+- Combined with the v0.1.8 BTS manifest fix, end-to-end FLAC downloads should now work properly on both platforms.
 
-## Updated handoff doc (`CLAUDE.md`)
-- Internal: refreshed with full v0.1.6 + v0.1.7 detail — the `cwd: __dirname` spawn fix, the `app.asar` → `app.asar.unpacked` binary-path rewrite, the self-installing updater architecture (state machine, relauncher `.cmd` script, why `PORTABLE_EXECUTABLE_FILE`), and new diagnostic + Don't entries.
+## New app icon
+- The default Electron gem is gone. Replaced with a custom monochrome mark: a vinyl record with subtle grooves and a download arrow on the label, on a macOS-style rounded black background. Matches the app's pure-black / stark-white theme.
+- macOS `.app` and Windows `.exe` both pick it up automatically — electron-builder generates the `.icns` for macOS and embeds the `.ico` into the Windows binary at build time.
 
 ---
 
@@ -23,4 +25,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.7...v0.1.8
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.8...v0.1.9

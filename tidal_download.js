@@ -326,11 +326,19 @@ async function downloadTrack(trackId, outDir, cred, flags, { albumPreFetched = n
     const raw = await getBestManifest(trackId, token, countryCode, flags.quality, flags.debug);
     const manifest = parseManifest(raw);
 
-    // Decide output format from the manifest's codec attribute.
-    // FLAC → .flac. AAC (mp4a.40.x) → .m4a (only with --allow-aac).
+    // Decide output format. Three signals, most → least authoritative:
+    //   1. raw.audioQuality — TIDAL's own label for the track tier. LOSSLESS /
+    //      HI_RES_LOSSLESS mean the content is FLAC. This is the ground truth
+    //      and beats whatever the manifest's codec field claims (TIDAL's BTS
+    //      manifests have been seen reporting non-`flac` codec strings even
+    //      when serving lossless content).
+    //   2. The manifest's `codec` field (case-insensitive).
+    //   3. A raw regex against the decoded manifest (catches DASH).
     const decodedManifest = Buffer.from(raw.manifest, 'base64').toString('utf8');
-    const isFlacOutput = (manifest.codec || '').includes('flac')
-        || /codecs="flac"/.test(decodedManifest);
+    const FLAC_QUALITY_TIERS = new Set(['LOSSLESS', 'HI_RES_LOSSLESS', 'HI_RES']);
+    const isFlacOutput = FLAC_QUALITY_TIERS.has(raw.audioQuality)
+        || (manifest.codec || '').toLowerCase().includes('flac')
+        || /codecs="flac"/i.test(decodedManifest);
 
     if (flags.debug) {
         console.log(`  [debug] manifest type: ${raw.manifestMimeType}`);
