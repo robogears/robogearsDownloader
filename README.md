@@ -4,7 +4,7 @@ A desktop app for downloading lossless FLAC tracks from TIDAL.
 
 Paste a TIDAL or Spotify link (track, album, or playlist), drop a screenshot of a tracklist, or just type a song name to search. Review what's about to be downloaded in a queue, then go. Auto-skips songs you already have, falls back to `.m4a` only when no lossless master exists.
 
-![App screenshot placeholder](docs/screenshot.png)
+
 
 ## Features
 
