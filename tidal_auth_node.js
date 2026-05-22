@@ -79,16 +79,29 @@ async function main() {
     const authJson = JSON.parse(authRes.body);
     const { verificationUriComplete, deviceCode, interval = 5 } = authJson;
 
+    // Marker line so electron-main can intercept and open via shell.openExternal
+    // (the most reliable cross-platform browser-open API available to us).
+    // Plain CLI usage falls through to the platform-specific fallback below.
+    console.log('__OPEN_BROWSER__:' + verificationUriComplete);
+
     console.log('\n=== TIDAL Login ===');
     console.log('Open this URL in your browser and log in:');
     console.log('\n  ' + verificationUriComplete + '\n');
 
-    // Try to open the browser automatically
-    try {
-        const { execSync } = require('child_process');
-        execSync(`start "" "${verificationUriComplete}"`, { stdio: 'ignore' });
-        console.log('(Browser should have opened automatically)');
-    } catch { }
+    // Fallback browser-open for CLI users. Skipped when spawned by electron-main
+    // (it sets TIDAL_AUTH_SUPPRESS_BROWSER=1 because it already opened the URL),
+    // so the user doesn't end up with two browser tabs.
+    if (!process.env.TIDAL_AUTH_SUPPRESS_BROWSER) {
+        try {
+            const { spawn } = require('child_process');
+            const opener =
+                process.platform === 'win32'  ? { cmd: 'cmd',      args: ['/c', 'start', '""', verificationUriComplete] }
+              : process.platform === 'darwin' ? { cmd: 'open',     args: [verificationUriComplete] }
+              :                                 { cmd: 'xdg-open', args: [verificationUriComplete] };
+            spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore' }).unref();
+            console.log('(Browser should have opened automatically)');
+        } catch { /* user can still copy the URL manually */ }
+    }
 
     console.log('Waiting for authorization...');
 

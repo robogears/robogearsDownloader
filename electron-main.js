@@ -146,16 +146,30 @@ ipcMain.handle('token:run-auth', () => {
             cwd: __dirname,
             detached: false,
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+            // Tell the child not to try opening the browser itself — we handle
+            // it here via shell.openExternal so it's cross-platform and reliable.
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TIDAL_AUTH_SUPPRESS_BROWSER: '1' },
         });
         let output = '';
+        let stdoutBuf = '';
+        // Buffer stdout line-by-line so we can sniff out the __OPEN_BROWSER__
+        // marker (and not echo that marker into the auth modal output).
         child.stdout.on('data', d => {
-            const s = d.toString();
-            output += s;
-            mainWindow.webContents.send('auth:output', s);
+            stdoutBuf += d.toString();
+            const lines = stdoutBuf.split(/\r?\n/);
+            stdoutBuf = lines.pop();
+            for (const line of lines) {
+                const m = line.match(/^__OPEN_BROWSER__:(.+)$/);
+                if (m) { shell.openExternal(m[1].trim()); continue; }
+                output += line + '\n';
+                mainWindow.webContents.send('auth:output', line + '\n');
+            }
         });
         child.stderr.on('data', d => mainWindow.webContents.send('auth:output', d.toString()));
-        child.on('close', code => resolve({ ok: code === 0, output }));
+        child.on('close', code => {
+            if (stdoutBuf) mainWindow.webContents.send('auth:output', stdoutBuf);
+            resolve({ ok: code === 0, output });
+        });
     });
 });
 
