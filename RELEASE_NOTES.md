@@ -1,42 +1,50 @@
 # What's new in v0.1.1
 
-- Fix CI release workflow — disable electron-builder's implicit publisher (was demanding `GH_TOKEN` on tag push and failing the mac build). Releases now flow through `softprops/action-gh-release` exclusively.
+First public release of **robogears Downloader** — a desktop app for downloading lossless FLAC tracks from TIDAL.
 
-This is the **first public binary release**. Features listed under v0.1.0 below describe what's in this build — v0.1.0 itself never shipped because the release workflow broke.
+## Inputs and the queue
+- Paste a TIDAL or Spotify URL (track / album / playlist), type a song name to search TIDAL, or drop a screenshot of a tracklist (OCR coming soon).
+- Review every match in a queue before downloading. Exact library duplicates are greyed out with a "+ Add" opt-in; similar-version matches (remixes, edits, live versions) are flagged with a yellow badge.
 
-# What's new in v0.1.0
+## Smart deduplication
+- Reads both filenames AND audio-tag metadata (title, artist, duration) from your music library folder so songs you already own aren't re-downloaded.
+- Auto-skips exact matches; warns on similar matches but still includes them by default.
 
-First public release. Highlights:
+## Quality policy
+- Always asks TIDAL for Hi-Res Lossless first; gracefully falls back to CD-quality FLAC; last-resort `.m4a` 320 kbps AAC only when no lossless master exists.
+- Cover art and full metadata embedded via bundled FFmpeg.
 
-- **Inputs**: paste a TIDAL or Spotify URL (track / album / playlist), type a song name to search, or drop a screenshot of a tracklist for OCR.
-- **Queue review** before downloading — exact library matches are greyed with a "+ Add" opt-in; similar matches are flagged with a yellow badge.
-- **Library deduplication** reads filename + ID3/Vorbis tags from your music folder so songs you already own aren't re-downloaded.
-- **Quality policy**: requests TIDAL's Hi-Res lossless, gracefully falls back to CD-quality FLAC, and last-resort .m4a 320 kbps when no lossless master exists. Cover art + full metadata embedded.
-- **Settings start blank on first launch** — pick your download folder and (optionally) your music library folder before downloading. "Reset config" button forgets both while keeping your TIDAL sign-in.
-- **Batch summary** distinguishes downloaded / skipped / failed / not-found so you can tell at a glance what happened.
-- **Skip messages** clarify whether a track was already in your downloads folder or your music library.
-- **Sound effects**: a chime on confirmed download, a lower warning honk on blocked actions (no folder, no auth, empty queue), and a clown horn easter egg.
-- **Screenshot OCR drop-zone is greyed with "Coming soon"** — feature-flagged off for this release; coming in a future build.
+## Blank-on-first-launch settings
+- Download folder and library folder both start empty. Pick them via Settings — no surprise default paths.
+- New **Reset config** button forgets your folder choices while keeping your TIDAL sign-in.
+- Library scan is skipped entirely when no library folder is configured (no phantom indexing).
 
----
+## Batch download clarity
+- Summary line now distinguishes **downloaded / skipped / failed / not-found** so you can see at a glance what actually happened.
+- Skip messages now explicitly say whether the duplicate was found in your **downloads folder** or your **music library**.
 
-## Install
+## Sound effects
+- Soft ascending chime when a download batch starts.
+- Lower warning honk when an action is blocked (no folder set, not signed in, empty queue).
+- And a clown horn easter egg somewhere in the UI.
 
-### Windows
-
-Download `robogears-downloader.exe`, double-click to run. Windows will show a blue "Windows protected your PC" SmartScreen dialog the first time — click **More info → Run anyway**. Normal for unsigned apps; the build is not malicious.
-
-The app stores its config at `%APPDATA%\Roaming\robogears Downloader\`. It doesn't install anything else; the .exe is fully portable.
-
-### macOS (Apple Silicon)
-
-Download `robogears-downloader-mac-arm64.zip`, unzip, drag `robogears Downloader.app` to `Applications`. On first launch, **right-click the app → Open** (don't double-click), then click **Open** on the Gatekeeper dialog. macOS doesn't trust the unsigned build until you authorise it once.
-
-The app stores its config at `~/Library/Application Support/robogears Downloader/`.
+## macOS support
+- Apple Silicon `.app` bundle now ships alongside the Windows portable `.exe`.
 
 ---
+
+# Install
+
+- **Windows**: download `robogears-downloader.exe`, double-click. Windows SmartScreen will warn the first time — click **More info → Run anyway**. Portable; runs from anywhere with no installer.
+- **macOS** (Apple Silicon): download `robogears-downloader-mac-arm64.zip`, unzip, drag `robogears Downloader.app` to `/Applications`. On first launch **right-click → Open** to bypass Gatekeeper (the app isn't code-signed).
+
+Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloader\` on Windows, `~/Library/Application Support/robogears Downloader/` on macOS).
 
 ## Requirements
 
-- A TIDAL subscription. The app uses TIDAL's official OAuth device flow — sign in once via the Settings panel; tokens are cached locally and auto-refresh.
+- A TIDAL subscription. The app uses TIDAL's official OAuth device-code flow — sign in once via Settings; tokens cache locally and auto-refresh.
 - Spotify playlist support uses the public embed page and is capped at **100 tracks** per playlist (Spotify-side limit).
+
+---
+
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.0...v0.1.1
