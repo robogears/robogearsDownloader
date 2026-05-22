@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld('api', {
     checkForUpdates:   ()    => ipcRenderer.invoke('update:check'),
     getAppVersion:     ()    => ipcRenderer.invoke('app:version'),
 
+    // Self-install (Windows portable only — falls back to opening the
+    // download URL externally on macOS / non-portable builds)
+    canSelfInstall:    ()    => ipcRenderer.invoke('update:can-self-install'),
+    downloadUpdate:    (url) => ipcRenderer.invoke('update:download', url),
+    applyUpdate:       ()    => ipcRenderer.invoke('update:apply'),
+    onUpdateDownloadProgress: (cb) => ipcRenderer.on('update:download-progress', (_e, p) => cb(p)),
+
     // Auth
     tokenExists:    ()    => ipcRenderer.invoke('token:exists'),
     runAuth:        ()    => ipcRenderer.invoke('token:run-auth'),

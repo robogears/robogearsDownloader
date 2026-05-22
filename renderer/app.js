@@ -207,7 +207,7 @@ clearActivityBtn.addEventListener('click', () => activityEl.innerHTML = '');
 let welcomeLineEl = null;
 let pendingUpdate = null;
 
-function insertUpdateNotice({ version, downloadUrl }) {
+async function insertUpdateNotice({ version, downloadUrl }) {
     if (!welcomeLineEl || !welcomeLineEl.parentNode) {
         pendingUpdate = { version, downloadUrl };
         return;
@@ -222,10 +222,53 @@ function insertUpdateNotice({ version, downloadUrl }) {
     const btn = document.createElement('button');
     btn.className = 'update-download-btn';
     btn.textContent = 'Download update';
-    btn.addEventListener('click', () => api.openExternal(downloadUrl));
     row.appendChild(label);
     row.appendChild(btn);
     welcomeLineEl.parentNode.insertBefore(row, welcomeLineEl.nextSibling);
+
+    // On Windows portable builds we can swap the .exe in place. Everywhere
+    // else (macOS, dev mode, non-portable) we just open the release page.
+    const selfInstall = await api.canSelfInstall().catch(() => false);
+    if (!selfInstall) {
+        btn.addEventListener('click', () => api.openExternal(downloadUrl));
+        return;
+    }
+
+    // State machine: idle → downloading (with %) → ready-to-restart → restarting
+    let state = 'idle';
+    btn.addEventListener('click', async () => {
+        if (state === 'idle') {
+            state = 'downloading';
+            btn.disabled = true;
+            btn.textContent = 'Starting…';
+            const r = await api.downloadUpdate(downloadUrl);
+            if (!r || !r.ok) {
+                state = 'idle';
+                btn.disabled = false;
+                btn.textContent = 'Download failed — retry';
+                return;
+            }
+            state = 'ready';
+            btn.disabled = false;
+            btn.classList.add('ready');
+            btn.textContent = 'Restart to apply';
+        } else if (state === 'ready') {
+            state = 'restarting';
+            btn.disabled = true;
+            btn.textContent = 'Restarting…';
+            api.applyUpdate();
+        }
+    });
+
+    api.onUpdateDownloadProgress(({ downloaded, total }) => {
+        if (state !== 'downloading') return;
+        if (total > 0) {
+            const pct = Math.floor((downloaded / total) * 100);
+            btn.textContent = `Downloading ${pct}%`;
+        } else {
+            btn.textContent = `Downloading ${(downloaded / 1024 / 1024).toFixed(1)} MB`;
+        }
+    });
 }
 
 api.onUpdateAvailable(insertUpdateNotice);

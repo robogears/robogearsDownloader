@@ -20,8 +20,18 @@ const path = require('path');
 const { spawn } = require('child_process');
 const lib = require('./tidal_lib');
 
+// ffmpeg-static returns a path inside `app.asar` in packaged builds, but the
+// binary actually lives in `app.asar.unpacked` (our asarUnpack config moves
+// it on disk). spawn() goes through the OS exec syscall — which treats the
+// asar archive as a file and fails with ENOTDIR when trying to traverse
+// into it. Rewriting `.asar` → `.asar.unpacked` makes the path point at
+// the real on-disk binary. In dev mode there's no `.asar` in the path so
+// the replace is a no-op.
 const _ffmpegStatic = (() => { try { return require('ffmpeg-static'); } catch { return null; } })();
-const ffmpegPath = (_ffmpegStatic && fs.existsSync(_ffmpegStatic)) ? _ffmpegStatic : 'ffmpeg';
+const _ffmpegUnpacked = _ffmpegStatic && _ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+const ffmpegPath = (_ffmpegUnpacked && fs.existsSync(_ffmpegUnpacked))
+    ? _ffmpegUnpacked
+    : (_ffmpegStatic && fs.existsSync(_ffmpegStatic) ? _ffmpegStatic : 'ffmpeg');
 
 const CONCURRENCY_DEFAULT = 8;
 const FLAC_QUALITIES = ['HI_RES_LOSSLESS', 'LOSSLESS'];

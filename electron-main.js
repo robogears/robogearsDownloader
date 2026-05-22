@@ -162,6 +162,110 @@ ipcMain.handle('shell:open-external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
 });
 
+// ─── Self-install (Windows portable only) ─────────────────────────────────────
+// process.env.PORTABLE_EXECUTABLE_FILE is set by electron-builder's portable
+// launcher to the absolute path of the .exe the user double-clicked (which
+// is what we need to replace — process.execPath inside the running app
+// points to a temp extracted copy of the Electron binary, not the file
+// the user actually has on disk).
+function canSelfInstall() {
+    return process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE;
+}
+ipcMain.handle('update:can-self-install', () => canSelfInstall());
+
+const os = require('os');
+function downloadToFile(url, destPath, onProgress) {
+    return new Promise((resolve, reject) => {
+        // Follow up to 5 redirects (GitHub release assets redirect to S3)
+        const fetch = (u, redirects = 0) => {
+            const req = https.request(u, { method: 'GET', headers: { 'User-Agent': `robogears-downloader/${app.getVersion()}` } }, (res) => {
+                if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects < 5) {
+                    res.resume();
+                    return fetch(res.headers.location, redirects + 1);
+                }
+                if (res.statusCode !== 200) {
+                    res.resume();
+                    return reject(new Error(`HTTP ${res.statusCode} for ${u}`));
+                }
+                const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
+                let downloaded = 0;
+                const out = fs.createWriteStream(destPath);
+                res.on('data', (chunk) => {
+                    downloaded += chunk.length;
+                    if (onProgress) onProgress(downloaded, total);
+                });
+                res.pipe(out);
+                out.on('finish', () => out.close(resolve));
+                out.on('error', reject);
+                res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(60_000, () => { req.destroy(new Error('Download timed out')); });
+            req.end();
+        };
+        fetch(url);
+    });
+}
+
+ipcMain.handle('update:download', async (_e, url) => {
+    if (!canSelfInstall()) return { ok: false, error: 'Self-install not supported on this build' };
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return { ok: false, error: 'Invalid URL' };
+    const destPath = path.join(os.tmpdir(), `robogears-downloader-${Date.now()}.exe`);
+    try {
+        await downloadToFile(url, destPath, (got, total) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('update:download-progress', { downloaded: got, total });
+            }
+        });
+        // Remember the path for the apply step
+        global._pendingUpdatePath = destPath;
+        return { ok: true, path: destPath };
+    } catch (e) {
+        try { fs.unlinkSync(destPath); } catch {}
+        return { ok: false, error: e.message };
+    }
+});
+
+ipcMain.handle('update:apply', () => {
+    if (!canSelfInstall()) return { ok: false, error: 'Self-install not supported on this build' };
+    const launcher = process.env.PORTABLE_EXECUTABLE_FILE;
+    const newExe = global._pendingUpdatePath;
+    if (!launcher || !newExe || !fs.existsSync(newExe)) {
+        return { ok: false, error: 'No downloaded update available' };
+    }
+    // Detached .cmd that polls until the locked .exe can be overwritten, then
+    // swaps it and relaunches. Self-deletes when done. Up to 30 retries (~30s).
+    const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.cmd`);
+    const script = [
+        '@echo off',
+        'setlocal',
+        `set "LAUNCHER=${launcher}"`,
+        `set "NEW=${newExe}"`,
+        'set /a count=0',
+        ':retry',
+        'move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1',
+        'if errorlevel 1 (',
+        '    timeout /t 1 /nobreak >NUL',
+        '    set /a count+=1',
+        '    if %count% lss 30 goto retry',
+        '    exit /b 1',
+        ')',
+        'start "" "%LAUNCHER%"',
+        'del "%~f0"',
+        '',
+    ].join('\r\n');
+    fs.writeFileSync(scriptPath, script);
+    const child = spawn('cmd.exe', ['/C', scriptPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+    });
+    child.unref();
+    // Give the spawn a beat to take hold before the parent dies
+    setTimeout(() => app.quit(), 200);
+    return { ok: true };
+});
+
 app.whenReady().then(async () => {
     // Prime the lib's library-check path from saved settings
     const s = loadSettings();

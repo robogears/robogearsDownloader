@@ -1,11 +1,12 @@
-# What's new in v0.1.6
+# What's new in v0.1.7
 
-## Downloads now work on macOS
-- Same class of bug as the v0.1.4 TIDAL sign-in fix: in a packaged build, the spawn that ran the download script used `cwd: __dirname`, which resolves to a virtual path inside `app.asar`. macOS's `posix_spawn` can't `chdir` into a virtual asar path before exec, so the child crashed with `Error: spawn … ENOENT` before any download work could happen.
-- Fixed in three places — the single-track download spawn and the bulk download spawn in the main process, plus the nested `tidal_download.js` spawn inside `bulk_runner.js`. Child processes now inherit the parent's real on-disk cwd. The scripts themselves only use absolute paths and `__dirname`-relative requires, so cwd never mattered functionally.
+## Self-installing updater
+- Clicking **Download update** in the activity log now actually downloads the new build (live percentage in the button) and changes to **Restart to apply** when done. Click that, and the app swaps the `.exe` with the freshly downloaded one and relaunches itself — no more browsing to GitHub and replacing the file by hand.
+- Active on Windows portable builds where we can find the launcher path via `PORTABLE_EXECUTABLE_FILE`. macOS keeps the existing flow (button opens the release page in your browser) until we invest in code-signing / notarization for proper auto-update.
 
-## Updated handoff doc (`CLAUDE.md`)
-- Internal: refreshed the project doc with everything that's landed since v0.1.0 — releases workflow, in-app updater, in-process auth, macOS ad-hoc signing, settings UI sections, sound effects, the spawn-cwd diagnostic pattern, and the new release-process rules (current-version-only notes, no auto-releases).
+## ffmpeg now actually runs in packaged builds
+- Every download was crashing in its final remux step with `Error: spawn … ENOTDIR` on packaged builds. Cause: `ffmpeg-static` returns a path inside `app.asar` (the archive that holds the app), but the binary actually lives next to it in `app.asar.unpacked` — the OS sees the asar as a file and refuses to traverse into it for the exec syscall. The path is now rewritten to point at the real on-disk copy.
+- Combined with the v0.1.6 download-spawn fix, this is the second half of getting macOS downloads working end-to-end.
 
 ---
 
@@ -23,4 +24,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.5...v0.1.6
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.6...v0.1.7
