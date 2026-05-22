@@ -18,7 +18,7 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 
 **Where it lives:** `Z:\robogearsDownloader\` (also published at https://github.com/robogears/robogearsDownloader)
 
-**Current version:** v0.1.5. Ships as a portable Windows `.exe` and a macOS arm64 `.app` zip. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push.
+**Current version:** v0.1.7. Ships as a portable Windows `.exe` and a macOS arm64 `.app` zip. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push. Auto-updates in-place on Windows portable; macOS users still re-download manually (waiting on code-signing/notarization to do the proper auto-update dance).
 
 ---
 
@@ -34,6 +34,7 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 | Library deduplication via metadata + filename (exact vs similar) | ✅ works |
 | Settings: download/library folders (blank on first launch), library refresh, Reset config, Updates section | ✅ works |
 | In-app updater (checks GitHub releases on launch + manual button in Settings) | ✅ works |
+| Self-installing updater on Windows portable: Download update → Restart to apply (no manual file replacement) | ✅ works (Windows portable only; macOS opens browser) |
 | Cross-platform CI (Windows .exe + macOS arm64 .zip) via `.github/workflows/release.yml` | ✅ works |
 | TIDAL OAuth runs in-process in Electron main (no spawned auth child) | ✅ works (`tidal_auth_node.authenticate()`) |
 | Auto-fallback FLAC → .m4a when no lossless master | ✅ works |
@@ -183,6 +184,10 @@ See `electron-preload.js` for the full list. Grouped:
 - `api.checkForUpdates()` — manual check, returns `{ status: 'available' | 'up-to-date' | 'error', ... }`
 - `api.getAppVersion()` — `app.getVersion()`, used by topbar + Settings
 - `api.onUpdateAvailable(cb)` — fires on launch (auto-check) AND on manual check when newer exists
+- `api.canSelfInstall()` — returns `true` only on Windows portable builds where we have `process.env.PORTABLE_EXECUTABLE_FILE`. macOS / dev / non-portable returns `false` and the renderer falls back to opening the release page externally.
+- `api.downloadUpdate(url)` — fetches the asset to a temp file, streaming progress events back. Returns `{ ok, path }` on success or `{ ok: false, error }`.
+- `api.applyUpdate()` — writes the relauncher `.cmd` script, spawns it detached, calls `app.quit()` 200 ms later. Returns immediately so the renderer can update its state.
+- `api.onUpdateDownloadProgress(cb)` — receives `{ downloaded, total }` byte counts during a self-install download. Renderer uses this to render `Downloading XX%` in the button.
 
 ---
 
@@ -362,7 +367,7 @@ Build config lives in the `build` field of `package.json`. Key choices baked in:
 - **`mac.target: zip`** — arm64 only for now (artifactName `robogears-downloader-mac-${arch}.${ext}`)
 - **`mac.identity: null`** — skip electron-builder's signing phase. The afterPack hook ad-hoc signs the .app instead (see below).
 - **`afterPack: ./build/after-pack.js`** — runs `codesign --force --deep --sign -` on the .app on darwin builds. Without ANY signature, arm64 Gatekeeper shows "damaged and can't be opened"; the ad-hoc signature satisfies the must-be-signed check.
-- **`asarUnpack: node_modules/ffmpeg-static/**/*`** — FFmpeg is a real binary; if it stays in the asar, `spawn()` can't invoke it and every download breaks.
+- **`asarUnpack: node_modules/ffmpeg-static/**/*`** — FFmpeg is a real binary; if it stays in the asar, `spawn()` can't invoke it and every download breaks. ⚠ This is necessary but *not sufficient*: see "Binary paths inside asar" below.
 - **`publish: null`** — disables electron-builder's auto-publish (we publish via `softprops/action-gh-release` in the workflow). Without this, a `v*` tag push would auto-trigger publishing and demand `GH_TOKEN`, failing the build.
 - **`directories.output: dist/`** (gitignored)
 
@@ -395,6 +400,22 @@ if (app.isPackaged) {
 ```
 
 `tidal_lib.js` and `tidal_auth_node.js` both honor `TIDAL_TOKEN_PATH` and fall back to `./token.json` if unset. Spawned download children inherit the env var via `childEnv()`. Dev mode uses `./token.json` next to source; packaged mode uses userData.
+
+### Binary paths inside asar
+
+`asarUnpack` puts ffmpeg's binary on disk at `app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg(.exe)`. But `require('ffmpeg-static')` still returns the path *inside* the asar (`app.asar/node_modules/...`). Electron's `fs` is patched to read from `app.asar` transparently, so `fs.existsSync(asarPath)` returns true — but `child_process.spawn()` goes through the raw OS exec syscall, which doesn't know about asar. On Linux/macOS, the OS treats `app.asar` (a file) as a non-directory in the middle of a path and `posix_spawn` fails with `ENOTDIR`. On Windows, `CreateProcess` rejects the path too, though we hadn't been hitting it because Windows dev mode masked the issue.
+
+**Fix (in `tidal_download.js`):**
+
+```js
+const _ffmpegStatic = require('ffmpeg-static');
+const _ffmpegUnpacked = _ffmpegStatic && _ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+const ffmpegPath = (_ffmpegUnpacked && fs.existsSync(_ffmpegUnpacked)) ? _ffmpegUnpacked : ...fallback...;
+```
+
+In dev mode there's no `app.asar` in the path so `.replace()` is a no-op. In packaged mode the path now points at the real on-disk copy. This is the canonical fix for any npm-packaged binary used inside an Electron app with asarUnpack.
+
+If any future feature spawns another binary from a package (sharp, a transcoder, etc.), it MUST do the same rewrite. Add it to the asarUnpack list AND rewrite the path before spawning.
 
 ### Code signing
 
@@ -438,6 +459,43 @@ Settings → Updates surfaces `app.getVersion()` and a manual **Check for update
 
 Note: GitHub's `/releases/latest` endpoint only returns the highest **published** release. Drafts and pre-releases are invisible to it. So users on the latest published version (e.g., v0.1.2) won't see notices for unpublished drafts (v0.1.3+) — only for releases the user has actually clicked Publish on.
 
+### Self-installer (Windows portable only)
+
+When the updater fires and the user clicks **Download update**, on a Windows portable build the renderer drives a small state machine:
+
+1. **idle** → `api.downloadUpdate(url)` → button label changes to `Starting…`
+2. **downloading** → `update:download-progress` events stream in, button shows `Downloading 42%`. Main process saves the .exe to `%TEMP%\robogears-downloader-<timestamp>.exe`. Path is remembered as `global._pendingUpdatePath`.
+3. **ready** → button changes to `Restart to apply` (white-filled style via `.ready` class)
+4. **restarting** → `api.applyUpdate()` → button shows `Restarting…`
+
+`applyUpdate()` writes a small relauncher `.cmd` to `%TEMP%\robogears-update-<timestamp>.cmd`:
+
+```cmd
+@echo off
+setlocal
+set "LAUNCHER=<process.env.PORTABLE_EXECUTABLE_FILE>"
+set "NEW=<global._pendingUpdatePath>"
+set /a count=0
+:retry
+move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1
+if errorlevel 1 (
+    timeout /t 1 /nobreak >NUL
+    set /a count+=1
+    if %count% lss 30 goto retry
+    exit /b 1
+)
+start "" "%LAUNCHER%"
+del "%~f0"
+```
+
+Spawned detached (`detached: true, stdio: 'ignore', windowsHide: true`) so it survives the parent process death. Polls `move /Y` for up to 30 seconds — the launcher .exe is locked while the Electron app is running; once the app quits (200 ms later, via `app.quit()`), the launcher releases the lock and the move succeeds. Then relaunches the new .exe and self-deletes.
+
+**Why `process.env.PORTABLE_EXECUTABLE_FILE` and not `process.execPath`:** in a portable build, `process.execPath` points at the temp-extracted copy of the Electron binary (inside `%LOCALAPPDATA%\Temp\<random>\`), not the file the user double-clicked. `PORTABLE_EXECUTABLE_FILE` is set by electron-builder's portable launcher specifically to give us the on-disk path of the user-visible .exe.
+
+**Why not electron-updater:** electron-updater wants a fixed install location (NSIS / DMG) and a `latest.yml` published alongside releases. The portable target doesn't fit its model. We also avoid the macOS code-signing/notarization requirements electron-updater would push us into.
+
+**macOS:** `api.canSelfInstall()` returns `false`; the renderer's update notice falls back to the old `api.openExternal(downloadUrl)` flow. Building a working in-place updater on macOS requires a Developer ID + notarized binary so Gatekeeper accepts the relaunched .app — not worth the $99/yr until we have more users.
+
 ---
 
 ## Settings UI sections (top to bottom)
@@ -476,13 +534,21 @@ Add more entries to the `FUNNY_LOADING` array if the user requests it. They shou
 
 ## Where the last session left off
 
-Latest released version is **v0.1.5**. Currently on `main` (uncommitted): the `cwd: __dirname` removals from the download spawn paths — held back per the "no auto-releases" rule, awaiting the user's next explicit ship instruction.
+Latest released version is **v0.1.7**. Nothing currently uncommitted. The Mac download bug chain (cwd: __dirname → ENOENT in v0.1.6; ffmpeg asar path → ENOTDIR in v0.1.7) should be fully closed; the user's verification on a freshly-downloaded v0.1.7 mac .app is the final confirmation.
 
 ### Just landed (latest first)
 
-**Spawn cwd fix (uncommitted, will be v0.1.6 when shipped):**
+**v0.1.7 — self-installing updater + ffmpeg path fix:**
+- **Self-installer on Windows portable.** Update notice in the activity log now has a multi-state button: `Download update` → `Downloading XX%` (live progress) → `Restart to apply` (white-filled style) → `Restarting…`. Main process downloads the new .exe to temp, then on apply writes a detached `.cmd` script that polls until the launcher file unlocks, swaps the .exe, relaunches it, and self-deletes. See "Self-installer" subsection under In-app updater.
+- **ffmpeg-static path rewrite** for `app.asar` → `app.asar.unpacked`. In packaged builds, `require('ffmpeg-static')` returns a path inside the asar archive — but `spawn()` goes through the raw OS exec, which doesn't honor Electron's asar fs patches. On macOS this surfaced as `Error: spawn ... ENOTDIR` because `posix_spawn` saw `app.asar` as a file and refused to traverse into it. Standard canonical fix. Was the second of two Mac-specific bugs blocking downloads end-to-end.
+- New IPC: `update:can-self-install`, `update:download`, `update:apply`, plus `update:download-progress` event for streaming bytes.
+- New preload bindings: `canSelfInstall`, `downloadUpdate`, `applyUpdate`, `onUpdateDownloadProgress`.
+- macOS / dev / non-portable falls back to the previous `shell.openExternal(downloadUrl)` path.
+
+**v0.1.6 — macOS download spawn ENOENT fix:**
 - Removed `cwd: __dirname` from both download spawns in `electron-main.js` and from the nested `tidal_download.js` spawn in `bulk_runner.js`. In packaged builds `__dirname` is an asar virtual path; `posix_spawn`/`CreateProcess` can't `chdir()` into it before `exec`. Default cwd (inherited from parent) is fine — none of the child scripts use cwd-relative paths.
-- Same class of bug as the auth ENOENT we fixed in v0.1.4. The user reported "download doesn't work on Mac" — this was the cause.
+- Same class of bug as the auth ENOENT we fixed in v0.1.4. The user reported "download doesn't work on Mac" — this was the first half of the cause (v0.1.7 fixed the second half).
+- Also refreshed `CLAUDE.md` end-to-end (this doc) with everything that had landed since v0.1.0.
 
 **v0.1.5 — Copy URL button, manual update check, topbar version:**
 - TIDAL sign-in modal now surfaces the verification URL in a read-only input with a **Copy** button. Main process sends `auth:url` IPC alongside `shell.openExternal` so the renderer can populate the field as soon as the URL is known. Clipboard write uses `navigator.clipboard.writeText` with `execCommand` fallback; button shows "Copied ✓" for 1.5s.
@@ -524,7 +590,9 @@ Latest released version is **v0.1.5**. Currently on `main` (uncommitted): the `c
 4. **No global cancel button** during a bulk download. `api.cancelDownload()` exists in the preload but no UI calls it.
 5. **No app icon.** Windows uses the default Electron icon for the .exe and taskbar; macOS uses the default Electron icon. Drop a 256×256 PNG/ICO in `build/icon.png` and add `"icon": "build/icon.png"` under `win`/`mac` in `package.json` to fix.
 6. **macOS x64 not built.** Only arm64 (Apple Silicon). Intel Mac users would need a separate target. Mostly fine in 2026.
-7. **softprops empty-body quirk on re-tagged releases**: if a tag is deleted + re-created and the previous release on GitHub still exists, softprops/action-gh-release sometimes preserves the old (empty) body instead of using the new `body_path`. Fix: `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` after CI completes. Always verify body length after a release.
+7. **No macOS self-install.** The Download update button on macOS still opens the browser; user re-downloads + replaces the .app manually. Proper auto-update would need a paid Apple Developer Program membership + notarization so Gatekeeper accepts the relaunched .app.
+8. **softprops empty-body quirk on re-tagged releases**: if a tag is deleted + re-created and the previous release on GitHub still exists, softprops/action-gh-release sometimes preserves the old (empty) body instead of using the new `body_path`. Fix: `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` after CI completes. Always verify body length after a release. (We've hit this on EVERY release so far including v0.1.7 — investigate if there's a softprops option that forces body overwrite.)
+9. **Node 20 deprecation warnings in CI.** GitHub deprecated Node 20 actions; will be forced to Node 24 on June 2, 2026 and Node 20 removed Sept 16, 2026. We use `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4`, `actions/download-artifact@v4`, `softprops/action-gh-release@v2` — all currently on Node 20. Bump to whatever Node 24-compatible versions exist before June 2026.
 
 ### Possible next steps (in rough priority order)
 
@@ -537,7 +605,10 @@ Latest released version is **v0.1.5**. Currently on `main` (uncommitted): the `c
 7. **History / "recent downloads" pane.**
 8. **App icon** — see "Known rough" #5.
 9. **macOS x64 build** — add `{ arch: ['x64', 'arm64'] }` to the mac target (or `universal`) once we have a use case.
-10. **Add screenshots to `docs/` and reference in README.**
+10. **macOS self-install** — requires Apple Developer Program ($99/yr) + notarization. Pre-condition: code-signing the .app and notarizing it via `notarytool` in CI. Then we can mirror the Windows self-installer pattern on macOS (download .dmg or new .app, replace, relaunch).
+11. **Bump GitHub Actions to Node-24-compatible versions** before June 2026 (see "Known rough" #9).
+12. **Investigate why softprops always leaves the body empty** — maybe a flag, maybe we need to add a `gh release edit` step inside the workflow itself as a safety net.
+13. **Add screenshots to `docs/` and reference in README.**
 
 ---
 
@@ -600,7 +671,8 @@ $gh = "C:\Users\william\AppData\Local\Microsoft\WinGet\Links\gh.exe"; & $gh auth
 
 ## Common diagnostic patterns
 
-- **`Error: spawn <path> ENOENT` in a packaged build** — the spawn is using `cwd: __dirname`, which in a packaged build is an asar virtual filesystem path the kernel can't `chdir()` into. Remove the cwd (default-inherited cwd is real) or set it to `path.dirname(app.getPath('exe'))`. We've hit this for auth (fixed by going in-process) and downloads (fixed by dropping cwd).
+- **`Error: spawn <path> ENOENT` in a packaged build** — the spawn is using `cwd: __dirname`, which in a packaged build is an asar virtual filesystem path the kernel can't `chdir()` into. Remove the cwd (default-inherited cwd is real) or set it to `path.dirname(app.getPath('exe'))`. We've hit this for auth (fixed by going in-process in v0.1.4) and downloads (fixed by dropping cwd in v0.1.6).
+- **`Error: spawn <binary> ENOTDIR` in a packaged build** — the binary path points *inside* `app.asar`. Electron's fs patches make `existsSync` return true, but `spawn`/`exec` go through the raw OS syscall which sees the asar archive as a file and refuses to traverse into it. Fix: rewrite the path with `.replace('app.asar', 'app.asar.unpacked')`. Only works if the binary's package is in `asarUnpack`. We hit this with `ffmpeg-static` in v0.1.7 — only manifested on macOS but the Windows path was bugged the same way.
 - **"Cannot read properties of undefined (reading 'X')"** — usually a Spotify/TIDAL API response had an unexpected shape. Check for defensive `?.` and `|| []` guards.
 - **"Resolving link…" stuck forever** — resolver threw and the error didn't propagate. Add try/catch around the resolver call in `electron-main.js#resolve:input`.
 - **"0 tracks from link"** — resolver returned an empty array. Spotify playlists >100 tracks hit the embed limit. For TIDAL: playlist UUID typo or region-locked.
@@ -630,6 +702,9 @@ $gh = "C:\Users\william\AppData\Local\Microsoft\WinGet\Links\gh.exe"; & $gh auth
 - Don't remove `publish: null` from `package.json#build`. Without it, tag pushes auto-trigger electron-builder's publisher and fail demanding `GH_TOKEN`.
 - Don't remove the afterPack hook (`build/after-pack.js`). Without ad-hoc signing on macOS arm64, Gatekeeper blocks the .app as "damaged".
 - Don't reintroduce `cwd: __dirname` in any `spawn()` or `child_process.exec()` call. In packaged builds it resolves to an asar virtual path; the OS can't `chdir()` into it; `posix_spawn`/`CreateProcess` fails with ENOENT before exec. Default (inherited) cwd is fine.
+- Don't spawn a binary using a path returned by an npm package without rewriting `app.asar` → `app.asar.unpacked`. ffmpeg-static is the obvious one — `tidal_download.js` does this rewrite — but the same rule applies to any future binary dependency (sharp, ytdl-binaries, etc.). Add it to the asarUnpack list AND rewrite the path string before passing to spawn.
+- Don't enable the self-installer (`canSelfInstall()` returning true) on macOS or Linux without first investing in code-signing/notarization. The relauncher script we use is Windows-specific (`cmd.exe`, `move /Y`, `start ""`), and on macOS Gatekeeper would block a relaunched ad-hoc-signed .app from running unattended.
+- Don't break the relauncher script logic in `electron-main.js#update:apply`. The 30-retry polling loop is the critical bit — it waits out the launcher's file lock. Tweak the timeout if needed; don't drop the retry.
 - Don't change `draft: true` to `false` in `.github/workflows/release.yml`. The user wants every release to land as a draft for manual review + publish.
 - Don't force-move a published tag. Unpublished drafts can be re-done; published releases are immutable. Bump to a new version instead.
 - Don't auto-release. See the `feedback-no-auto-releases` memory entry — make code changes only; wait for an explicit ship instruction.

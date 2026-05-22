@@ -1,12 +1,11 @@
-# What's new in v0.1.7
+# What's new in v0.1.8
 
-## Self-installing updater
-- Clicking **Download update** in the activity log now actually downloads the new build (live percentage in the button) and changes to **Restart to apply** when done. Click that, and the app swaps the `.exe` with the freshly downloaded one and relaunches itself — no more browsing to GitHub and replacing the file by hand.
-- Active on Windows portable builds where we can find the launcher path via `PORTABLE_EXECUTABLE_FILE`. macOS keeps the existing flow (button opens the release page in your browser) until we invest in code-signing / notarization for proper auto-update.
+## Fixed "Unknown manifest type: application/vnd.tidal.bts"
+- TIDAL recently started returning a new `application/vnd.tidal.bts` manifest type for some tracks. The parser only knew about the older `application/vnd.tidal.bt` (no `s`) variant and threw on the new one, killing downloads for affected tracks on both Windows and macOS.
+- Same JSON shape inside — single direct URL — so the matcher now accepts any `application/vnd.tidal.*` mime type. Future-proofs against further variants too; if TIDAL ever changes the schema rather than just the suffix, you'll now get a clear error with the response prefix instead of a cryptic crash.
 
-## ffmpeg now actually runs in packaged builds
-- Every download was crashing in its final remux step with `Error: spawn … ENOTDIR` on packaged builds. Cause: `ffmpeg-static` returns a path inside `app.asar` (the archive that holds the app), but the binary actually lives next to it in `app.asar.unpacked` — the OS sees the asar as a file and refuses to traverse into it for the exec syscall. The path is now rewritten to point at the real on-disk copy.
-- Combined with the v0.1.6 download-spawn fix, this is the second half of getting macOS downloads working end-to-end.
+## Updated handoff doc (`CLAUDE.md`)
+- Internal: refreshed with full v0.1.6 + v0.1.7 detail — the `cwd: __dirname` spawn fix, the `app.asar` → `app.asar.unpacked` binary-path rewrite, the self-installing updater architecture (state machine, relauncher `.cmd` script, why `PORTABLE_EXECUTABLE_FILE`), and new diagnostic + Don't entries.
 
 ---
 
@@ -24,4 +23,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.6...v0.1.7
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.7...v0.1.8

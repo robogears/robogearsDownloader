@@ -109,10 +109,19 @@ function parseManifest(playback) {
     if (!manifest) throw new Error('No manifest in playback response');
     const decoded = Buffer.from(manifest, 'base64').toString('utf8');
 
-    if (manifestMimeType === 'application/vnd.tidal.bt') {
+    // TIDAL ships BT-family manifests with a JSON blob containing a single
+    // direct URL. The original was `application/vnd.tidal.bt`; they later
+    // started returning `application/vnd.tidal.bts`. Same shape inside, so
+    // accept anything in the family — if a future variant ships with a
+    // different schema, the JSON.parse / urls[0] access will throw and we'll
+    // see a useful error.
+    if (manifestMimeType && manifestMimeType.startsWith('application/vnd.tidal.')) {
         const json = JSON.parse(decoded);
         if (json.encryptionType && json.encryptionType !== 'NONE') {
             throw new Error(`Track is DRM-encrypted (${json.encryptionType})`);
+        }
+        if (!json.urls || !json.urls.length) {
+            throw new Error(`BT-family manifest (${manifestMimeType}) had no urls field: ${decoded.slice(0, 200)}`);
         }
         return { type: 'direct', mimeType: json.mimeType, url: json.urls[0], codec: json.codecs, raw: decoded };
     }
