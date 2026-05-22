@@ -6,7 +6,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const TOKEN_FILE = path.join(__dirname, 'token.json');
+const TOKEN_FILE = process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json');
 
 const AUTH_CLIENT_ID     = Buffer.from('ZlgySnhkbW50WldLMGl4VA==',     'base64').toString('latin1');
 const AUTH_CLIENT_SECRET = Buffer.from('MU5tNUFmREFqeHJnSkZKYktOV0xlQXlLR1ZHbUlOdVhQUExIVlhBdnhBZz0=', 'base64').toString('latin1');

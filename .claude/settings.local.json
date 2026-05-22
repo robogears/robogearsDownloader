@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"downloadFolder\\\\|libraryFolder\\\\|download-folder\\\\|library-folder\\\\|Z:\\\\\\\\\\\\\\\\Downloads\\\\|Z:\\\\\\\\\\\\\\\\Dropbox\" renderer/app.js renderer/index.html)"
+    ]
+  }
+}

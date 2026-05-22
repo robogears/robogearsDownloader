@@ -1,11 +1,14 @@
 {
   "name": "robogears-downloader",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Desktop app for downloading lossless FLAC tracks from TIDAL via TIDAL/Spotify URLs, search, or screenshot OCR.",
   "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
-    "auth": "node tidal_auth_node.js"
+    "auth": "node tidal_auth_node.js",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:portable": "electron-builder --win portable"
   },
   "type": "commonjs",
   "repository": {
@@ -18,6 +21,45 @@
     "music-metadata": "^7.14.0"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.robogears.downloader",
+    "productName": "robogears Downloader",
+    "copyright": "Copyright © 2026 robogears",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "electron-preload.js",
+      "tidal_lib.js",
+      "tidal_download.js",
+      "tidal_auth_node.js",
+      "tidal_search.js",
+      "tidal_check_quality.js",
+      "bulk_runner.js",
+      "renderer/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!**/*.md",
+      "!.gitignore",
+      "!start_app.bat",
+      "!**/{.DS_Store,Thumbs.db,desktop.ini}",
+      "!**/{.git,.github,.vscode,.idea}",
+      "!**/{*.log,*.tmp,token.json}"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*"
+    ],
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "portable": {
+      "artifactName": "robogears-downloader.exe"
+    }
   }
 }

@@ -3,6 +3,15 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+
+// In a packaged build, the source folder is read-only (inside an asar archive),
+// so we route token.json + settings to the user-writable userData dir. The
+// env var is also propagated to spawned children via `childEnv()` so they
+// read/write the same file.
+if (app.isPackaged) {
+    process.env.TIDAL_TOKEN_PATH = path.join(app.getPath('userData'), 'token.json');
+}
+
 const lib = require('./tidal_lib');
 
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
@@ -44,7 +53,7 @@ function createWindow() {
         minWidth: 720,
         minHeight: 540,
         backgroundColor: '#0a0a0a',
-        title: 'TIDAL Downloader',
+        title: 'robogears Downloader',
         webPreferences: {
             preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,
@@ -109,7 +118,10 @@ ipcMain.handle('library:rescan', async () => {
 
 // ─── IPC: token check (so the UI knows if auth is needed) ─────────────────────
 
-ipcMain.handle('token:exists', () => fs.existsSync(path.join(__dirname, 'token.json')));
+ipcMain.handle('token:exists', () => {
+    const tokenPath = process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json');
+    return fs.existsSync(tokenPath);
+});
 ipcMain.handle('token:run-auth', () => {
     return new Promise((resolve) => {
         const child = spawn(process.execPath, [path.join(__dirname, 'tidal_auth_node.js')], {

@@ -7,7 +7,10 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const TOKEN_FILE = path.join(__dirname, 'token.json');
+// Token path: in dev (running from source) defaults to ./token.json. In a
+// packaged Electron app the source dir is read-only (inside an asar), so
+// electron-main sets TIDAL_TOKEN_PATH env var to point at userData instead.
+const TOKEN_FILE = process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json');
 const USER_AGENT = 'okhttp/5.3.2';
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_RETRIES = 3;
