@@ -1,0 +1,59 @@
+# ─── Secrets / credentials (MUST NOT BE COMMITTED) ─────────────
+token.json
+spotify-credentials.json
+spotify-token.json
+.env
+.env.*
+!.env.example
+
+# ─── Node / npm ────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Electron build output ─────────────────────────────────────
+dist/
+build/
+out/
+.cache/
+
+# ─── Downloaded audio (in case anyone runs from inside the repo) ────
+*.flac
+*.m4a
+*.mp3
+*.wav
+*.aac
+*.ogg
+*.opus
+*.alac
+*.tmp.*
+*.cover.jpg
+
+# ─── Diagnostic / log files ────────────────────────────────────
+*.log
+debug_*.js
+last_playlist_run.log
+
+# ─── Python leftovers from the upstream hifi-api repo (unused here) ─
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ─── OS / editor cruft ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
