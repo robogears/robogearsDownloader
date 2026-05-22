@@ -11,6 +11,7 @@
         <div class="brand">
             <span class="logo-dot"></span>
             <span class="brand-name">robogears Downloader</span>
+            <span class="brand-version" id="brand-version"></span>
         </div>
         <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -119,6 +120,15 @@
                     <p class="hint">Required once per device. Opens a browser tab where you log in to TIDAL and click <em>Allow</em>.</p>
                 </div>
 
+                <div class="updates-section">
+                    <label class="label">Updates</label>
+                    <div class="auth-row">
+                        <span id="update-status" class="auth-status">Current version: …</span>
+                        <button id="check-updates-btn" class="secondary-btn">Check for updates</button>
+                    </div>
+                    <p class="hint">Checks GitHub for a newer release. If one's found, a download notice appears in the activity log.</p>
+                </div>
+
                 <div class="reset-section">
                     <button id="reset-config-btn" class="text-btn">Reset config</button>
                     <p class="hint">Forgets your download and library folder choices. TIDAL sign-in is kept.</p>
@@ -139,6 +149,10 @@
             </div>
             <div class="modal-body">
                 <p class="modal-hint">A browser tab should open automatically. Log in and click <em>Allow</em>.</p>
+                <div class="auth-url-row" id="auth-url-row" hidden>
+                    <input id="auth-url-input" type="text" readonly>
+                    <button id="auth-url-copy" class="secondary-btn">Copy</button>
+                </div>
                 <pre id="auth-output" class="terminal"></pre>
             </div>
         </div>

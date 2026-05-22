@@ -1,8 +1,13 @@
-# What's new in v0.1.4
+# What's new in v0.1.5
 
-## TIDAL sign-in fixed in packaged builds
-- Clicking **Sign in to TIDAL** in the packaged `.exe` (and `.app`) used to fail with `Error: spawn ... ENOENT`. The auth flow was running as a spawned child process with the working directory pointing inside `app.asar`'s virtual filesystem, which the OS can't chdir into — so `CreateProcess` blew up before the child even started.
-- The auth flow now runs in-process in the main Electron process: no spawn, no child, no asar weirdness. Status messages still stream into the auth modal exactly like before, and `shell.openExternal()` opens the TIDAL login URL in your default browser.
+## Copy button on the TIDAL sign-in URL
+- The auth modal now displays the TIDAL verification URL in a read-only input with a **Copy** button right next to it. If the auto-launched browser doesn't open (or you want to authorize on a different device), one click puts the URL on your clipboard. Button briefly shows **Copied ✓** for feedback.
+
+## Manual "Check for updates" button in Settings
+- New **Updates** section in Settings, sitting between TIDAL account and Reset config. Shows your current installed version and a one-click **Check for updates** button. Result reflects in the button itself: *Checking…* → *vX.Y.Z available!* / *Up to date ✓* / *Check failed* (auto-reverts after 2.5 s). When an update is available, the activity-log notice still appears via the existing on-launch flow.
+
+## Version in the topbar
+- The current version number now sits right next to **robogears Downloader** in the topbar (small, bold, muted). At-a-glance confirmation of what you're running without opening Settings.
 
 ---
 
@@ -20,4 +25,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.3...v0.1.4
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.4...v0.1.5

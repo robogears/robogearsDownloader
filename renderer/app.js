@@ -23,6 +23,11 @@ const resetConfigBtn = $('#reset-config-btn');
 const authBtn = $('#auth-btn');
 const authStatus = $('#auth-status');
 const authOutput = $('#auth-output');
+const checkUpdatesBtn = $('#check-updates-btn');
+const updateStatusEl = $('#update-status');
+const authUrlRow = $('#auth-url-row');
+const authUrlInput = $('#auth-url-input');
+const authUrlCopy = $('#auth-url-copy');
 const queueSection = $('#queue-section');
 const queueList = $('#queue-list');
 const queueCount = $('#queue-count');
@@ -508,6 +513,32 @@ resetConfigBtn.addEventListener('click', async () => {
     appendLine('⚙ Config reset. Pick a download folder in Settings to continue.');
 });
 
+checkUpdatesBtn.addEventListener('click', async () => {
+    checkUpdatesBtn.disabled = true;
+    const originalText = 'Check for updates';
+    checkUpdatesBtn.textContent = 'Checking…';
+    let revertText = originalText;
+    try {
+        const r = await api.checkForUpdates();
+        if (r.status === 'available') {
+            checkUpdatesBtn.textContent = `${r.version} available!`;
+            // The launch-time listener (insertUpdateNotice) will also fire from
+            // the IPC event the main process sends, so the activity log notice
+            // appears too — no duplicate handling needed here.
+        } else if (r.status === 'up-to-date') {
+            checkUpdatesBtn.textContent = 'Up to date ✓';
+        } else {
+            checkUpdatesBtn.textContent = 'Check failed';
+        }
+    } catch {
+        checkUpdatesBtn.textContent = 'Check failed';
+    }
+    setTimeout(() => {
+        checkUpdatesBtn.disabled = false;
+        checkUpdatesBtn.textContent = revertText;
+    }, 2500);
+});
+
 async function refreshLibraryStatus() {
     try {
         libraryStatusEl.textContent = 'Scanning…';
@@ -542,6 +573,9 @@ async function refreshAuthStatus() {
 
 authBtn.addEventListener('click', async () => {
     authOutput.textContent = '';
+    authUrlInput.value = '';
+    authUrlRow.hidden = true;
+    authUrlCopy.textContent = 'Copy';
     openModal('auth-modal');
     const r = await api.runAuth();
     if (r.ok) {
@@ -555,6 +589,25 @@ authBtn.addEventListener('click', async () => {
 api.onAuthOutput(line => {
     authOutput.textContent += line;
     authOutput.scrollTop = authOutput.scrollHeight;
+});
+
+api.onAuthUrl(url => {
+    authUrlInput.value = url;
+    authUrlRow.hidden = false;
+});
+
+authUrlCopy.addEventListener('click', async () => {
+    if (!authUrlInput.value) return;
+    try {
+        await navigator.clipboard.writeText(authUrlInput.value);
+    } catch {
+        // Fallback for older browsers / contexts without clipboard API
+        authUrlInput.select();
+        try { document.execCommand('copy'); } catch {}
+        authUrlInput.blur();
+    }
+    authUrlCopy.textContent = 'Copied ✓';
+    setTimeout(() => { authUrlCopy.textContent = 'Copy'; }, 1500);
 });
 
 // ─── Screenshot OCR → queue ──────────────────────────────────────────────────
@@ -706,6 +759,14 @@ function extractTracksFromOCR(text) {
     folderInput.value = settings.downloadFolder || '';
     libraryInput.value = settings.libraryFolder || '';
     await refreshAuthStatus();
+
+    // Show current app version in the topbar and in Settings → Updates
+    api.getAppVersion().then(v => {
+        const versionLabel = `v${v}`;
+        const brandVersionEl = $('#brand-version');
+        if (brandVersionEl) brandVersionEl.textContent = versionLabel;
+        updateStatusEl.textContent = `Current version: ${versionLabel}`;
+    }).catch(() => {});
 
     if (!(await api.tokenExists())) {
         welcomeLineEl = appendLine('👋 Welcome! Click the ⚙ icon to sign in to TIDAL.');

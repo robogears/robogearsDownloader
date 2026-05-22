@@ -113,13 +113,18 @@ function fetchLatestRelease() {
     });
 }
 
-async function checkForUpdatesAndNotify() {
+// Returns one of:
+//   { status: 'available', version, downloadUrl, releaseUrl }
+//   { status: 'up-to-date', version }
+//   { status: 'error', message }
+async function getUpdateStatus() {
     const release = await fetchLatestRelease();
-    if (!release || !release.tag_name) return;
-    if (!isNewerVersion(release.tag_name, app.getVersion())) return;
-
-    // Pick the asset matching the current platform; fall back to the release
-    // page URL so the user can grab whatever they need.
+    if (!release || !release.tag_name) {
+        return { status: 'error', message: 'Could not reach GitHub' };
+    }
+    if (!isNewerVersion(release.tag_name, app.getVersion())) {
+        return { status: 'up-to-date', version: app.getVersion() };
+    }
     const wantedSubstr = process.platform === 'darwin' ? 'mac-arm64.zip'
                        : process.platform === 'win32'  ? '.exe'
                        : null;
@@ -128,15 +133,30 @@ async function checkForUpdatesAndNotify() {
         const asset = (release.assets || []).find(a => a.name && a.name.includes(wantedSubstr));
         if (asset && asset.browser_download_url) downloadUrl = asset.browser_download_url;
     }
+    return { status: 'available', version: release.tag_name, downloadUrl, releaseUrl: release.html_url };
+}
 
-    if (mainWindow) {
+function notifyIfAvailable(result) {
+    if (result.status === 'available' && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update:available', {
-            version: release.tag_name,
-            downloadUrl,
-            releaseUrl: release.html_url,
+            version: result.version,
+            downloadUrl: result.downloadUrl,
+            releaseUrl: result.releaseUrl,
         });
     }
 }
+
+async function checkForUpdatesAndNotify() {
+    notifyIfAvailable(await getUpdateStatus());
+}
+
+ipcMain.handle('update:check', async () => {
+    const result = await getUpdateStatus();
+    notifyIfAvailable(result);
+    return result;
+});
+
+ipcMain.handle('app:version', () => app.getVersion());
 
 ipcMain.handle('shell:open-external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
@@ -229,7 +249,12 @@ ipcMain.handle('token:run-auth', async () => {
     try {
         await authenticate({
             onLog: send,
-            onVerificationUrl: (url) => shell.openExternal(url),
+            onVerificationUrl: (url) => {
+                shell.openExternal(url);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('auth:url', url);
+                }
+            },
             suppressBrowser: true,
         });
         return { ok: true };

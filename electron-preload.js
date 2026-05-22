@@ -10,13 +10,16 @@ contextBridge.exposeInMainWorld('api', {
     openFolder:     (p)   => ipcRenderer.invoke('open-folder', p),
     openExternal:   (url) => ipcRenderer.invoke('shell:open-external', url),
 
-    // Update check (fires from main on app launch if a newer release exists)
-    onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, payload) => cb(payload)),
+    // Update check (auto on launch + manual via Settings)
+    onUpdateAvailable: (cb)  => ipcRenderer.on('update:available', (_e, payload) => cb(payload)),
+    checkForUpdates:   ()    => ipcRenderer.invoke('update:check'),
+    getAppVersion:     ()    => ipcRenderer.invoke('app:version'),
 
     // Auth
     tokenExists:    ()    => ipcRenderer.invoke('token:exists'),
     runAuth:        ()    => ipcRenderer.invoke('token:run-auth'),
     onAuthOutput:   (cb)  => ipcRenderer.on('auth:output', (_e, l) => cb(l)),
+    onAuthUrl:      (cb)  => ipcRenderer.on('auth:url', (_e, url) => cb(url)),
 
     // Download
     startDownload:  (p)   => ipcRenderer.invoke('download:start', p),
