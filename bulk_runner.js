@@ -33,8 +33,12 @@ function scoreMatch(item, wantTitle, wantArtist) {
 function runDownload(trackId, outDir) {
     return new Promise((resolve) => {
         const args = [path.join(__dirname, 'tidal_download.js'), String(trackId), outDir, '--skip-library-check'];
+        // No cwd — in a packaged Electron build, __dirname is inside the asar
+        // virtual filesystem and posix_spawn/CreateProcess can't chdir into
+        // it, so spawning blows up with ENOENT on macOS. Inheriting the
+        // parent's cwd is fine; tidal_download.js uses __dirname and absolute
+        // paths only.
         const p = spawn(process.execPath, args, {
-            cwd: __dirname,
             stdio: 'inherit',
             env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', FORCE_COLOR: '0' },
         });

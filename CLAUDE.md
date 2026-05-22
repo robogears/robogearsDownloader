@@ -8,17 +8,17 @@ You've just inherited a personal music-downloader app. **Read this entire file b
 
 A desktop app that downloads lossless FLAC tracks from TIDAL, driven by:
 
-- A user's TIDAL subscription (OAuth via device-code flow)
-- Inputs: paste a TIDAL URL, paste a Spotify URL (track / album / playlist), type a song name to search, or drop a screenshot of a tracklist
-- Tesseract.js OCR for screenshots
+- A user's TIDAL subscription (OAuth via device-code flow, runs in-process in Electron main)
+- Inputs: paste a TIDAL URL, paste a Spotify URL (track / album / playlist), or type a song name to search (screenshot-OCR drop-zone exists but is currently feature-gated off via `OCR_FEATURE_ENABLED = false` in `renderer/app.js` — greyed with a "Coming soon" badge)
 - A "queue" UI where the user reviews tracks before downloading
 - A read-only **music library folder** that the app scans (reads ID3/Vorbis/iTunes tags via `music-metadata`) to avoid re-downloading songs the user already has
+- An in-app updater that quietly checks GitHub releases on launch and surfaces a download notice in the activity log
 
 Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. All audio handling done via `ffmpeg-static` (bundled FFmpeg).
 
 **Where it lives:** `Z:\robogearsDownloader\` (also published at https://github.com/robogears/robogearsDownloader)
 
-**Current version:** v0.1.0 — packaged as a single portable `.exe` (~90 MB) via `electron-builder`. See "Packaging / distribution" section below.
+**Current version:** v0.1.5. Ships as a portable Windows `.exe` and a macOS arm64 `.app` zip. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push.
 
 ---
 
@@ -29,17 +29,22 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 | TIDAL URL → track/album/playlist resolve + download | ✅ works |
 | Spotify URL (track / album / playlist) → public embed page → match each on TIDAL → download | ✅ works (**playlists capped at 100 tracks** — Spotify's embed limit) |
 | Free-text search → modal of TIDAL results → pick → add to queue | ✅ works |
-| Screenshot of tracklist → OCR → match each on TIDAL → add to queue | ✅ works (Tesseract.js, CDN-loaded) |
+| Screenshot of tracklist → OCR → match each on TIDAL → add to queue | ⚠ feature-gated OFF (greyed drop-zone with "Coming soon" badge — flip `OCR_FEATURE_ENABLED` in `renderer/app.js` to re-enable) |
 | Queue UI with per-item remove, "+ Add" button on exact-library-matches, "Download all" | ✅ works |
 | Library deduplication via metadata + filename (exact vs similar) | ✅ works |
-| Settings: download folder, library folder, library refresh | ✅ works |
+| Settings: download/library folders (blank on first launch), library refresh, Reset config, Updates section | ✅ works |
+| In-app updater (checks GitHub releases on launch + manual button in Settings) | ✅ works |
+| Cross-platform CI (Windows .exe + macOS arm64 .zip) via `.github/workflows/release.yml` | ✅ works |
+| TIDAL OAuth runs in-process in Electron main (no spawned auth child) | ✅ works (`tidal_auth_node.authenticate()`) |
 | Auto-fallback FLAC → .m4a when no lossless master | ✅ works |
 | Cover art embedded via piped FFmpeg stdin | ✅ works (no temp file) |
 | Parallel segment downloads (8 concurrent) | ✅ works |
 | Retry on 429/5xx with exponential backoff | ✅ works |
 | Library scan reads audio tags (title, artist, duration) via `music-metadata` | ✅ works |
 | Funny rotating loading text during search/resolve | ✅ works |
-| Packaged as a single portable Windows .exe via electron-builder | ✅ works (`npm run build:win`) |
+| Sound effects (download chime, blocked-action warning honk, "Coming soon" clown horn easter egg) | ✅ works (Web Audio, no asset shipping) |
+| Batch summary distinguishes downloaded / skipped / failed / not-found | ✅ works |
+| Skip messages clarify "in downloads folder" vs "in music library" | ✅ works |
 
 ---
 
@@ -85,16 +90,18 @@ Never write a temp `.cover.jpg`. `fetchCover()` returns a Buffer; `remuxToFlac()
 ```
 Z:\robogearsDownloader\
 ├── electron-main.js          ← Electron main process (Node). All IPC handlers,
-│                              child-process spawn, BrowserWindow lifecycle,
-│                              library scan kickoff at boot.
+│                              download child-process spawns, in-process TIDAL
+│                              auth, GitHub release update check, BrowserWindow
+│                              lifecycle, library scan kickoff at boot.
 ├── electron-preload.js       ← Sandboxed bridge. Exposes a curated `api` object
 │                              to the renderer via `contextBridge`.
 ├── renderer/
-│   ├── index.html            ← Single-page UI. Modals: settings, search results,
-│   │                              auth-progress, loading overlay.
+│   ├── index.html            ← Single-page UI. Modals: settings (folders +
+│   │                              TIDAL + Updates + Reset), search results,
+│   │                              auth-progress (with URL + Copy), loading.
 │   ├── styles.css            ← Monochrome (pure black, stark white) theme.
-│   └── app.js                ← Renderer logic: queue, modals, OCR (Tesseract.js
-│                              via CDN), funny loading text, IPC calls.
+│   └── app.js                ← Renderer logic: queue, modals, sound effects,
+│                              funny loading text, IPC calls, update notice.
 ├── tidal_lib.js              ← The brain. Shared between Electron main AND CLI
 │                              scripts. Token mgmt, HTTP w/ retry+timeout, TIDAL
 │                              API wrappers, Spotify embed scraping,
@@ -102,45 +109,80 @@ Z:\robogearsDownloader\
 ├── tidal_download.js         ← CLI: download one URL or numeric track ID.
 │                              Spawned by Electron main as a child process per
 │                              track during bulk runs. Also usable standalone.
-├── tidal_auth_node.js        ← One-time TIDAL OAuth device-code flow. Writes
-│                              token.json. Invoked by main on "Sign in to TIDAL".
+├── tidal_auth_node.js        ← TIDAL OAuth device-code flow. Exports
+│                              `authenticate({onLog, onVerificationUrl, ...})`
+│                              for in-process use from electron-main. CLI mode
+│                              still works via `require.main === module`.
 ├── tidal_search.js           ← CLI: search TIDAL by free text. Standalone tool.
 ├── tidal_check_quality.js    ← CLI: probe what quality tiers TIDAL has for a
 │                              track ID. Diagnostic.
-├── bulk_runner.js            ← CLI: takes a tracklist JSON (with TIDAL IDs or
-│                              {title,artist} pairs), spawns tidal_download.js
+├── bulk_runner.js            ← Takes a tracklist JSON, spawns tidal_download.js
 │                              per track. Used by the GUI's "Download all".
+├── build/
+│   └── after-pack.js         ← electron-builder afterPack hook. Ad-hoc signs
+│                              the macOS .app (codesign --sign -) so Apple
+│                              Silicon Gatekeeper doesn't show "damaged".
+├── .github/
+│   └── workflows/
+│       └── release.yml       ← CI: triggers on `v*` tag push. Builds .exe on
+│                              windows-latest, mac arm64 .zip on macos-latest,
+│                              attaches both to a draft GitHub release.
+├── RELEASE_NOTES.md          ← Body of the current draft release. Overwritten
+│                              on each version bump — current version only.
+│                              Consumed by softprops/action-gh-release via
+│                              `body_path` in release.yml.
 ├── token.json                ← TIDAL OAuth tokens (access + refresh + expires_at
-│                              + countryCode). Gitignored.
-├── package.json              ← Node deps (ffmpeg-static, music-metadata, electron)
+│                              + countryCode). Gitignored. Lives at
+│                              %APPDATA%\Roaming\robogears Downloader\ in both
+│                              dev and packaged builds (via app.setName).
+├── package.json              ← Deps, build config (electron-builder), CI scripts.
 ├── start_app.bat             ← Convenience launcher: `npm start`
 ├── README.md                 ← Public, user-facing readme (GitHub front page)
 ├── ONBOARDING.md             ← Older docs for the CLI workflow. Still mostly
-│                              accurate for CLI usage. The GUI superseded most
-│                              of it.
+│                              accurate for CLI usage. The GUI superseded most.
 └── CLAUDE.md                 ← This file.
 ```
 
 ### Process model
 
-- **Electron main** (`electron-main.js`): owns the BrowserWindow, all IPC, the library scanner (cache lives here). Imports `tidal_lib.js` directly.
+- **Electron main** (`electron-main.js`): owns the BrowserWindow, all IPC, the library scanner cache, the TIDAL auth flow (in-process via `require('./tidal_auth_node').authenticate(...)`), and the GitHub-release update check. Imports `tidal_lib.js` directly.
 - **Renderer** (`renderer/`): UI only. Talks to main via `window.api.*` (preload bridge). Never touches files or network directly.
-- **Spawned children** (`tidal_download.js`, `bulk_runner.js`): plain Node.js processes spawned by main with `ELECTRON_RUN_AS_NODE=1` and `TIDAL_LIBRARY_FOLDER` env vars. Output streamed back to renderer via stdout/stderr capture in main.
+- **Spawned download children** (`tidal_download.js`, `bulk_runner.js`): spawned by main with `ELECTRON_RUN_AS_NODE=1` and `TIDAL_LIBRARY_FOLDER` / `TIDAL_TOKEN_PATH` env vars inherited via `childEnv()`. Output streamed back to renderer via stdout/stderr capture in main.
+- **Auth is NOT a child** anymore. Old design spawned `tidal_auth_node.js` as a child, but `cwd: __dirname` resolved to an asar virtual path in packaged builds and `posix_spawn`/`CreateProcess` choked with ENOENT. Auth now runs in-process; same class of bug remains a risk for any future child spawn — see "Don't reintroduce `cwd: __dirname`" in the Don'ts.
 
 ### IPC surface (preload → main)
 
-See `electron-preload.js` for the full list. Key ones:
+See `electron-preload.js` for the full list. Grouped:
 
-- `api.getSettings()` / `api.saveSettings(s)`
-- `api.pickFolder()` — opens native folder picker
-- `api.tokenExists()` / `api.runAuth()` — TIDAL device-code flow
-- `api.resolveInput({ input })` — URL or search query → tracks. Returns `{ ok, kind: 'url'|'search', tracks }`. Tracks come pre-enriched with `libraryMatch`.
-- `api.resolveOcr({ tracks })` — OCR'd {title,artist} list → matched TIDAL tracks
+**Settings**
+- `api.getSettings()` / `api.saveSettings(s)` / `api.resetSettings()` (clears download + library folders, keeps TIDAL sign-in)
+- `api.pickFolder()` — native folder picker
+- `api.openFolder(p)` — `shell.openPath` for local paths
+- `api.openExternal(url)` — `shell.openExternal`, https-only
+
+**Auth**
+- `api.tokenExists()` / `api.runAuth()` — TIDAL device-code flow (in-process)
+- `api.onAuthOutput(cb)` — status lines streamed into the auth modal terminal
+- `api.onAuthUrl(cb)` — receives the verification URL once known, used to populate the URL input + Copy button
+
+**Resolver**
+- `api.resolveInput({ input })` — URL or search query → tracks (pre-enriched with `libraryMatch`)
+- `api.resolveOcr({ tracks })` — OCR'd {title,artist} → matched TIDAL tracks (only used if OCR is feature-flagged back on)
+
+**Download**
 - `api.startBulk({ tracks, outDir })` — kicks off batch download
-- `api.startDownload({ input, outDir })` — legacy single-URL flow, still used in places
-- `api.libraryStatus()` / `api.libraryRescan()` — library scanner state + manual refresh
-- `api.onDownloadLine(cb)` / `api.onDownloadDone(cb)` — stdout/exit events from spawned children
+- `api.startDownload({ input, outDir })` — legacy single-URL flow
+- `api.cancelDownload()` — exists but no UI calls it
+- `api.onDownloadLine(cb)` / `api.onDownloadDone(cb)` — stdout/exit events
+
+**Library**
+- `api.libraryStatus()` / `api.libraryRescan()` — scanner state + manual refresh
 - `api.onLibraryScanned(cb)` — fires when an async scan completes
+
+**Updater**
+- `api.checkForUpdates()` — manual check, returns `{ status: 'available' | 'up-to-date' | 'error', ... }`
+- `api.getAppVersion()` — `app.getVersion()`, used by topbar + Settings
+- `api.onUpdateAvailable(cb)` — fires on launch (auto-check) AND on manual check when newer exists
 
 ---
 
@@ -252,7 +294,11 @@ The git history of the repo shows the full code if you want to bring it back. Ma
 
 ### Auth
 
-OAuth device-code flow in `tidal_auth_node.js`. Opens browser to `link.tidal.com/...`, polls `https://auth.tidal.com/v1/oauth2/token` until user authorizes. Saves to `token.json`:
+OAuth device-code flow lives in `tidal_auth_node.js`, exported as `authenticate({ onLog, onVerificationUrl, suppressBrowser })`. **Runs in-process** in the Electron main when the user clicks **Sign in to TIDAL** (the IPC handler in `electron-main.js#token:run-auth` calls it directly). Status messages stream to the auth modal via the `auth:output` IPC channel; the verification URL goes to the renderer via the separate `auth:url` IPC so the modal can show it in an input field with a Copy button. `shell.openExternal()` opens the URL in the default browser.
+
+CLI usage (`node tidal_auth_node.js`) still works for headless TIDAL sign-in — when invoked directly, it logs to stdout and runs its own platform-specific browser-open fallback (cmd/open/xdg-open). The fallback is skipped when called in-process because electron-main passes `suppressBrowser: true`.
+
+Saved to `token.json`:
 
 ```json
 [{
@@ -306,50 +352,117 @@ The integrity check (`verifyFlac`) only runs on `.flac` outputs (it's a FLAC-spe
 
 ## Packaging / distribution
 
-The app ships as a single portable Windows `.exe` (~90 MB) built with `electron-builder`. Build config lives in the `build` field of `package.json`. Key choices baked in:
+Two artifacts:
+- **Windows**: portable `.exe` (~90 MB) — one self-contained binary, no installer
+- **macOS arm64**: `.app` zip — drag to `/Applications`, right-click → Open to bypass Gatekeeper
 
-- **`win.target`**: only `portable` (one self-contained `.exe`; no installer, no shortcuts, no registry entries — runs from anywhere)
-- **`portable.artifactName`**: `robogears-downloader.exe` (no version suffix in the filename, by user preference)
-- **`asarUnpack`**: `node_modules/ffmpeg-static/**/*` — `ffmpeg.exe` is a real binary that must live on disk for `spawn()` to invoke it; can't stay in the asar
-- **`directories.output`**: `dist/` (gitignored)
+Build config lives in the `build` field of `package.json`. Key choices baked in:
+
+- **`win.target: portable`** — single .exe (artifactName `robogears-downloader.exe`, no version suffix per user preference)
+- **`mac.target: zip`** — arm64 only for now (artifactName `robogears-downloader-mac-${arch}.${ext}`)
+- **`mac.identity: null`** — skip electron-builder's signing phase. The afterPack hook ad-hoc signs the .app instead (see below).
+- **`afterPack: ./build/after-pack.js`** — runs `codesign --force --deep --sign -` on the .app on darwin builds. Without ANY signature, arm64 Gatekeeper shows "damaged and can't be opened"; the ad-hoc signature satisfies the must-be-signed check.
+- **`asarUnpack: node_modules/ffmpeg-static/**/*`** — FFmpeg is a real binary; if it stays in the asar, `spawn()` can't invoke it and every download breaks.
+- **`publish: null`** — disables electron-builder's auto-publish (we publish via `softprops/action-gh-release` in the workflow). Without this, a `v*` tag push would auto-trigger publishing and demand `GH_TOKEN`, failing the build.
+- **`directories.output: dist/`** (gitignored)
 
 ### Build commands
 
 ```sh
-npm run build:win     # full build (current preset = portable only)
+npm run build:win       # Windows portable .exe
 npm run build:portable  # equivalent
-npm run build         # whatever the default OS resolves to
+npm run build:mac       # macOS arm64 .zip (only works on macOS — electron-builder refuses cross-build by default)
 ```
 
-Output: `Z:\robogearsDownloader\dist\robogears-downloader.exe`
+Outputs: `Z:\robogearsDownloader\dist\robogears-downloader.exe` and `dist/robogears-downloader-mac-arm64.zip`. Mac builds are produced by CI on a `macos-latest` runner; local Windows machines can't cross-build mac without Docker + the `electronuserland/builder` image.
 
-### Path migration: source-relative vs userData
+### userData path — consistent across dev and packaged
 
-The packaged `.exe` lives in a read-only asar archive. That means `path.join(__dirname, 'token.json')` (which the original CLI scripts used) doesn't work — there's no writable token.json next to the source. We solved this with an env var + `app.isPackaged` check:
+`electron-main.js` calls `app.setName('robogears Downloader')` early in startup, before anything that touches paths. Without this, `app.getName()` would return:
+- Dev: `robogears-downloader` (from package.json `name`, hyphenated)
+- Packaged: `robogears Downloader` (from build config `productName`, with space)
+
+…and `app.getPath('userData')` would diverge between the two. With the explicit `setName`, both modes write to `%APPDATA%\Roaming\robogears Downloader\` (and `~/Library/Application Support/robogears Downloader/` on macOS).
+
+### token.json path
+
+The packaged binary lives in a read-only asar, so the historical `path.join(__dirname, 'token.json')` doesn't work. `electron-main.js` sets:
 
 ```js
-// In electron-main.js, BEFORE require('./tidal_lib'):
 if (app.isPackaged) {
     process.env.TIDAL_TOKEN_PATH = path.join(app.getPath('userData'), 'token.json');
 }
 ```
 
-`tidal_lib.js` and `tidal_auth_node.js` both honor `TIDAL_TOKEN_PATH` and fall back to the source-relative path if it's unset. Spawned children inherit the env var via `childEnv()` (because the spread `...process.env` includes it).
+`tidal_lib.js` and `tidal_auth_node.js` both honor `TIDAL_TOKEN_PATH` and fall back to `./token.json` if unset. Spawned download children inherit the env var via `childEnv()`. Dev mode uses `./token.json` next to source; packaged mode uses userData.
 
-**Net effect:**
-- Dev mode (`npm start`): token at `./token.json`, same as before
-- Packaged (.exe): token at `%APPDATA%\robogears Downloader\token.json`
-- Both contexts work without code changes
+### Code signing
 
-Settings already used `app.getPath('userData')` before this — no migration needed there.
+- **Windows**: unsigned. First launch shows the blue **"Windows protected your PC"** SmartScreen dialog. Users click **More info → Run anyway**. Normal for personal apps. A real cert is $80–300/yr.
+- **macOS**: ad-hoc signed only (no Apple Developer Program). First launch needs **right-click → Open** to bypass Gatekeeper's "unidentified developer" warning. Without ad-hoc signing, Apple Silicon shows the harsher "damaged and can't be opened" — see `build/after-pack.js`.
 
-### Code signing — there isn't any
+---
 
-The build uses electron-builder's bundled self-signed cert via `signtool`. Windows doesn't trust that, so first launch shows the blue **"Windows protected your PC"** SmartScreen dialog. Users click **More info → Run anyway** to proceed. This is normal for unsigned personal-use apps. A real code-signing cert costs $80-300/year and isn't worth it unless distributing widely.
+## Releases (CI + version process)
 
-### Distribution
+Releases are automated by `.github/workflows/release.yml`. Trigger: pushing any tag matching `v*`. Three jobs:
 
-For now: the user attaches `dist/robogears-downloader.exe` to wherever they're sharing it (USB / Dropbox / Discord / GitHub Releases). No GitHub Actions workflow set up yet — that's a possible next step (see below).
+1. **build-win** (windows-latest): `npm ci`, `npm run build:portable`, upload `dist/robogears-downloader.exe` as an artifact
+2. **build-mac** (macos-latest): `npm ci`, `npm run build:mac`, upload `dist/robogears-downloader-mac-arm64.zip`
+3. **release** (ubuntu-latest, needs both): downloads both artifacts, uses `softprops/action-gh-release@v2` to create a **draft** release with both attached. Body comes from `RELEASE_NOTES.md` via `body_path`.
+
+### Ship process
+
+When the user explicitly asks to ship (and not before — see "no auto-releases" memory rule):
+
+1. **Bump the patch version** in `package.json`. Next tag is the smallest unused `vX.Y.Z`. Never force-move an existing tag (with the narrow exception of unpublished drafts — both drafts must still be on GitHub, never publicly visible).
+2. **Overwrite `RELEASE_NOTES.md`** with the new version's body. Only the current version goes in — no cumulative section list (per the "release notes format" memory rule). Must include all four parts: `# What's new in vX.Y.Z` with `##` subsections, `# Install` block, `## Requirements`, `**Full Changelog**: ...vPREV...vCURR` link.
+3. `git add ...; git commit -m "vX.Y.Z: <summary>" ; git push origin main`
+4. `git tag -a vX.Y.Z -m "vX.Y.Z" ; git push origin vX.Y.Z` (this is what triggers CI)
+5. After CI completes, **verify the release body**: `gh release view vX.Y.Z --json body --jq '(.body | length)'`. If 0 (softprops sometimes preserves an empty body on re-runs of an existing tag), fix with `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md`.
+6. Tell the user where the draft is — they review and click Publish manually.
+
+### gh CLI
+
+`gh` is installed at `C:\Users\william\AppData\Local\Microsoft\WinGet\Links\gh.exe` and authenticated as `robogears` with `repo` + `workflow` scopes. Use this binary directly in PowerShell calls (the WinGet Links path isn't always on PATH in fresh shells). Memory location: Windows Credential Manager keyring.
+
+---
+
+## In-app updater
+
+On launch, `electron-main.js#checkForUpdatesAndNotify` fetches `https://api.github.com/repos/robogears/robogearsDownloader/releases/latest` (unauthenticated, 60/hr rate limit). If `release.tag_name` is strictly newer than `app.getVersion()`, it picks the platform-matching asset (`.exe` on win32, `mac-arm64.zip` on darwin, release page URL as fallback) and sends an `update:available` IPC event to the renderer. Errors / no-update are silent.
+
+The renderer (`renderer/app.js`) listens for this event and inserts a styled notice — `🚀 New version available: vX.Y.Z` + a **Download update** button — immediately after the boot welcome line in the activity log. If the event arrives before the welcome line exists, the payload is queued and replayed once the welcome lands.
+
+Settings → Updates surfaces `app.getVersion()` and a manual **Check for updates** button. The button uses the same `getUpdateStatus()` helper as the launch check; result reflects in the button label (*Checking…* → *vX.Y.Z available!* / *Up to date ✓* / *Check failed*, auto-reverts after 2.5s). When an update is available via the manual check, the activity-log notice also fires.
+
+Note: GitHub's `/releases/latest` endpoint only returns the highest **published** release. Drafts and pre-releases are invisible to it. So users on the latest published version (e.g., v0.1.2) won't see notices for unpublished drafts (v0.1.3+) — only for releases the user has actually clicked Publish on.
+
+---
+
+## Settings UI sections (top to bottom)
+
+1. **Download folder** — `folder-input` + `Browse…`. Blank on first launch.
+2. **Music library folder** — `library-input` + `Browse…` + `Clear`. Below that: scan status + Refresh button.
+3. **TIDAL account** — auth status + `Sign in to TIDAL` (or `Re-authenticate` if already signed in).
+4. **Updates** — current version label + `Check for updates` button.
+5. **Reset config** — text button. Clears download + library folders only; keeps TIDAL sign-in.
+
+The auth modal (separate from settings, opened by the Sign-in button) has a URL row showing the verification URL with a Copy button, plus the live terminal output of the auth flow.
+
+---
+
+## Sound effects
+
+`renderer/app.js` has a cached `getAudioCtx()` helper (creates AudioContext on first use, reused after, resumes if suspended). All sounds use Web Audio — no asset files shipped.
+
+| Function | Trigger | Sound |
+|---|---|---|
+| `playDownloadChime` | "Download all" click, after all validation passes | Ascending C5 → G5 (sine pair, slight detune for warmth) |
+| `playClownHorn` | Click on the "Coming soon" badge over the drop-zone | Two-tone descending honk, 420 → 310 Hz (sawtooth + 1800 Hz lowpass) — easter egg |
+| `playWarningHonk` | "Download all" click when blocked (no folder / no auth / nothing downloadable) | Same shape as clown horn, lower octave (220 → 165 Hz, 1100 Hz lowpass) — a "wronnng" |
+
+Internally these share a `_honkPair(highHz, lowHz, opts)` helper; tweak the args to add variants.
 
 ---
 
@@ -363,76 +476,67 @@ Add more entries to the `FUNNY_LOADING` array if the user requests it. They shou
 
 ## Where the last session left off
 
-The just-completed session **packaged the app as a portable Windows `.exe` via electron-builder** and tagged it **v0.1.0**. The session before that published the project to GitHub (`https://github.com/robogears/robogearsDownloader`) and cleaned out all the upstream Python remnants. Before that, the major work was the library matcher UX refinement and the funny loading text.
+Latest released version is **v0.1.5**. Currently on `main` (uncommitted): the `cwd: __dirname` removals from the download spawn paths — held back per the "no auto-releases" rule, awaiting the user's next explicit ship instruction.
 
 ### Just landed (latest first)
 
-**Packaging as a portable .exe (v0.1.0):**
-- `electron-builder@26.8.1` added as a devDependency
-- `build` config in `package.json` — `appId: com.robogears.downloader`, `productName: robogears Downloader`, `directories.output: dist`, `win.target: portable` only (single .exe, no installer), `portable.artifactName: robogears-downloader.exe` (no version suffix in filename per user preference)
-- `asarUnpack: node_modules/ffmpeg-static/**/*` so `ffmpeg.exe` stays on disk where `spawn()` can find it
-- npm scripts added: `build`, `build:win`, `build:portable`
-- **Token path migration**: `electron-main.js` sets `process.env.TIDAL_TOKEN_PATH` to `app.getPath('userData') + '/token.json'` when `app.isPackaged === true`, BEFORE requiring `tidal_lib`. The lib (and `tidal_auth_node.js`) honor `TIDAL_TOKEN_PATH` if set, fall back to `./token.json` otherwise. Spawned children inherit it via `...process.env` in `childEnv()`. Net effect: dev mode unchanged; packaged mode writes tokens to `%APPDATA%\robogears Downloader\`.
-- Window title + `.brand-name` text updated from "TIDAL Downloader" → "robogears Downloader"
-- `version` in `package.json` bumped from `1.0.0` → `0.1.0` (initial public release tag)
-- Build output: `dist/robogears-downloader.exe` (90.6 MB)
+**Spawn cwd fix (uncommitted, will be v0.1.6 when shipped):**
+- Removed `cwd: __dirname` from both download spawns in `electron-main.js` and from the nested `tidal_download.js` spawn in `bulk_runner.js`. In packaged builds `__dirname` is an asar virtual path; `posix_spawn`/`CreateProcess` can't `chdir()` into it before `exec`. Default cwd (inherited from parent) is fine — none of the child scripts use cwd-relative paths.
+- Same class of bug as the auth ENOENT we fixed in v0.1.4. The user reported "download doesn't work on Mac" — this was the cause.
 
-**Repo publish + cleanup (one session ago):**
-- Deleted all Python remnants from the original upstream fork: `main.py`, `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `tidal_auth/`, `tests/`, `.env`, `.env.example`, `.github/`
-- Deleted legacy `bulk_download.js` (replaced by `bulk_runner.js`)
-- Wrote a public-facing `README.md` (GitHub front page)
-- Cleaned up `.gitignore` — no more Python boilerplate, just Node/Electron-relevant excludes. `token.json` correctly ignored.
-- Updated `package.json` — name `robogears-downloader`, MIT license declared, repo URL set
-- First commit pushed to `main` (19 files, 5566 LoC)
-- LICENSE preserved upstream author's MIT copyright (legally required)
+**v0.1.5 — Copy URL button, manual update check, topbar version:**
+- TIDAL sign-in modal now surfaces the verification URL in a read-only input with a **Copy** button. Main process sends `auth:url` IPC alongside `shell.openExternal` so the renderer can populate the field as soon as the URL is known. Clipboard write uses `navigator.clipboard.writeText` with `execCommand` fallback; button shows "Copied ✓" for 1.5s.
+- New **Updates** section in Settings. Reuses the GitHub-releases check from on-launch, refactored into `getUpdateStatus()` returning `{ status: 'available' | 'up-to-date' | 'error', ... }`. New `update:check` + `app:version` IPCs feed a manual-check button that reflects state in its own label.
+- Current version now appears next to the brand name in the topbar (11px, bold, muted color). Populated on boot via `api.getAppVersion`.
 
-**Funny loading text:**
-- 10 music-themed rotating messages during URL resolution / search
-- Cycles every 2.5s to a new random message, won't repeat back-to-back
-- `_loadingCycler` interval cleaned up in `hideLoading`
-- OCR's "Running OCR on screenshot…" phase keeps its specific text (different operation from search)
+**v0.1.4 — in-process auth (spawn ENOENT fix):**
+- Refactored `tidal_auth_node.js` to export `authenticate({onLog, onVerificationUrl, suppressBrowser})`. CLI mode (`require.main === module`) preserved.
+- `electron-main.js#token:run-auth` now calls `authenticate()` directly in-process instead of spawning a child. Removed the old `__OPEN_BROWSER__:` stdout marker, line buffering, and `ELECTRON_RUN_AS_NODE` child spawn. `shell.openExternal()` opens the verification URL.
+- Root cause was the same `cwd: __dirname` in `spawn()` — asar virtual path → ENOENT in packaged builds.
 
-**Library matcher UX refinement:**
-- Exact matches: greyed (line-through + faded info column) + `+ Add` button. Bright button stays visible (only the info column is faded so the button doesn't get dimmed via parent opacity).
-- Similar matches: yellow badge only — no border, no grey-out, included by default
-- Removed the entire `#similar-modal` and the `askAboutSimilar()` function — the queue is now the only review surface
-- `Download all` button label switches to `Download (N)` when some items are excluded
-- Each queue item gets an `included` flag (defaults `false` for exact, `true` for everything else)
-- "+ Add" click handler in queue list flips `included = true` and re-renders
+**v0.1.3 (consolidated) — TIDAL browser-open + in-app updater:**
+- On launch, fetches `api.github.com/.../releases/latest`, compares with `app.getVersion()`, sends `update:available` IPC if newer. Renderer inserts a styled `🚀` notice with a Download button right after the welcome line. Failures silent.
+- Cross-platform browser-open for the TIDAL OAuth URL via `shell.openExternal()` (was originally a stdout marker + main-process parse, now superseded by the in-process refactor in v0.1.4).
+- Originally shipped as separate v0.1.3 (browser fix) and v0.1.4 (updater) tags, then consolidated when the user discarded both unpublished drafts.
 
-**Spotify scraper revert (earlier in session):**
-- Removed `scrapeSpotifyPlaylist`, `extractTracksFromGraphQL`, `spotify:scrape` IPC, `lib.setWebPlaylistScraper`
-- Removed `onSpotifyScrapeProgress` and `onSpotifyScrapeLog` from preload + renderer
-- Removed `http`/`https`/`crypto` imports from `electron-main.js` (no longer needed)
-- Back to the simple, working embed-only path with 100-track cap
+**v0.1.2 — macOS ad-hoc signing:**
+- `build/after-pack.js` runs `codesign --force --deep --sign -` on the .app on darwin builds (afterPack hook in `package.json#build`). Without any signature, arm64 Gatekeeper shows "damaged and can't be opened" rather than the standard unsigned warning. Ad-hoc sig is enough to flip it into the standard right-click→Open dance.
+- Un-ignored `build/` directory (was being treated as build output; it's actually build inputs — icons, afterPack hooks). Output goes to `dist/`.
+
+**v0.1.1 — CI publish fix:**
+- Added `publish: null` to `package.json#build`. electron-builder was auto-publishing on tag push and demanding `GH_TOKEN`, failing the mac build. Now we publish only via `softprops/action-gh-release` in the workflow.
+
+**v0.1.0 (initial release) — many things:**
+- Blank-on-first-launch for both folders, library scan gated on a configured path, `app.setName('robogears Downloader')` for consistent userData paths in dev + packaged
+- **Reset config** button in Settings (forgets folders, keeps TIDAL token)
+- Drop-zone greyed with **Coming soon** badge — `OCR_FEATURE_ENABLED = false` in `renderer/app.js` for the entire OCR flow
+- Three Web Audio SFX (clown horn / download chime / warning honk) — see Sound effects section
+- Batch summary distinguishes downloaded / skipped / failed / not-found via exit code 2 from `tidal_download.js` on skip
+- Skip messages clarify "in downloads folder" vs "in music library"
+- GitHub Actions workflow (`release.yml`) and `RELEASE_NOTES.md` with `body_path` integration
+- Packaged as a single portable Windows .exe via electron-builder
 
 ### Known things still rough
 
-1. **Spotify playlists > 100 tracks** — hard limit, see "Spotify situation" above. User has explicitly accepted this for now. The headless scraper approach can be revived if someone wants to fix the auto-scroll issue.
-
-2. **Library scan takes ~18 sec for ~500 files** on first launch. No on-disk cache yet — runs every app launch. Could add an mtime-keyed JSON cache to speed up subsequent launches. The user explicitly said "refresh on every launch" so this is intentional, but a faster scan would still be nice.
-
-3. **The bulk runner's progress reporting** is line-based, parsed from child stdout. The activity log shows progress per track but there's no per-track row in the queue showing in-flight state. Could add per-row spinners.
-
-4. **No global cancel button** during a bulk download. If user wants to abort mid-batch, they have to wait or kill the app. `api.cancelDownload()` exists in the preload but no UI calls it.
-
-5. **OCR accuracy on screenshots** is decent (anchors on row numbers + grabs title and artist below) but fails on non-Spotify formats. The `extractTracksFromOCR` heuristic has a fallback that looks for "Title — Artist" line format, but otherwise just returns empty.
-
-6. **No CHANGELOG, no release-tag commits, no GitHub Releases page.** The `.exe` exists in `dist/` (gitignored) but there's no automated `gh release create` or CI workflow to publish builds. Each release is manual right now.
-
-7. **No app icon.** Windows uses the default Electron icon for the packaged `.exe` and taskbar. Drop a 256×256 `.png` (or `.ico`) in `build/icon.png` and add `"icon": "build/icon.png"` under the `win` config in `package.json` to fix.
+1. **Spotify playlists > 100 tracks** — hard limit, see "Spotify situation" above. User accepted this. Headless scraper approach is documented if anyone wants to revive it.
+2. **Library scan takes ~18 sec for ~500 files** on first launch. No on-disk cache yet. The user explicitly said "refresh on every launch" so this is intentional, but a faster scan would still be nice.
+3. **Bulk runner progress reporting** is line-based, parsed from child stdout. No per-track row spinners in the queue.
+4. **No global cancel button** during a bulk download. `api.cancelDownload()` exists in the preload but no UI calls it.
+5. **No app icon.** Windows uses the default Electron icon for the .exe and taskbar; macOS uses the default Electron icon. Drop a 256×256 PNG/ICO in `build/icon.png` and add `"icon": "build/icon.png"` under `win`/`mac` in `package.json` to fix.
+6. **macOS x64 not built.** Only arm64 (Apple Silicon). Intel Mac users would need a separate target. Mostly fine in 2026.
+7. **softprops empty-body quirk on re-tagged releases**: if a tag is deleted + re-created and the previous release on GitHub still exists, softprops/action-gh-release sometimes preserves the old (empty) body instead of using the new `body_path`. Fix: `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` after CI completes. Always verify body length after a release.
 
 ### Possible next steps (in rough priority order)
 
-1. **Per-track progress in the queue UI** during bulk download. Map child stdout lines back to queue items, show a state per row (downloading / done / failed / skipped) plus a small progress bar.
-2. **Disk-cached library scan** to bring app-launch time from 18s down to <1s. JSON file keyed by file mtime/size; rebuild only when stale.
-3. **Cancel button** for in-flight downloads (wire up `api.cancelDownload()`).
-4. **Revive the headless Spotify scraper** to remove the 100-track limit. See "If you want to revive the headless scraper" section above.
-5. **Better OCR**: tune Tesseract config or accept user paste of plain text alongside images.
-6. **Persist queue across app restarts** (currently lost on close).
+1. **Per-track progress in the queue UI** during bulk download. Map child stdout lines back to queue items, show a state per row + small progress bar.
+2. **Disk-cached library scan** — JSON file keyed by file mtime/size; rebuild only when stale.
+3. **Cancel button** for in-flight downloads.
+4. **Revive the headless Spotify scraper** to remove the 100-track limit (see Spotify section).
+5. **Better OCR** (currently feature-flagged off entirely): tune Tesseract config or accept plain text paste alongside images. Then flip `OCR_FEATURE_ENABLED` back on.
+6. **Persist queue across app restarts.**
 7. **History / "recent downloads" pane.**
-8. **App icon** (see "Known rough" #7 above).
-9. **GitHub Actions release workflow** — auto-build on tag push, upload to GitHub Releases, give users a download link from the repo page.
+8. **App icon** — see "Known rough" #5.
+9. **macOS x64 build** — add `{ arch: ['x64', 'arm64'] }` to the mac target (or `universal`) once we have a use case.
 10. **Add screenshots to `docs/` and reference in README.**
 
 ---
@@ -448,6 +552,8 @@ The user is a power user comfortable with technical detail but values brevity an
 - **Always restart Electron after changes** to renderer/main code (HMR is not wired up). The pattern: `Get-Process electron | Stop-Process -Force; cd Z:\robogearsDownloader; npm start`. The user will *see* the restart and doesn't need it announced — just do it and verify the app comes up.
 - **Library is read-only.** Never propose writing to `Z:\Dropbox\Music` or wherever the library path is set.
 - **The user signs off sessions warmly** ("great job", "amazing", etc.). Don't make a big deal out of compliments — a brief thanks + recap of what landed is the right tone.
+- **Never auto-release.** Make code changes only; don't bump version, edit `RELEASE_NOTES.md`, commit, push, or tag without an explicit ship instruction ("ship it", "push it", "release", "tag X.Y.Z"). See the `feedback-no-auto-releases` memory entry.
+- **Release notes are current-version-only.** When you do ship, overwrite `RELEASE_NOTES.md` with the new version's body alone — don't keep old sections below. See the `feedback-release-notes-format` memory entry.
 
 ---
 
@@ -484,16 +590,26 @@ cd Z:\robogearsDownloader; npm start
 cd Z:\robogearsDownloader; git status; git check-ignore -v token.json
 ```
 
+`gh` is reachable + authenticated (for release ops):
+
+```powershell
+$gh = "C:\Users\william\AppData\Local\Microsoft\WinGet\Links\gh.exe"; & $gh auth status; & $gh release list --limit 5
+```
+
 ---
 
 ## Common diagnostic patterns
 
-- **"Cannot read properties of undefined (reading 'X')"** — usually means a Spotify/TIDAL API response had an unexpected shape. Check whether the relevant function has defensive `?.` and `|| []` guards.
-- **"Resolving link…" stuck forever** — usually because the resolver threw and the error didn't propagate. Add a try/catch around the resolver call in `electron-main.js#resolve:input` and surface the error to the activity log.
-- **"0 tracks from link"** — resolver returned an empty array. For Spotify playlists with >100 tracks, this can happen if Spotify changed the embed page structure. Check `tidal_lib.js#fetchSpotifyEmbed` and the `__NEXT_DATA__` JSON shape. For TIDAL: playlist UUID typo or the playlist is region-locked.
-- **FLAC integrity warning after a successful save** — segment came down corrupt. The file is kept and the warning is logged but not fatal. Re-run with `--force` to redownload.
-- **"AAC-only on TIDAL"** — TIDAL doesn't carry a lossless master for this track. Default behavior is to save as `.m4a` anyway; `--flac-only` makes it a hard skip.
-- **Library re-scan takes forever** — if the user pointed at a folder with thousands of files, `music-metadata` parsing each one becomes the bottleneck. Disk-cache it (next-steps item #2).
+- **`Error: spawn <path> ENOENT` in a packaged build** — the spawn is using `cwd: __dirname`, which in a packaged build is an asar virtual filesystem path the kernel can't `chdir()` into. Remove the cwd (default-inherited cwd is real) or set it to `path.dirname(app.getPath('exe'))`. We've hit this for auth (fixed by going in-process) and downloads (fixed by dropping cwd).
+- **"Cannot read properties of undefined (reading 'X')"** — usually a Spotify/TIDAL API response had an unexpected shape. Check for defensive `?.` and `|| []` guards.
+- **"Resolving link…" stuck forever** — resolver threw and the error didn't propagate. Add try/catch around the resolver call in `electron-main.js#resolve:input`.
+- **"0 tracks from link"** — resolver returned an empty array. Spotify playlists >100 tracks hit the embed limit. For TIDAL: playlist UUID typo or region-locked.
+- **FLAC integrity warning after a successful save** — segment came down corrupt. File is kept and warning logged but not fatal. Re-run with `--force`.
+- **"AAC-only on TIDAL"** — no lossless master. Default saves as `.m4a` anyway; `--flac-only` makes it a hard skip.
+- **Library re-scan takes forever** — `music-metadata` per-file parsing is the bottleneck. Disk-cache it (next-steps item).
+- **macOS .app shows "damaged and can't be opened"** — the build skipped ad-hoc signing (or the signature got stripped). Check `build/after-pack.js` is wired up and `mac.identity: null` is set so electron-builder doesn't try to sign with a missing real cert. Workaround for users: `xattr -cr "/Applications/robogears Downloader.app"`.
+- **GitHub release body is empty after a workflow run** — softprops sometimes preserves an empty body when updating an existing release (e.g., re-tag scenarios). Fix: `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md`. Always verify with `gh release view vX.Y.Z --json body --jq '(.body | length)'`.
+- **CI build fails with "GH_TOKEN is not set"** — `publish: null` is missing from `package.json#build`. electron-builder is auto-publishing on tag push and demanding a token. We use `softprops/action-gh-release` instead.
 
 ---
 
@@ -501,13 +617,20 @@ cd Z:\robogearsDownloader; git status; git check-ignore -v token.json
 
 - Don't reintroduce the Spotify Client Credentials Flow. It does not work for new dev apps.
 - Don't reintroduce the OAuth user-context flow for Spotify. Same restriction.
-- Don't add Spotify `clientId`/`clientSecret` settings UI back. They're not needed — embed scraping handles everything within the 100-track limit.
+- Don't add Spotify `clientId`/`clientSecret` settings UI back. They're not needed.
 - Don't subfolder album/playlist downloads. User explicitly does not want that.
 - Don't write to the user's music library folder. Read-only.
-- Don't fetch cover art to a temp file. It's a Buffer piped to FFmpeg stdin.
-- Don't bypass `findInLibrary` without an explicit user opt-in (the `--force` flag or the user clicking "+ Add" in the queue).
-- Don't strip the `--skip-library-check` flag from `bulk_runner.js` — the queue is the source of truth for the bulk pipeline.
-- Don't bring back the `#similar-modal`. The user explicitly preferred reviewing in the queue inline.
-- Don't commit `token.json`, `node_modules/`, or anything in the `.gitignore`. The first commit was clean — keep it that way.
-- Don't replace `process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json')` with just `path.join(__dirname, 'token.json')`. The env-var fallback is what makes the packaged `.exe` work — packaged mode points it at `%APPDATA%\robogears Downloader\token.json`.
-- Don't remove `asarUnpack: ['node_modules/ffmpeg-static/**/*']` from `package.json`. FFmpeg is a real binary; if it stays in the asar, `spawn()` can't invoke it and every download breaks in the packaged build.
+- Don't fetch cover art to a temp file. Buffer piped to FFmpeg stdin.
+- Don't bypass `findInLibrary` without an explicit user opt-in (`--force` or "+ Add" click).
+- Don't strip `--skip-library-check` from `bulk_runner.js` — queue is the source of truth.
+- Don't bring back the `#similar-modal`. The user reviews matches in the queue inline.
+- Don't commit `token.json`, `node_modules/`, `dist/`, or anything in `.gitignore`. `build/` is for inputs (icons, hooks) and IS committed — don't gitignore it.
+- Don't replace `process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json')` with just the source-relative path. The env var is what makes packaged builds work.
+- Don't remove `asarUnpack: ['node_modules/ffmpeg-static/**/*']` from `package.json`. FFmpeg is a real binary; in the asar, `spawn()` can't invoke it.
+- Don't remove `publish: null` from `package.json#build`. Without it, tag pushes auto-trigger electron-builder's publisher and fail demanding `GH_TOKEN`.
+- Don't remove the afterPack hook (`build/after-pack.js`). Without ad-hoc signing on macOS arm64, Gatekeeper blocks the .app as "damaged".
+- Don't reintroduce `cwd: __dirname` in any `spawn()` or `child_process.exec()` call. In packaged builds it resolves to an asar virtual path; the OS can't `chdir()` into it; `posix_spawn`/`CreateProcess` fails with ENOENT before exec. Default (inherited) cwd is fine.
+- Don't change `draft: true` to `false` in `.github/workflows/release.yml`. The user wants every release to land as a draft for manual review + publish.
+- Don't force-move a published tag. Unpublished drafts can be re-done; published releases are immutable. Bump to a new version instead.
+- Don't auto-release. See the `feedback-no-auto-releases` memory entry — make code changes only; wait for an explicit ship instruction.
+- Don't accumulate old version sections in `RELEASE_NOTES.md`. The file holds the current version only; previous notes stay on the GitHub Releases page. See the `feedback-release-notes-format` memory entry.

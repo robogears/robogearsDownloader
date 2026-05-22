@@ -272,8 +272,11 @@ ipcMain.handle('download:start', async (_e, { input, outDir }) => {
     const args = [path.join(__dirname, 'tidal_download.js'), input];
     if (outDir) args.push(outDir);
 
+    // No cwd: in packaged builds __dirname is an asar virtual path, and
+    // posix_spawn/CreateProcess can't chdir into it (same ENOENT issue we hit
+    // with the auth flow). Default cwd is fine — scripts use __dirname or
+    // absolute paths, never cwd-relative.
     activeChild = spawn(process.execPath, args, {
-        cwd: __dirname,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: childEnv(),
     });
@@ -403,8 +406,9 @@ ipcMain.handle('bulk:start', async (_e, { tracks, outDir }) => {
     const listPath = path.join(app.getPath('userData'), 'pending-tracklist.json');
     fs.writeFileSync(listPath, JSON.stringify({ tracks, outDir }, null, 2));
 
+    // No cwd — see note on the single-track spawn above; same asar path issue
+    // would otherwise break this on packaged macOS builds.
     activeChild = spawn(process.execPath, [path.join(__dirname, 'bulk_runner.js'), listPath], {
-        cwd: __dirname,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: childEnv(),
     });
