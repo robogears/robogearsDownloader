@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
     // Settings
     getSettings:    ()    => ipcRenderer.invoke('settings:get'),
     saveSettings:   (s)   => ipcRenderer.invoke('settings:save', s),
+    resetSettings:  ()    => ipcRenderer.invoke('settings:reset'),
     pickFolder:     ()    => ipcRenderer.invoke('settings:pick-folder'),
     openFolder:     (p)   => ipcRenderer.invoke('open-folder', p),
 

@@ -222,6 +222,51 @@ textarea {
     border: 1px dashed var(--border);
     border-radius: var(--r-lg);
     transition: border-color 0.2s, background 0.2s;
+    position: relative;
+}
+.drop-zone.disabled {
+    cursor: default;
+}
+.drop-zone.disabled .drop-inner {
+    opacity: 0.35;
+}
+.drop-zone.disabled:hover,
+.drop-zone.disabled.dragover {
+    border-color: var(--border);
+    background: transparent;
+}
+.drop-zone.disabled:hover svg {
+    color: var(--text-dim);
+}
+.coming-soon-badge {
+    display: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--bg-elev);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 7px 16px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-strong);
+}
+.drop-zone.disabled .coming-soon-badge {
+    display: block;
+}
+.coming-soon-badge {
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease-out, border-color 0.15s;
+}
+.coming-soon-badge:hover {
+    border-color: var(--text);
+}
+.coming-soon-badge:active {
+    transform: translate(-50%, -50%) scale(0.92);
 }
 .drop-inner {
     display: flex;
@@ -632,7 +677,8 @@ input[type="password"]:focus {
     border-color: var(--border-strong);
 }
 
-.auth-section {
+.auth-section,
+.reset-section {
     margin-top: 28px;
     padding-top: 24px;
     border-top: 1px solid var(--border);

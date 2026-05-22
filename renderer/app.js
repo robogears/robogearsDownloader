@@ -9,6 +9,7 @@ const addBtn = $('#add-btn');
 const inputHint = $('#input-hint');
 const dropZone = $('#drop-zone');
 const fileInput = $('#file-input');
+const comingSoonBadge = dropZone.querySelector('.coming-soon-badge');
 const clearActivityBtn = $('#clear-btn');
 const settingsBtn = $('#settings-btn');
 const folderInput = $('#folder-input');
@@ -18,6 +19,7 @@ const libraryBrowse = $('#library-browse');
 const libraryClear = $('#library-clear');
 const libraryStatusEl = $('#library-status');
 const libraryRescanBtn = $('#library-rescan-btn');
+const resetConfigBtn = $('#reset-config-btn');
 const authBtn = $('#auth-btn');
 const authStatus = $('#auth-status');
 const authOutput = $('#auth-output');
@@ -51,6 +53,78 @@ function fmtDuration(sec) {
 function escapeHtml(s) {
     return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// ─── Sound effects ───────────────────────────────────────────────────────────
+// Shared AudioContext — created on first use, reused after. Browsers require
+// a user gesture before audio plays; since every caller is a click handler,
+// we're fine.
+let _audioCtx = null;
+function getAudioCtx() {
+    if (!_audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        _audioCtx = new AC();
+    }
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    return _audioCtx;
+}
+// Quick rising perfect-fifth (C5 → G5) chime for the download confirmation.
+function playDownloadChime() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const blip = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc2.type = 'sine';
+        osc.frequency.value = freq;
+        osc2.frequency.value = freq * 1.005; // very slight detune for warmth
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.22, startTime + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        osc.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc2.start(startTime);
+        osc.stop(startTime + duration + 0.05);
+        osc2.stop(startTime + duration + 0.05);
+    };
+    const t = ctx.currentTime + 0.02;
+    blip(523.25, t, 0.13);          // C5
+    blip(783.99, t + 0.09, 0.18);   // G5 (overlapping for chord feel)
+}
+// Two-tone descending honk. Shared between the "Coming soon" easter egg and
+// the download-blocked warning — only frequencies and the lowpass cutoff differ.
+function _honkPair(highFreq, lowFreq, opts = {}) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const lpFreq = opts.lpFreq ?? 1800;
+    const peak = opts.peak ?? 0.35;
+    const honk = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = lpFreq;
+        lp.Q.value = 1;
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq * 1.08, startTime);
+        osc.frequency.exponentialRampToValueAtTime(freq, startTime + duration * 0.5);
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(peak, startTime + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        osc.connect(lp).connect(gain).connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + duration + 0.05);
+    };
+    const t = ctx.currentTime + 0.02;
+    honk(highFreq, t, 0.17);
+    honk(lowFreq, t + 0.22, 0.22);
+}
+function playClownHorn()   { _honkPair(420, 310); }
+function playWarningHonk() { _honkPair(220, 165, { lpFreq: 1100, peak: 0.3 }); }
 const FUNNY_LOADING = [
     'Searching the seven seas for your music…',
     'Digging through the record crates…',
@@ -306,10 +380,12 @@ function setDownloading(state) {
 downloadAllBtn.addEventListener('click', async () => {
     if (isDownloading || !queue.length) return;
     if (!settings.downloadFolder) {
+        playWarningHonk();
         appendLine('⚠ Pick a download folder in Settings first.');
         return;
     }
     if (!(await api.tokenExists())) {
+        playWarningHonk();
         appendLine('⚠ Sign in to TIDAL first (Settings → Sign in).');
         return;
     }
@@ -318,10 +394,12 @@ downloadAllBtn.addEventListener('click', async () => {
     // tracks the user hasn't explicitly "+ Added" back).
     const downloadable = queue.filter(t => !t.notFound && t.included);
     if (!downloadable.length) {
+        playWarningHonk();
         appendLine('⚠ Nothing in the queue can be downloaded.');
         return;
     }
 
+    playDownloadChime();
     setDownloading(true);
     appendLine('');
     appendLine(`=== Starting batch (${downloadable.length} tracks) ===`);
@@ -389,6 +467,15 @@ libraryRescanBtn.addEventListener('click', async () => {
     }
 });
 
+resetConfigBtn.addEventListener('click', async () => {
+    if (!confirm('Forget the download folder and music library folder?\n\n(Your TIDAL sign-in stays.)')) return;
+    settings = await api.resetSettings();
+    folderInput.value = '';
+    libraryInput.value = '';
+    refreshLibraryStatus();
+    appendLine('⚙ Config reset. Pick a download folder in Settings to continue.');
+});
+
 async function refreshLibraryStatus() {
     try {
         libraryStatusEl.textContent = 'Scanning…';
@@ -440,38 +527,54 @@ api.onAuthOutput(line => {
 
 // ─── Screenshot OCR → queue ──────────────────────────────────────────────────
 
-dropZone.addEventListener('click', () => fileInput.click());
+// Flip to true to re-enable the screenshot drop / paste flow. While false,
+// the drop-zone is greyed with a "Coming soon" badge and all OCR handlers
+// are unwired (drag/drop is still preventDefault'd so the browser doesn't
+// navigate to dropped files).
+const OCR_FEATURE_ENABLED = false;
 
-['dragover', 'dragenter'].forEach(ev =>
-    dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
-);
-['dragleave', 'drop'].forEach(ev =>
-    dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
-);
-dropZone.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) handleImage(file);
-});
-fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (file) handleImage(file);
-    fileInput.value = '';
-});
+if (OCR_FEATURE_ENABLED) {
+    dropZone.addEventListener('click', () => fileInput.click());
 
-// Clipboard paste — only act on images, leave text paste alone
-document.addEventListener('paste', (e) => {
-    if (document.activeElement === urlInput) return;
-    const items = e.clipboardData?.items || [];
-    for (const item of items) {
-        if (item.type.startsWith('image/')) {
-            const file = item.getAsFile();
-            if (file) handleImage(file);
-            e.preventDefault();
-            return;
+    ['dragover', 'dragenter'].forEach(ev =>
+        dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
+    );
+    ['dragleave', 'drop'].forEach(ev =>
+        dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
+    );
+    dropZone.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) handleImage(file);
+    });
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (file) handleImage(file);
+        fileInput.value = '';
+    });
+
+    // Clipboard paste — only act on images, leave text paste alone
+    document.addEventListener('paste', (e) => {
+        if (document.activeElement === urlInput) return;
+        const items = e.clipboardData?.items || [];
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) handleImage(file);
+                e.preventDefault();
+                return;
+            }
         }
-    }
-});
+    });
+} else {
+    dropZone.classList.add('disabled');
+    // Eat drag/drop so dropping a file doesn't navigate the window away
+    ['dragover', 'dragenter', 'drop'].forEach(ev =>
+        dropZone.addEventListener(ev, e => e.preventDefault())
+    );
+    // Easter egg: clicking the "Coming soon" badge honks a clown horn.
+    comingSoonBadge.addEventListener('click', playClownHorn);
+}
 
 async function handleImage(file) {
     appendLine(`📷 Scanning screenshot (${file.name || 'pasted image'})…`);

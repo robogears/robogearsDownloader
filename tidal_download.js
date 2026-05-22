@@ -275,12 +275,12 @@ async function downloadTrack(trackId, outDir, cred, flags, { albumPreFetched = n
 
     // Skip-if-exists (destination folder) — check both .flac and .m4a
     if (!flags.force && fs.existsSync(flacPath)) {
-        console.log(`  ⏭  ${title}.flac already exists — skipping (use --force to overwrite)`);
-        return flacPath;
+        console.log(`  ⏭  ${title}.flac already in downloads folder — skipping (use --force to overwrite)`);
+        return { path: flacPath, skipped: true };
     }
     if (!flags.force && fs.existsSync(m4aPath)) {
-        console.log(`  ⏭  ${title}.m4a already exists — skipping (use --force to overwrite)`);
-        return m4aPath;
+        console.log(`  ⏭  ${title}.m4a already in downloads folder — skipping (use --force to overwrite)`);
+        return { path: m4aPath, skipped: true };
     }
 
     // Skip if already in master library (auto for `exact` matches, ASK-skipped for `similar`).
@@ -289,14 +289,14 @@ async function downloadTrack(trackId, outDir, cred, flags, { albumPreFetched = n
         const artistStr = (info.artists || []).map(a => a.name).join(', ');
         const existing = await lib.findInLibrary(info.title, artistStr, info.duration);
         if (existing && existing.kind === 'exact') {
-            console.log(`  📁 Already in library: ${existing.path}`);
+            console.log(`  📁 Already in music library: ${existing.path}`);
             console.log(`     Skipping download (use --force to download anyway)`);
-            return existing.path;
+            return { path: existing.path, skipped: true };
         }
         if (existing && existing.kind === 'similar') {
-            console.log(`  ⚠ Similar version in library: ${existing.libraryTitle || existing.path}`);
+            console.log(`  ⚠ Similar version in music library: ${existing.libraryTitle || existing.path}`);
             console.log(`     Skipping. Use --force or include via GUI to download anyway.`);
-            return existing.path;
+            return { path: existing.path, skipped: true };
         }
     }
 
@@ -361,7 +361,7 @@ async function downloadTrack(trackId, outDir, cred, flags, { albumPreFetched = n
 
     const stat = fs.statSync(finalPath);
     console.log(`  ✓ Saved: ${path.basename(finalPath)} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
-    return finalPath;
+    return { path: finalPath, skipped: false };
 }
 
 // ─── AAC-only summary (only fires in --flac-only mode) ──────────────────────
@@ -406,7 +406,7 @@ async function downloadAlbum(albumId, outDir, cred, flags) {
         console.log(`[${i + 1}/${tracks.length}]`);
         try {
             const result = await downloadTrack(t.id, albumDir, cred, flags, { albumPreFetched: albumInfo });
-            if (result) ok++; else skipped++;
+            if (result.skipped) skipped++; else ok++;
         } catch (e) {
             if (e instanceof lib.AacOnlyError) { aacOnly.push(e.trackInfo); continue; }
             console.error(`  ✘ ${t.title}: ${e.message}`);
@@ -430,10 +430,10 @@ async function downloadSpotifyTrack(spotifyId, outDir, cred, flags) {
     const match = await lib.spotifyTrackToTidal(sp, token, countryCode);
     if (!match) {
         console.log('  ✗ No TIDAL match found.');
-        return;
+        return null;
     }
     console.log(`  → TIDAL match (${match.method}): id ${match.track.id}`);
-    await downloadTrack(match.track.id, outDir, cred, flags);
+    return await downloadTrack(match.track.id, outDir, cred, flags);
 }
 
 async function downloadSpotifyPlaylist(spotifyId, outDir, cred, flags) {
@@ -588,22 +588,27 @@ async function main() {
     // Single-track wrappers catch AacOnlyError to offer the prompt inline
     const aacOnly = [];
     const singleTrackCatcher = async (fn) => {
-        try { await fn(); }
+        try { return await fn(); }
         catch (e) {
-            if (e instanceof lib.AacOnlyError) aacOnly.push(e.trackInfo);
+            if (e instanceof lib.AacOnlyError) { aacOnly.push(e.trackInfo); return null; }
             else throw e;
         }
     };
 
+    // Capture the single-track result so we can signal "skipped" back to
+    // bulk callers via exit code 2 (album/playlist exits stay 0).
+    let trackResult = null;
     if (parsed.source === 'spotify') {
-        if (parsed.type === 'track')    await singleTrackCatcher(() => downloadSpotifyTrack(parsed.id, outDir, cred, flags));
+        if (parsed.type === 'track')    trackResult = await singleTrackCatcher(() => downloadSpotifyTrack(parsed.id, outDir, cred, flags));
         else if (parsed.type === 'album')   await downloadSpotifyAlbum(parsed.id, outDir, cred, flags);
         else if (parsed.type === 'playlist') await downloadSpotifyPlaylist(parsed.id, outDir, cred, flags);
     } else {
-        if (parsed.type === 'track')    await singleTrackCatcher(() => downloadTrack(parsed.id, outDir, cred, flags));
+        if (parsed.type === 'track')    trackResult = await singleTrackCatcher(() => downloadTrack(parsed.id, outDir, cred, flags));
         else if (parsed.type === 'album')   await downloadAlbum(parsed.id, outDir, cred, flags);
         else if (parsed.type === 'playlist') await downloadPlaylist(parsed.id, outDir, cred, flags);
     }
+
+    if (trackResult?.skipped) process.exitCode = 2;
 
     handleAacSummary(aacOnly);
 }

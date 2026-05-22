@@ -1,0 +1,61 @@
+name: Build & draft release
+
+# Triggers on any tag matching v* (e.g. v0.1.0, v0.2.0, v1.0.0-rc1).
+# Also runnable manually from the Actions tab via workflow_dispatch.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-build
+          path: dist/robogears-downloader.exe
+          if-no-files-found: error
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: dist/robogears-downloader-mac-arm64.zip
+          if-no-files-found: error
+
+  release:
+    needs: [build-win, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/win-build/robogears-downloader.exe
+            artifacts/mac-build/robogears-downloader-mac-arm64.zip

@@ -4,6 +4,13 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
+// Force userData to %APPDATA%\Roaming\robogears Downloader\ on both dev and
+// packaged builds. Without setName, dev mode uses package.json `name`
+// (robogears-downloader, hyphen) while packaged builds use productName
+// (robogears Downloader, space) — diverging on disk. Explicit setName
+// keeps both pointing at the same folder.
+app.setName('robogears Downloader');
+
 // In a packaged build, the source folder is read-only (inside an asar archive),
 // so we route token.json + settings to the user-writable userData dir. The
 // env var is also propagated to spawned children via `childEnv()` so they
@@ -95,6 +102,15 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:save', (_e, s) => { saveSettings(s); return s; });
+
+// "Forget" the download and library folders. TIDAL token is preserved.
+// saveSettings clears the library scan cache because libraryFolder changes
+// from "Y" to "" — its existing diff check handles that path.
+ipcMain.handle('settings:reset', () => {
+    const blanked = { downloadFolder: '', libraryFolder: '' };
+    saveSettings(blanked);
+    return blanked;
+});
 
 ipcMain.handle('settings:pick-folder', async () => {
     const opts = { properties: ['openDirectory'] };

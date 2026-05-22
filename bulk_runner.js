@@ -28,6 +28,8 @@ function scoreMatch(item, wantTitle, wantArtist) {
     return { titleScore, artistScore, total: titleScore + artistScore };
 }
 
+// Returns the child's exit code so the caller can distinguish:
+//   0 → downloaded, 2 → skipped, anything else → failed.
 function runDownload(trackId, outDir) {
     return new Promise((resolve) => {
         const args = [path.join(__dirname, 'tidal_download.js'), String(trackId), outDir, '--skip-library-check'];
@@ -36,7 +38,7 @@ function runDownload(trackId, outDir) {
             stdio: 'inherit',
             env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', FORCE_COLOR: '0' },
         });
-        p.on('close', code => resolve(code === 0));
+        p.on('close', code => resolve(code));
     });
 }
 
@@ -54,7 +56,7 @@ function runDownload(trackId, outDir) {
     console.log(`\n=== Batch download → ${outDir} ===\n`);
     console.log(`${tracks.length} tracks queued.\n`);
 
-    let ok = 0, failed = 0, notFound = 0;
+    let ok = 0, skipped = 0, failed = 0, notFound = 0;
     for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
         const label = `${t.title || '?'} — ${t.artist || '?'}`;
@@ -85,12 +87,14 @@ function runDownload(trackId, outDir) {
 
         if (!trackId) { notFound++; console.log(''); continue; }
 
-        const success = await runDownload(trackId, outDir);
-        if (success) ok++; else failed++;
+        const code = await runDownload(trackId, outDir);
+        if (code === 0) ok++;
+        else if (code === 2) skipped++;
+        else failed++;
         console.log('');
     }
 
-    console.log(`\n=== Batch complete: ${ok} downloaded, ${failed} failed, ${notFound} not found ===`);
+    console.log(`\n=== Batch complete: ${ok} downloaded, ${skipped} skipped, ${failed} failed, ${notFound} not found ===`);
 })().catch(e => {
     console.error('Fatal:', e.message);
     process.exit(1);
