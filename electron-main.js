@@ -214,37 +214,29 @@ ipcMain.handle('token:exists', () => {
     const tokenPath = process.env.TIDAL_TOKEN_PATH || path.join(__dirname, 'token.json');
     return fs.existsSync(tokenPath);
 });
-ipcMain.handle('token:run-auth', () => {
-    return new Promise((resolve) => {
-        const child = spawn(process.execPath, [path.join(__dirname, 'tidal_auth_node.js')], {
-            cwd: __dirname,
-            detached: false,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            // Tell the child not to try opening the browser itself — we handle
-            // it here via shell.openExternal so it's cross-platform and reliable.
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TIDAL_AUTH_SUPPRESS_BROWSER: '1' },
+ipcMain.handle('token:run-auth', async () => {
+    // Run the auth flow in-process. The old version spawned a child Electron
+    // process with `cwd: __dirname`, but in a packaged build __dirname points
+    // inside app.asar (a virtual filesystem) which CreateProcess can't chdir
+    // into — spawn failed with ENOENT. Doing it in-process avoids the whole
+    // class of spawn/asar issues.
+    const { authenticate } = require('./tidal_auth_node');
+    const send = (line) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('auth:output', line + '\n');
+        }
+    };
+    try {
+        await authenticate({
+            onLog: send,
+            onVerificationUrl: (url) => shell.openExternal(url),
+            suppressBrowser: true,
         });
-        let output = '';
-        let stdoutBuf = '';
-        // Buffer stdout line-by-line so we can sniff out the __OPEN_BROWSER__
-        // marker (and not echo that marker into the auth modal output).
-        child.stdout.on('data', d => {
-            stdoutBuf += d.toString();
-            const lines = stdoutBuf.split(/\r?\n/);
-            stdoutBuf = lines.pop();
-            for (const line of lines) {
-                const m = line.match(/^__OPEN_BROWSER__:(.+)$/);
-                if (m) { shell.openExternal(m[1].trim()); continue; }
-                output += line + '\n';
-                mainWindow.webContents.send('auth:output', line + '\n');
-            }
-        });
-        child.stderr.on('data', d => mainWindow.webContents.send('auth:output', d.toString()));
-        child.on('close', code => {
-            if (stdoutBuf) mainWindow.webContents.send('auth:output', stdoutBuf);
-            resolve({ ok: code === 0, output });
-        });
-    });
+        return { ok: true };
+    } catch (e) {
+        send('ERROR: ' + e.message);
+        return { ok: false, error: e.message };
+    }
 });
 
 // ─── IPC: download ────────────────────────────────────────────────────────────

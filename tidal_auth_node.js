@@ -1,6 +1,12 @@
 // TIDAL device authorization flow (OAuth device-code).
-// Usage: node tidal_auth_node.js
-// Opens a browser, user logs in + clicks Allow, token.json is written.
+//
+// Can be used two ways:
+//   1. CLI: `node tidal_auth_node.js` — logs to stdout, opens the browser
+//      itself, writes token.json on success.
+//   2. In-process: `require('./tidal_auth_node').authenticate({ ... })` from
+//      electron-main. This is the safer path for packaged builds because the
+//      previous spawn-based approach failed with ENOENT — cwd resolved into
+//      app.asar's virtual filesystem which CreateProcess can't chdir into.
 
 const https = require('https');
 const fs = require('fs');
@@ -52,7 +58,21 @@ function saveToken(entry) {
     fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 4));
 }
 
-async function main() {
+/**
+ * Run the full TIDAL OAuth device-code flow.
+ *
+ * @param {Object} [opts]
+ * @param {(line: string) => void} [opts.onLog] - called once per status line
+ *        (defaults to console.log for CLI use).
+ * @param {(url: string) => void} [opts.onVerificationUrl] - fires once with
+ *        the TIDAL verification URL as soon as it's known, so callers can
+ *        open it via shell.openExternal or similar.
+ * @param {boolean} [opts.suppressBrowser] - when true, skip the
+ *        platform-specific browser-open fallback (electron-main sets this
+ *        because it handles opening via shell.openExternal).
+ * @returns {Promise<Object>} the saved token entry.
+ */
+async function authenticate({ onLog = console.log, onVerificationUrl = null, suppressBrowser = false } = {}) {
     const headers = {
         'User-Agent': 'okhttp/5.3.2',
         'Accept': 'application/json',
@@ -72,26 +92,21 @@ async function main() {
     }, authBody);
 
     if (authRes.status !== 200) {
-        console.error('Device authorization failed:', authRes.status, authRes.body);
-        process.exit(1);
+        throw new Error(`Device authorization failed: ${authRes.status} ${authRes.body}`);
     }
 
     const authJson = JSON.parse(authRes.body);
     const { verificationUriComplete, deviceCode, interval = 5 } = authJson;
 
-    // Marker line so electron-main can intercept and open via shell.openExternal
-    // (the most reliable cross-platform browser-open API available to us).
-    // Plain CLI usage falls through to the platform-specific fallback below.
-    console.log('__OPEN_BROWSER__:' + verificationUriComplete);
+    if (onVerificationUrl) onVerificationUrl(verificationUriComplete);
 
-    console.log('\n=== TIDAL Login ===');
-    console.log('Open this URL in your browser and log in:');
-    console.log('\n  ' + verificationUriComplete + '\n');
+    onLog('=== TIDAL Login ===');
+    onLog('Open this URL in your browser and log in:');
+    onLog('');
+    onLog('  ' + verificationUriComplete);
+    onLog('');
 
-    // Fallback browser-open for CLI users. Skipped when spawned by electron-main
-    // (it sets TIDAL_AUTH_SUPPRESS_BROWSER=1 because it already opened the URL),
-    // so the user doesn't end up with two browser tabs.
-    if (!process.env.TIDAL_AUTH_SUPPRESS_BROWSER) {
+    if (!suppressBrowser) {
         try {
             const { spawn } = require('child_process');
             const opener =
@@ -99,11 +114,11 @@ async function main() {
               : process.platform === 'darwin' ? { cmd: 'open',     args: [verificationUriComplete] }
               :                                 { cmd: 'xdg-open', args: [verificationUriComplete] };
             spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore' }).unref();
-            console.log('(Browser should have opened automatically)');
+            onLog('(Browser should have opened automatically)');
         } catch { /* user can still copy the URL manually */ }
     }
 
-    console.log('Waiting for authorization...');
+    onLog('Waiting for authorization...');
 
     // Step 2: poll for token
     const pollBody = formEncode({
@@ -140,20 +155,24 @@ async function main() {
                 client_secret: REQUEST_CLIENT_SECRET,
             };
             saveToken(entry);
-            console.log('\nAuthorization successful! token.json saved.');
-            console.log('User ID:', entry.userID);
-            if (entry.countryCode) console.log('Country:', entry.countryCode);
-            break;
+            onLog('');
+            onLog('Authorization successful! token.json saved.');
+            onLog('User ID: ' + entry.userID);
+            if (entry.countryCode) onLog('Country: ' + entry.countryCode);
+            return entry;
         } else if (pollRes.status === 400) {
             const err = JSON.parse(pollRes.body);
             if (err.error === 'authorization_pending') continue;
-            console.error('Auth error:', err);
-            process.exit(1);
+            throw new Error('Auth error: ' + JSON.stringify(err));
         } else {
-            console.error('Unexpected poll response:', pollRes.status, pollRes.body);
-            process.exit(1);
+            throw new Error(`Unexpected poll response: ${pollRes.status} ${pollRes.body}`);
         }
     }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { authenticate };
+
+// CLI entry point — only run when executed directly, not when required as a module
+if (require.main === module) {
+    authenticate().catch(e => { console.error(e); process.exit(1); });
+}
