@@ -1,9 +1,13 @@
-# What's new in v0.1.4
+# What's new in v0.1.3
 
 ## In-app updater
 - On launch, the app now quietly checks GitHub for newer releases. If one exists, a one-line notice with a **Download update** button appears in the activity log right under your welcome line. Clicking the button opens the right asset for your OS (`.exe` on Windows, `mac-arm64.zip` on macOS) in your default browser.
 - The check is silent on failure (no internet, GitHub rate-limit, etc.) — you never see "update check failed" noise.
 - The notice only appears when the published GitHub release is strictly newer than your installed version; drafts and pre-releases are ignored.
+
+## TIDAL sign-in browser now opens reliably
+- Clicking **Sign in to TIDAL** in Settings now opens the OAuth login URL via Electron's `shell.openExternal()` — cross-platform and reliable on both Windows and macOS.
+- The previous build used a Windows-only shell hack (`start ""`) that silently failed on macOS and was fragile on Windows too. The TIDAL login URL is still shown in the auth modal as a fallback in case the browser doesn't launch automatically.
 
 ---
 
@@ -21,4 +25,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.3...v0.1.4
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.2...v0.1.3
