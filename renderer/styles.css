@@ -355,6 +355,32 @@ textarea {
     border-top: 1px solid var(--border);
 }
 .log-line.muted    { color: var(--text-dim); }
+.log-line.update-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    padding: 8px 12px;
+    margin: 6px 0;
+}
+.update-download-btn {
+    background: var(--text);
+    color: #000;
+    border: none;
+    padding: 5px 12px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+}
+.update-download-btn:hover { opacity: 0.85; }
+.update-download-btn:active { opacity: 0.7; }
 
 /* ─── Queue ────────────────────────────────────────────────────────────── */
 .queue {

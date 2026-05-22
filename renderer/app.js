@@ -189,9 +189,41 @@ function appendLine(line) {
     div.textContent = line;
     activityEl.appendChild(div);
     activityEl.scrollTop = activityEl.scrollHeight;
+    return div;
 }
 
 clearActivityBtn.addEventListener('click', () => activityEl.innerHTML = '');
+
+// ─── Update notice ─────────────────────────────────────────────────────────
+// The main process fires `update:available` on app launch when a newer
+// GitHub release exists. We insert a notice with a Download button right
+// after the boot welcome line. Either order is fine — if the event arrives
+// before the welcome line is appended, we stash it and apply once ready.
+let welcomeLineEl = null;
+let pendingUpdate = null;
+
+function insertUpdateNotice({ version, downloadUrl }) {
+    if (!welcomeLineEl || !welcomeLineEl.parentNode) {
+        pendingUpdate = { version, downloadUrl };
+        return;
+    }
+    // Don't duplicate if we already rendered this version's notice
+    if (welcomeLineEl.parentNode.querySelector('.update-notice')) return;
+
+    const row = document.createElement('div');
+    row.className = 'log-line update-notice';
+    const label = document.createElement('span');
+    label.innerHTML = `🚀 New version available: <strong>${version}</strong>`;
+    const btn = document.createElement('button');
+    btn.className = 'update-download-btn';
+    btn.textContent = 'Download update';
+    btn.addEventListener('click', () => api.openExternal(downloadUrl));
+    row.appendChild(label);
+    row.appendChild(btn);
+    welcomeLineEl.parentNode.insertBefore(row, welcomeLineEl.nextSibling);
+}
+
+api.onUpdateAvailable(insertUpdateNotice);
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
 
@@ -676,10 +708,16 @@ function extractTracksFromOCR(text) {
     await refreshAuthStatus();
 
     if (!(await api.tokenExists())) {
-        appendLine('👋 Welcome! Click the ⚙ icon to sign in to TIDAL.');
+        welcomeLineEl = appendLine('👋 Welcome! Click the ⚙ icon to sign in to TIDAL.');
     } else if (!settings.downloadFolder) {
-        appendLine('Pick a download folder in Settings to get started.');
+        welcomeLineEl = appendLine('Pick a download folder in Settings to get started.');
     } else {
-        appendLine(`Ready. Downloads go to: ${settings.downloadFolder}`);
+        welcomeLineEl = appendLine(`Ready. Downloads go to: ${settings.downloadFolder}`);
+    }
+
+    // Apply any update notice that arrived before the welcome line existed.
+    if (pendingUpdate) {
+        insertUpdateNotice(pendingUpdate);
+        pendingUpdate = null;
     }
 })();

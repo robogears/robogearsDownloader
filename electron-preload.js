@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('api', {
     resetSettings:  ()    => ipcRenderer.invoke('settings:reset'),
     pickFolder:     ()    => ipcRenderer.invoke('settings:pick-folder'),
     openFolder:     (p)   => ipcRenderer.invoke('open-folder', p),
+    openExternal:   (url) => ipcRenderer.invoke('shell:open-external', url),
+
+    // Update check (fires from main on app launch if a newer release exists)
+    onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, payload) => cb(payload)),
 
     // Auth
     tokenExists:    ()    => ipcRenderer.invoke('token:exists'),

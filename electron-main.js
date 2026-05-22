@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { spawn } = require('child_process');
 
 // Force userData to %APPDATA%\Roaming\robogears Downloader\ on both dev and
@@ -72,6 +73,75 @@ function createWindow() {
     // mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
+// ─── Update check ─────────────────────────────────────────────────────────────
+
+function isNewerVersion(remote, current) {
+    const r = String(remote).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const c = String(current).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(r.length, c.length);
+    for (let i = 0; i < len; i++) {
+        const a = r[i] || 0, b = c[i] || 0;
+        if (a > b) return true;
+        if (a < b) return false;
+    }
+    return false;
+}
+
+function fetchLatestRelease() {
+    return new Promise((resolve) => {
+        const req = https.request({
+            hostname: 'api.github.com',
+            path: '/repos/robogears/robogearsDownloader/releases/latest',
+            method: 'GET',
+            headers: {
+                'User-Agent': `robogears-downloader/${app.getVersion()}`,
+                'Accept': 'application/vnd.github+json',
+            },
+            timeout: 10_000,
+        }, (res) => {
+            let data = '';
+            res.on('data', d => data += d);
+            res.on('end', () => {
+                if (res.statusCode !== 200) return resolve(null);
+                try { resolve(JSON.parse(data)); }
+                catch { resolve(null); }
+            });
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+        req.end();
+    });
+}
+
+async function checkForUpdatesAndNotify() {
+    const release = await fetchLatestRelease();
+    if (!release || !release.tag_name) return;
+    if (!isNewerVersion(release.tag_name, app.getVersion())) return;
+
+    // Pick the asset matching the current platform; fall back to the release
+    // page URL so the user can grab whatever they need.
+    const wantedSubstr = process.platform === 'darwin' ? 'mac-arm64.zip'
+                       : process.platform === 'win32'  ? '.exe'
+                       : null;
+    let downloadUrl = release.html_url;
+    if (wantedSubstr) {
+        const asset = (release.assets || []).find(a => a.name && a.name.includes(wantedSubstr));
+        if (asset && asset.browser_download_url) downloadUrl = asset.browser_download_url;
+    }
+
+    if (mainWindow) {
+        mainWindow.webContents.send('update:available', {
+            version: release.tag_name,
+            downloadUrl,
+            releaseUrl: release.html_url,
+        });
+    }
+}
+
+ipcMain.handle('shell:open-external', (_e, url) => {
+    if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
+});
+
 app.whenReady().then(async () => {
     // Prime the lib's library-check path from saved settings
     const s = loadSettings();
@@ -87,6 +157,10 @@ app.whenReady().then(async () => {
             if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
         }).catch(() => {});
     }
+
+    // Check GitHub releases for a newer version and surface it in the activity
+    // log. Renderer handles the race if it isn't ready yet (queues the payload).
+    checkForUpdatesAndNotify().catch(() => {});
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
