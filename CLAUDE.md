@@ -45,9 +45,10 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 
 ## MANDATORY RULES (these are non-negotiable)
 
-### 1. Default download folder is `Z:\Downloads`
+### 1. Download folder defaults — CLI vs GUI
 
-User has stated this loudly multiple times. The default is hard-coded in `tidal_download.js` (`DEFAULT_OUT_DIR`) and `bulk_runner.js`. If the user supplies an explicit path on the command line, honor it; otherwise tools fall back to `Z:\Downloads`. **Never use `Z:\Downloads\Music`, the current working directory, or anything else.**
+- **CLI** (`tidal_download.js`, `bulk_runner.js`): hard-coded fallback is `Z:\Downloads` when no path is passed via the command line. **Never use `Z:\Downloads\Music`, the current working directory, or anything else.**
+- **GUI**: starts **blank** on first launch — no auto-applied default folder. The user must pick one in Settings before `Download all` works (it errors out with "Pick a download folder in Settings first" otherwise). The boot welcome message reflects this state. Do not reintroduce a `DEFAULT_DOWNLOAD` constant in `electron-main.js`.
 
 ### 2. Album and playlist downloads land directly in the output dir
 

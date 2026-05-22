@@ -574,6 +574,8 @@ function extractTracksFromOCR(text) {
 
     if (!(await api.tokenExists())) {
         appendLine('👋 Welcome! Click the ⚙ icon to sign in to TIDAL.');
+    } else if (!settings.downloadFolder) {
+        appendLine('Pick a download folder in Settings to get started.');
     } else {
         appendLine(`Ready. Downloads go to: ${settings.downloadFolder}`);
     }

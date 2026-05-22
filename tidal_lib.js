@@ -18,10 +18,10 @@ const DEFAULT_RETRIES = 3;
 /**
  * Master music library — read-only check before any download. If a track with
  * a matching title already exists here, we skip the download. The path is
- * configurable via Settings; defaults to Z:\Dropbox\Music for back-compat.
- * Empty string disables the library check entirely.
+ * configurable via Settings; defaults to '' (no library configured), which
+ * makes the library check a no-op until the user picks a folder.
  */
-let LIBRARY_PATH = process.env.TIDAL_LIBRARY_FOLDER || 'Z:\\Dropbox\\Music';
+let LIBRARY_PATH = process.env.TIDAL_LIBRARY_FOLDER || '';
 const LIBRARY_EXTS = new Set(['.flac', '.m4a', '.mp3', '.wav', '.aac', '.ogg', '.opus', '.alac']);
 
 /** Override the library path at runtime; resets the scan cache. */

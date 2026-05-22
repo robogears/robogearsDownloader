@@ -15,11 +15,10 @@ if (app.isPackaged) {
 const lib = require('./tidal_lib');
 
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULT_DOWNLOAD = 'Z:\\Downloads';
 
 function loadSettings() {
     try { return JSON.parse(fs.readFileSync(SETTINGS_PATH(), 'utf8')); }
-    catch { return { downloadFolder: DEFAULT_DOWNLOAD }; }
+    catch { return {}; }
 }
 function saveSettings(s) {
     const prev = loadSettings();
@@ -73,11 +72,14 @@ app.whenReady().then(async () => {
 
     createWindow();
 
-    // Warm the library scan in the background — by the time the user pastes a
-    // URL, it'll already be done (or close to it).
-    lib.scanLibrary().then(c => {
-        if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
-    }).catch(() => {});
+    // Warm the library scan in the background — but only if the user has
+    // configured a library folder. On first launch (no settings) we skip
+    // entirely so the app doesn't index a phantom path.
+    if (s.libraryFolder) {
+        lib.scanLibrary().then(c => {
+            if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
+        }).catch(() => {});
+    }
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -95,10 +97,10 @@ ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:save', (_e, s) => { saveSettings(s); return s; });
 
 ipcMain.handle('settings:pick-folder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory'],
-        defaultPath: loadSettings().downloadFolder || DEFAULT_DOWNLOAD,
-    });
+    const opts = { properties: ['openDirectory'] };
+    const saved = loadSettings().downloadFolder;
+    if (saved) opts.defaultPath = saved;
+    const result = await dialog.showOpenDialog(mainWindow, opts);
     return result.canceled ? null : result.filePaths[0];
 });
 
@@ -274,10 +276,11 @@ ipcMain.handle('resolve:ocr-tracks', async (_e, { tracks }) => {
 
 ipcMain.handle('bulk:start', async (_e, { tracks, outDir }) => {
     if (activeChild) return { ok: false, error: 'Another download is already running.' };
+    if (!outDir) return { ok: false, error: 'No download folder configured. Pick one in Settings.' };
 
     // Write a temp tracklist json the helper script reads
     const listPath = path.join(app.getPath('userData'), 'pending-tracklist.json');
-    fs.writeFileSync(listPath, JSON.stringify({ tracks, outDir: outDir || DEFAULT_DOWNLOAD }, null, 2));
+    fs.writeFileSync(listPath, JSON.stringify({ tracks, outDir }, null, 2));
 
     activeChild = spawn(process.execPath, [path.join(__dirname, 'bulk_runner.js'), listPath], {
         cwd: __dirname,

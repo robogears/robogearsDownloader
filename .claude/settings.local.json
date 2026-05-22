@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -n \"downloadFolder\\\\|libraryFolder\\\\|download-folder\\\\|library-folder\\\\|Z:\\\\\\\\\\\\\\\\Downloads\\\\|Z:\\\\\\\\\\\\\\\\Dropbox\" renderer/app.js renderer/index.html)"
+      "Bash(grep -n \"downloadFolder\\\\|libraryFolder\\\\|download-folder\\\\|library-folder\\\\|Z:\\\\\\\\\\\\\\\\Downloads\\\\|Z:\\\\\\\\\\\\\\\\Dropbox\" renderer/app.js renderer/index.html)",
+      "Bash(node -e \"const lib = require\\('./tidal_lib'\\); console.log\\('OK. LIBRARY_PATH:', JSON.stringify\\(lib.LIBRARY_PATH\\), 'exports:', Object.keys\\(lib\\).length\\);\")",
+      "Bash(node --check electron-main.js)",
+      "Bash(node --check renderer/app.js)",
+      "PowerShell(Get-Process electron -ErrorAction SilentlyContinue)"
     ]
   }
 }
