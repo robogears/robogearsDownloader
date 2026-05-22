@@ -1,3 +1,9 @@
+# What's new in v0.1.1
+
+- Fix CI release workflow — disable electron-builder's implicit publisher (was demanding `GH_TOKEN` on tag push and failing the mac build). Releases now flow through `softprops/action-gh-release` exclusively.
+
+This is the **first public binary release**. Features listed under v0.1.0 below describe what's in this build — v0.1.0 itself never shipped because the release workflow broke.
+
 # What's new in v0.1.0
 
 First public release. Highlights:
