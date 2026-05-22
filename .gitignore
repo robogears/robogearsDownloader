@@ -14,8 +14,9 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ─── Electron build output ─────────────────────────────────────
+# Note: electron-builder writes outputs to dist/. The build/ directory is
+# for build-time INPUTS (icons, afterPack hooks) and must stay tracked.
 dist/
-build/
 out/
 .cache/
 

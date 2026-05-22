@@ -1,6 +1,6 @@
 {
   "name": "robogears-downloader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Desktop app for downloading lossless FLAC tracks from TIDAL via TIDAL/Spotify URLs, search, or screenshot OCR.",
   "main": "electron-main.js",
   "scripts": {
@@ -30,6 +30,7 @@
     "productName": "robogears Downloader",
     "copyright": "Copyright © 2026 robogears",
     "publish": null,
+    "afterPack": "./build/after-pack.js",
     "directories": {
       "output": "dist"
     },
