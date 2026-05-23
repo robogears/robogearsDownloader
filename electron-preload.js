@@ -28,8 +28,8 @@ contextBridge.exposeInMainWorld('api', {
     onAuthOutput:   (cb)  => ipcRenderer.on('auth:output', (_e, l) => cb(l)),
     onAuthUrl:      (cb)  => ipcRenderer.on('auth:url', (_e, url) => cb(url)),
 
-    // Download
-    startDownload:  (p)   => ipcRenderer.invoke('download:start', p),
+    // Download lifecycle (shared with the bulk flow — single-track downloads
+    // also go through startBulk)
     cancelDownload: ()    => ipcRenderer.invoke('download:cancel'),
     onDownloadLine: (cb)  => ipcRenderer.on('download:line', (_e, l) => cb(l)),
     onDownloadDone: (cb)  => ipcRenderer.on('download:done', (_e, r) => cb(r)),

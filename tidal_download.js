@@ -48,7 +48,6 @@ function parseArgs(argv) {
         force: false,
         debug: !!process.env.DEBUG,
         help: false,
-        allowAac: true,
         flacOnly: false,
         skipLibraryCheck: false,   // bulk_runner sets this — queue already vetted
     };
@@ -58,8 +57,7 @@ function parseArgs(argv) {
         if (a === '--help' || a === '-h') flags.help = true;
         else if (a === '--force') flags.force = true;
         else if (a === '--debug') flags.debug = true;
-        else if (a === '--allow-aac') flags.allowAac = true;
-        else if (a === '--flac-only') { flags.flacOnly = true; flags.allowAac = false; }
+        else if (a === '--flac-only') flags.flacOnly = true;
         else if (a === '--skip-library-check') flags.skipLibraryCheck = true;
         else if (a === '--quality') flags.quality = argv[++i];
         else if (a === '--concurrency') flags.concurrency = parseInt(argv[++i], 10);

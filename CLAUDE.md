@@ -178,10 +178,9 @@ See `electron-preload.js` for the full list. Grouped:
 - `api.resolveOcr({ tracks })` — OCR'd {title,artist} → matched TIDAL tracks (only used if OCR is feature-flagged back on)
 
 **Download**
-- `api.startBulk({ tracks, outDir })` — kicks off batch download
-- `api.startDownload({ input, outDir })` — legacy single-URL flow
-- `api.cancelDownload()` — exists but no UI calls it
-- `api.onDownloadLine(cb)` / `api.onDownloadDone(cb)` — stdout/exit events
+- `api.startBulk({ tracks, outDir })` — kicks off batch download (single-track downloads also go through here — there's no separate single-URL IPC)
+- `api.cancelDownload()` — kills the active bulk_runner child; called from the renderer's Cancel button
+- `api.onDownloadLine(cb)` / `api.onDownloadDone(cb)` — stdout/exit events (shared by the bulk flow)
 
 **Library**
 - `api.libraryStatus()` / `api.libraryRescan()` — scanner state + manual refresh

@@ -572,53 +572,6 @@ ipcMain.handle('token:run-auth', async () => {
 
 // ─── IPC: download ────────────────────────────────────────────────────────────
 
-ipcMain.handle('download:start', async (_e, { input, outDir }) => {
-    if (activeChild) return { ok: false, error: 'Another download is already running.' };
-
-    const args = [path.join(__dirname, 'tidal_download.js'), input];
-    if (outDir) args.push(outDir);
-
-    // No cwd: in packaged builds __dirname is an asar virtual path, and
-    // posix_spawn/CreateProcess can't chdir into it (same ENOENT issue we hit
-    // with the auth flow). Default cwd is fine — scripts use __dirname or
-    // absolute paths, never cwd-relative.
-    activeChild = spawn(process.execPath, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: childEnv(),
-    });
-
-    // Stream output line-by-line to the renderer
-    const forward = (stream) => {
-        let buf = '';
-        stream.on('data', d => {
-            buf += d.toString();
-            const lines = buf.split(/\r?\n/);
-            buf = lines.pop();
-            for (const line of lines) {
-                if (line.length) mainWindow.webContents.send('download:line', line);
-            }
-        });
-        stream.on('end', () => {
-            if (buf.length) mainWindow.webContents.send('download:line', buf);
-        });
-    };
-    forward(activeChild.stdout);
-    forward(activeChild.stderr);
-
-    return new Promise((resolve) => {
-        activeChild.on('close', code => {
-            mainWindow.webContents.send('download:done', { code });
-            activeChild = null;
-            resolve({ ok: code === 0, code });
-        });
-        activeChild.on('error', err => {
-            mainWindow.webContents.send('download:done', { code: -1, error: err.message });
-            activeChild = null;
-            resolve({ ok: false, error: err.message });
-        });
-    });
-});
-
 ipcMain.handle('download:cancel', () => {
     if (activeChild) {
         try { activeChild.kill(); } catch {}
