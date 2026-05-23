@@ -38,9 +38,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mac-build
-          path: |
-            dist/robogears-downloader-mac-arm64.zip
-            dist/robogears-downloader-mac-arm64.dmg
+          path: dist/robogears-downloader-mac-arm64.dmg
           if-no-files-found: error
 
   release:
@@ -60,5 +58,4 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             artifacts/win-build/robogears-downloader.exe
-            artifacts/mac-build/robogears-downloader-mac-arm64.zip
             artifacts/mac-build/robogears-downloader-mac-arm64.dmg

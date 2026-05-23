@@ -136,7 +136,7 @@ async function getUpdateStatus() {
     if (!isNewerVersion(release.tag_name, app.getVersion())) {
         return { status: 'up-to-date', version: app.getVersion() };
     }
-    const wantedSubstr = process.platform === 'darwin' ? 'mac-arm64.zip'
+    const wantedSubstr = process.platform === 'darwin' ? 'mac-arm64.dmg'
                        : process.platform === 'win32'  ? '.exe'
                        : null;
     let downloadUrl = release.html_url;
@@ -219,22 +219,53 @@ function downloadToFile(url, destPath, onProgress) {
     });
 }
 
-// Extract a macOS .zip into a staging dir using `ditto` (preserves extended
-// attributes properly; `unzip` can mangle them). Returns the path to the
-// extracted .app bundle inside the staging dir.
-function extractMacZip(zipPath) {
+// Mount a macOS .dmg via hdiutil, copy the .app out via ditto (preserves
+// extended attributes that hdiutil's read-only mount and plain cp would lose),
+// and unmount. Returns the path to the staged .app bundle the relauncher
+// script will move into /Applications/.
+function mountAndExtractMacDmg(dmgPath) {
     return new Promise((resolve, reject) => {
-        const extractDir = path.join(os.tmpdir(), `robogears-update-${Date.now()}`);
-        fs.mkdirSync(extractDir, { recursive: true });
-        const p = spawn('ditto', ['-x', '-k', zipPath, extractDir]);
-        p.on('error', reject);
-        p.on('close', (code) => {
-            if (code !== 0) return reject(new Error(`ditto exit ${code}`));
-            // Find the .app bundle in the extracted dir
-            const entries = fs.readdirSync(extractDir);
-            const appName = entries.find(n => n.endsWith('.app'));
-            if (!appName) return reject(new Error('No .app bundle in extracted zip'));
-            resolve(path.join(extractDir, appName));
+        const ts = Date.now();
+        const mountPoint = path.join(os.tmpdir(), `robogears-mount-${ts}`);
+        const stagingDir = path.join(os.tmpdir(), `robogears-update-${ts}`);
+        try { fs.mkdirSync(stagingDir, { recursive: true }); } catch {}
+
+        // Always try to detach the mount point on the way out — even on failure
+        // — so we don't leave phantom Finder volumes lying around.
+        const detach = () => {
+            try {
+                spawn('hdiutil', ['detach', '-quiet', mountPoint], { stdio: 'ignore' }).unref();
+            } catch {}
+        };
+
+        const attach = spawn('hdiutil',
+            ['attach', '-nobrowse', '-quiet', '-mountpoint', mountPoint, dmgPath],
+            { stdio: 'ignore' });
+        attach.on('error', reject);
+        attach.on('close', (code) => {
+            if (code !== 0) return reject(new Error(`hdiutil attach exit ${code}`));
+
+            let appName;
+            try {
+                appName = fs.readdirSync(mountPoint).find(n => n.endsWith('.app'));
+            } catch (e) {
+                detach();
+                return reject(new Error(`Could not read mounted DMG: ${e.message}`));
+            }
+            if (!appName) {
+                detach();
+                return reject(new Error('No .app bundle found inside the DMG'));
+            }
+
+            const sourceApp = path.join(mountPoint, appName);
+            const destApp = path.join(stagingDir, appName);
+            const cp = spawn('ditto', [sourceApp, destApp], { stdio: 'ignore' });
+            cp.on('error', (err) => { detach(); reject(err); });
+            cp.on('close', (cpCode) => {
+                detach();
+                if (cpCode !== 0) return reject(new Error(`ditto exit ${cpCode}`));
+                resolve(destApp);
+            });
         });
     });
 }
@@ -242,7 +273,7 @@ function extractMacZip(zipPath) {
 ipcMain.handle('update:download', async (_e, url) => {
     if (!canSelfInstall()) return { ok: false, error: 'Self-install not supported on this build' };
     if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return { ok: false, error: 'Invalid URL' };
-    const ext = process.platform === 'darwin' ? '.zip' : '.exe';
+    const ext = process.platform === 'darwin' ? '.dmg' : '.exe';
     const destPath = path.join(os.tmpdir(), `robogears-downloader-${Date.now()}${ext}`);
     try {
         await downloadToFile(url, destPath, (got, total) => {
@@ -251,10 +282,10 @@ ipcMain.handle('update:download', async (_e, url) => {
             }
         });
         if (process.platform === 'darwin') {
-            // Unzip to a staging dir and remember the extracted .app path
-            const extractedApp = await extractMacZip(destPath);
+            // Mount the .dmg, copy the .app to a staging dir, unmount.
+            const extractedApp = await mountAndExtractMacDmg(destPath);
             global._pendingUpdatePath = extractedApp;
-            try { fs.unlinkSync(destPath); } catch {} // zip no longer needed
+            try { fs.unlinkSync(destPath); } catch {} // dmg no longer needed
         } else {
             global._pendingUpdatePath = destPath;
         }
