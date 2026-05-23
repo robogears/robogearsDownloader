@@ -8,7 +8,7 @@
 </head>
 <body>
     <header class="topbar">
-        <div class="brand">
+        <div class="brand" id="brand">
             <svg class="brand-logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
                 <!-- Vinyl record with a download arrow on the label.
                      Simplified version of build/icon.svg for the topbar — no outer
@@ -61,7 +61,17 @@
         <!-- Queue -->
         <section class="queue" id="queue-section" hidden>
             <div class="queue-head">
-                <span class="queue-title">Queue <span class="queue-count" id="queue-count">0</span></span>
+                <div class="queue-head-left">
+                    <span class="queue-title">Queue <span class="queue-count" id="queue-count">0</span></span>
+                    <div class="queue-volume" title="Preview volume">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                        </svg>
+                        <input id="volume-slider" type="range" min="0" max="100" value="50" aria-label="Preview volume">
+                    </div>
+                </div>
                 <div class="queue-actions">
                     <button id="cancel-queue" class="text-btn cancel-btn" hidden>Cancel</button>
                     <button id="retry-all" class="text-btn retry-all-btn" hidden>↻ Retry all</button>
@@ -160,6 +170,7 @@
                         <button id="check-updates-btn" class="secondary-btn">Check for updates</button>
                     </div>
                     <p class="hint">Checks GitHub for a newer release. If one's found, a download notice appears in the activity log.</p>
+                    <p class="modal-signature">made with love by robogears :)</p>
                 </div>
             </div>
             <div class="modal-foot">

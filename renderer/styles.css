@@ -57,6 +57,12 @@ input, textarea { user-select: text; }
     font-weight: 700;
     letter-spacing: -0.2px;
 }
+/* The logo, name, and version accept clicks for the easter egg; the rest of
+   the brand row stays a drag handle. */
+.brand-logo, .brand-name, .brand-version {
+    -webkit-app-region: no-drag;
+    cursor: pointer;
+}
 .brand-logo {
     flex-shrink: 0;
     display: block;
@@ -455,6 +461,53 @@ textarea {
 .queue-actions .primary-btn {
     padding: 8px 16px;
     font-size: 13px;
+}
+
+/* Left side of the queue header — title + volume sit together. */
+.queue-head-left {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+.queue-volume {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+}
+.queue-volume input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    height: 3px;
+    width: 80px;
+    border-radius: 999px;
+    outline: none;
+    cursor: pointer;
+    margin: 0;
+    padding: 0;
+}
+.queue-volume input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: var(--text);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 0;
+    transition: transform 0.1s;
+}
+.queue-volume input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.18);
+}
+.queue-volume input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: var(--text);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 0;
 }
 
 .queue-list {
@@ -930,6 +983,23 @@ textarea {
     margin-top: 28px;
     padding-top: 24px;
     border-top: 1px solid var(--border);
+}
+
+/* Updates pane: flex column so the signature sticks to the bottom-left. */
+.modal-pane[data-pane="updates"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+.modal-pane[data-pane="updates"][hidden] { display: none; }
+.modal-signature {
+    margin: auto 0 -8px 0;  /* push to bottom via flex auto-margin; -8px nudges it
+                              slightly lower into the natural modal-body padding */
+    padding: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-style: italic;
+    text-align: left;
 }
 
 .folder-row,

@@ -37,6 +37,8 @@ const clearQueueBtn = $('#clear-queue');
 const cancelQueueBtn = $('#cancel-queue');
 const retryAllBtn = $('#retry-all');
 const downloadAllBtn = $('#download-all');
+const volumeSlider = $('#volume-slider');
+const brandEl = $('#brand');
 const searchModalTitle = $('#search-modal-title');
 const searchModalHint = $('#search-modal-hint');
 const searchResultsEl = $('#search-results');
@@ -190,6 +192,81 @@ function _honkPair(highFreq, lowFreq, opts = {}) {
 }
 function playClownHorn()   { _honkPair(420, 310); }
 function playWarningHonk() { _honkPair(220, 165, { lpFreq: 1100, peak: 0.3 }); }
+// Easter egg — click anywhere on the topbar brand. Sub-bass sawtooth with a
+// wobble LFO and a lowpass for that signature "brapppp" character. Kept short
+// (~400ms) so it doesn't outstay its welcome.
+//
+// pitchScale > 1 yields a high-pitched "tiny fart" — used when the user
+// clicks the version number for a comedic contrast with the full-pitch
+// logo/name click.
+function playFart({ pitchScale = 1 } = {}) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    const duration = 0.42;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(95 * pitchScale, t);
+    osc.frequency.exponentialRampToValueAtTime(48 * pitchScale, t + duration);
+
+    // LFO for the wobble — modulates the osc frequency. Scale the LFO rate
+    // modestly so high-pitched variants still have audible wobble character.
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 17 * Math.sqrt(pitchScale);
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 18 * pitchScale;
+    lfo.connect(lfoGain).connect(osc.frequency);
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    // Cutoff scales with pitch so we don't filter out the new fundamental.
+    lp.frequency.value = 480 * pitchScale;
+    lp.Q.value = 2.2;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.42, t + 0.02);
+    gain.gain.linearRampToValueAtTime(0.32, t + duration * 0.45);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    osc.connect(lp).connect(gain).connect(ctx.destination);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + duration + 0.05);
+    lfo.stop(t + duration + 0.05);
+}
+// Ascending major triad with bell-like decay — fires once the batch finishes
+// cleanly. Distinct from the "starting" chime (which is a two-note rising
+// fifth) so the user can tell starting vs done by ear alone.
+function playSuccessPing() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const bell = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc2.type = 'sine';
+        osc.frequency.value = freq;
+        osc2.frequency.value = freq * 1.005;          // slight detune for warmth
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.22, startTime + 0.008);  // fast attack
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        osc.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc2.start(startTime);
+        osc.stop(startTime + duration + 0.05);
+        osc2.stop(startTime + duration + 0.05);
+    };
+    const t = ctx.currentTime + 0.02;
+    // G5 → C6 → E6, overlapping for a chord-arpeggio feel
+    bell(783.99,  t,         0.28);
+    bell(1046.50, t + 0.07,  0.32);
+    bell(1318.51, t + 0.14,  0.42);
+}
 const FUNNY_LOADING = [
     'Searching the seven seas for your music…',
     'Digging through the record crates…',
@@ -354,6 +431,41 @@ async function insertUpdateNotice({ version, downloadUrl }) {
 
 api.onUpdateAvailable(insertUpdateNotice);
 
+// ─── Easter egg: click the brand for a fart ─────────────────────────────────
+// Only the logo, name, and version accept clicks (the rest of the topbar row
+// stays a drag handle via -webkit-app-region: drag). The version gets a
+// pitched-up "tiny fart" for comedic contrast with the full-pitch one.
+brandEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.closest('.brand-version')) playFart({ pitchScale: 7 });
+    else if (t.closest('.brand-logo') || t.closest('.brand-name')) playFart();
+});
+
+// ─── Preview volume ──────────────────────────────────────────────────────────
+// `settings.volume` stores the SLIDER position (0-1, linear). The audio's
+// actual volume is the squared curve of that — so the low end of the slider
+// drops off much faster than linear, matching how human hearing perceives
+// loudness. At slider 50%, audio is 25%. At slider 10%, audio is 1%.
+function sliderToAudioVolume(linear) {
+    const v = Math.min(1, Math.max(0, linear));
+    return v * v;
+}
+function getPreviewVolume() {
+    const v = typeof settings.volume === 'number' ? settings.volume : 0.5;
+    return sliderToAudioVolume(v);
+}
+
+let _volumeSaveTimer = null;
+volumeSlider.addEventListener('input', () => {
+    const linear = volumeSlider.value / 100;
+    settings.volume = linear;
+    if (previewState.audio) previewState.audio.volume = sliderToAudioVolume(linear);
+    // Persist after the user stops dragging — debounced so the slider stays
+    // snappy and disk IO doesn't fire on every pixel of drag.
+    clearTimeout(_volumeSaveTimer);
+    _volumeSaveTimer = setTimeout(() => api.saveSettings(settings), 300);
+});
+
 // ─── Audio preview / waveform (experimental) ────────────────────────────────
 // One playing track at a time. Click play on any queue row to fetch the audio
 // via main process, decode for peaks, and play through a blob-backed <audio>
@@ -364,12 +476,29 @@ api.onUpdateAvailable(insertUpdateNotice);
 // <audio> element points at. LRU-evicted at 3 entries — keeps memory bounded
 // even after long preview sessions.
 
+// Two-tier cache:
+//   peaksCache — unlimited (each entry is ~800 bytes of Float32Array). Survives
+//                aggressively so any track that's ever been previewed paints
+//                its waveform instantly on re-render.
+//   audioCache — LRU MAX_AUDIO_CACHE entries. Holds the Blob URL backing the
+//                <audio> element. Each entry pins ~30 MB of audio bytes in
+//                memory, so we keep this tight and evict with revokeObjectURL.
 const previewState = {
     playingTidalId: null,
     audio: null,
     audioCtx: null,
-    cache: new Map(),
-    MAX_CACHE: 3,
+    peaksCache: new Map(),
+    audioCache: new Map(),
+    MAX_AUDIO_CACHE: 3,
+};
+
+// Background pre-loader. When tracks land in the queue we enqueue them for
+// peaks fetch + decode at concurrency 2 — slow enough not to saturate the
+// network, fast enough that small queues finish in a few seconds.
+const preloader = {
+    queue: [],
+    inFlight: 0,
+    CONCURRENCY: 2,
 };
 
 function getPreviewCtx() {
@@ -382,19 +511,19 @@ function getPreviewCtx() {
     return previewState.audioCtx;
 }
 
-function evictPreviewCache() {
-    while (previewState.cache.size > previewState.MAX_CACHE) {
-        const oldestKey = previewState.cache.keys().next().value;
+function evictAudioCache() {
+    while (previewState.audioCache.size > previewState.MAX_AUDIO_CACHE) {
+        const oldestKey = previewState.audioCache.keys().next().value;
         if (oldestKey === previewState.playingTidalId) {
             // Don't evict the currently-playing entry; bump it to the end.
-            const entry = previewState.cache.get(oldestKey);
-            previewState.cache.delete(oldestKey);
-            previewState.cache.set(oldestKey, entry);
+            const entry = previewState.audioCache.get(oldestKey);
+            previewState.audioCache.delete(oldestKey);
+            previewState.audioCache.set(oldestKey, entry);
             continue;
         }
-        const old = previewState.cache.get(oldestKey);
+        const old = previewState.audioCache.get(oldestKey);
         try { URL.revokeObjectURL(old.blobUrl); } catch {}
-        previewState.cache.delete(oldestKey);
+        previewState.audioCache.delete(oldestKey);
     }
 }
 
@@ -479,47 +608,118 @@ function setPlayButtonState(tidalId, state) {
     else                          { btn.innerHTML = PLAY_ICON_HTML; }
 }
 
-async function loadPreviewAudio(tidalId) {
-    if (previewState.cache.has(tidalId)) {
-        // LRU bump
-        const entry = previewState.cache.get(tidalId);
-        previewState.cache.delete(tidalId);
-        previewState.cache.set(tidalId, entry);
-        return entry;
-    }
+// Fetch raw audio bytes for a track. Cheap-ish to call (one IPC, returns a
+// Buffer) but the actual download is the big cost. No caching here — callers
+// decide whether to keep the bytes around (via the Blob) or drop them after
+// peak extraction (pre-loader does this to save memory).
+async function fetchAudioBytesIpc(tidalId) {
     const r = await api.getPreviewAudio(tidalId);
     if (!r.ok) throw new Error(r.error || 'preview fetch failed');
-
-    // The Buffer comes through as a Uint8Array view. Slice to a clean
-    // ArrayBuffer for decodeAudioData (which consumes its input).
     const bytes = r.audioBytes;
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return { ab, mimeType: r.mimeType || 'audio/flac' };
+}
 
+// Decode an ArrayBuffer and extract waveform peaks. decodeAudioData detaches
+// its input; caller is responsible for slicing if they need the bytes after.
+async function decodePeaksFromBuffer(ab) {
     const ctx = getPreviewCtx();
     if (!ctx) throw new Error('Web Audio not supported');
+    const audioBuffer = await ctx.decodeAudioData(ab);
+    return computePeaks(audioBuffer, 200);
+}
 
-    // decodeAudioData detaches its input, so give it a fresh copy and keep
-    // the original for the Blob.
-    const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
-    const peaks = computePeaks(audioBuffer, 200);
+// Returns peaks, fetching + decoding if not cached. Used by the pre-loader
+// and by the play path (which then additionally creates a Blob URL for the
+// <audio> element).
+async function getPeaks(tidalId) {
+    if (previewState.peaksCache.has(tidalId)) return previewState.peaksCache.get(tidalId);
+    const { ab } = await fetchAudioBytesIpc(tidalId);
+    // decodeAudioData consumes its input; since this branch isn't producing a
+    // Blob we don't need to slice — let the buffer be detached and freed.
+    const peaks = await decodePeaksFromBuffer(ab);
+    previewState.peaksCache.set(tidalId, peaks);
+    return peaks;
+}
 
-    const blob = new Blob([ab], { type: r.mimeType || 'audio/flac' });
-    const blobUrl = URL.createObjectURL(blob);
+// Returns { peaks, blobUrl } — both needed for playback. Goes through the
+// audio cache to keep the Blob URL pinned (and evictable). Re-fetches audio
+// if we previously only cached the peaks (preloaded but not played).
+async function getPlayableEntry(tidalId) {
+    // Audio side
+    let audioEntry = previewState.audioCache.get(tidalId);
+    if (audioEntry) {
+        // LRU bump
+        previewState.audioCache.delete(tidalId);
+        previewState.audioCache.set(tidalId, audioEntry);
+    } else {
+        const { ab, mimeType } = await fetchAudioBytesIpc(tidalId);
+        // If peaks already cached (pre-loaded), skip decode. Otherwise decode
+        // a copy and stash peaks for free.
+        if (!previewState.peaksCache.has(tidalId)) {
+            const peaks = await decodePeaksFromBuffer(ab.slice(0));
+            previewState.peaksCache.set(tidalId, peaks);
+        }
+        const blob = new Blob([ab], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        audioEntry = { blobUrl };
+        previewState.audioCache.set(tidalId, audioEntry);
+        evictAudioCache();
+    }
+    return { peaks: previewState.peaksCache.get(tidalId), blobUrl: audioEntry.blobUrl };
+}
 
-    const entry = { peaks, blobUrl };
-    previewState.cache.set(tidalId, entry);
-    evictPreviewCache();
-    return entry;
+// ─── Background pre-loader ──────────────────────────────────────────────────
+function enqueuePreload(tidalId) {
+    if (!PREVIEW_FEATURE_ENABLED) return;
+    if (!tidalId) return;
+    if (previewState.peaksCache.has(tidalId)) return;
+    if (preloader.queue.includes(tidalId)) return;
+    preloader.queue.push(tidalId);
+    drainPreloader();
+}
+
+function drainPreloader() {
+    while (preloader.inFlight < preloader.CONCURRENCY && preloader.queue.length) {
+        const tidalId = preloader.queue.shift();
+        if (previewState.peaksCache.has(tidalId)) continue;  // race check
+        preloader.inFlight++;
+        preloadOne(tidalId).finally(() => {
+            preloader.inFlight--;
+            drainPreloader();
+        });
+    }
+}
+
+async function preloadOne(tidalId) {
+    try {
+        const peaks = await getPeaks(tidalId);
+        // Paint any visible canvas(es) for this track — the user added the row
+        // before the peaks were ready, so the canvas is sitting in `empty` state.
+        queueList.querySelectorAll(`.qi-waveform[data-tidal-id="${tidalId}"]`).forEach(canvas => {
+            canvas.classList.remove('empty');
+            canvas.__peaks = peaks;
+            const progress = (previewState.playingTidalId === tidalId && previewState.audio && previewState.audio.duration)
+                ? previewState.audio.currentTime / previewState.audio.duration : 0;
+            drawWaveform(canvas, peaks, progress);
+        });
+    } catch {
+        // Silent — if the user clicks play they'll see the actual error from
+        // getPlayableEntry. Pre-load failures shouldn't yell.
+    }
 }
 
 function stopPreview() {
     const oldId = previewState.playingTidalId;
-    if (previewState.audio) {
-        try { previewState.audio.pause(); } catch {}
-        try { previewState.audio.src = ''; } catch {}
-    }
+    const oldAudio = previewState.audio;
+    // Null these out FIRST so any stale events fired by the teardown of the
+    // old audio element find previewState.audio === null and bail.
     previewState.audio = null;
     previewState.playingTidalId = null;
+    if (oldAudio) {
+        try { oldAudio.pause(); } catch {}
+        try { oldAudio.src = ''; } catch {}  // fires a delayed error event — guarded below
+    }
     if (oldId) {
         setPlayButtonState(oldId, 'idle');
         const oldRow = queueList.querySelector(`.queue-item[data-tidal-id="${oldId}"]`);
@@ -528,12 +728,15 @@ function stopPreview() {
     }
 }
 
-async function togglePreview(tidalId, row) {
+async function togglePreview(tidalId, row, { initialSeekRatio = 0 } = {}) {
     if (!row) return;
 
     // Same track currently playing/paused → toggle pause state.
     if (previewState.playingTidalId === tidalId && previewState.audio) {
         if (previewState.audio.paused) {
+            if (initialSeekRatio > 0 && isFinite(previewState.audio.duration)) {
+                previewState.audio.currentTime = initialSeekRatio * previewState.audio.duration;
+            }
             await previewState.audio.play().catch(() => {});
             setPlayButtonState(tidalId, 'playing');
         } else {
@@ -549,13 +752,21 @@ async function togglePreview(tidalId, row) {
     const canvas = row.querySelector('.qi-waveform');
     if (!canvas) return;
 
+    // If peaks are pre-loaded, paint immediately so the user has visual
+    // feedback while the audio fetch finishes.
+    if (previewState.peaksCache.has(tidalId)) {
+        canvas.classList.remove('empty');
+        canvas.__peaks = previewState.peaksCache.get(tidalId);
+        drawWaveform(canvas, canvas.__peaks, initialSeekRatio || 0);
+    }
+
     setPlayButtonState(tidalId, 'loading');
     try {
-        const { peaks, blobUrl } = await loadPreviewAudio(tidalId);
+        const { peaks, blobUrl } = await getPlayableEntry(tidalId);
 
         // Audio element
         const audio = new Audio(blobUrl);
-        audio.volume = 0.6;
+        audio.volume = getPreviewVolume();
         audio.preload = 'auto';
         previewState.audio = audio;
         previewState.playingTidalId = tidalId;
@@ -563,10 +774,29 @@ async function togglePreview(tidalId, row) {
         // Paint full waveform now that we have peaks
         canvas.classList.remove('empty');
         canvas.__peaks = peaks;
-        drawWaveform(canvas, peaks, 0);
+        drawWaveform(canvas, peaks, initialSeekRatio || 0);
+
+        // Apply initial seek before play — wait for metadata if necessary so
+        // duration is finite. Without this, `currentTime = N` is silently
+        // ignored before the audio is loaded enough.
+        if (initialSeekRatio > 0) {
+            if (!isFinite(audio.duration) || audio.duration <= 0) {
+                await new Promise(resolve => {
+                    audio.addEventListener('loadedmetadata', resolve, { once: true });
+                });
+            }
+            audio.currentTime = initialSeekRatio * audio.duration;
+        }
+
+        // Helper: every event listener below should be a no-op if the audio
+        // it fires on isn't the currently-tracked one (i.e., we've moved on
+        // to another track and this is a stale event from the torn-down
+        // element). The most common offender is the delayed `error` event
+        // that fires after we set `audio.src = ''` during stopPreview.
+        const isCurrent = () => previewState.audio === audio;
 
         const tick = () => {
-            if (previewState.playingTidalId !== tidalId || !previewState.audio) return;
+            if (!isCurrent()) return;
             const a = previewState.audio;
             const progress = a.duration ? a.currentTime / a.duration : 0;
             const liveCanvas = queueList.querySelector(`.qi-waveform[data-tidal-id="${tidalId}"]`);
@@ -576,12 +806,11 @@ async function togglePreview(tidalId, row) {
             }
             if (!a.paused) requestAnimationFrame(tick);
         };
-        audio.addEventListener('play', () => requestAnimationFrame(tick));
-        audio.addEventListener('pause', () => {
-            if (previewState.playingTidalId === tidalId) setPlayButtonState(tidalId, 'idle');
-        });
-        audio.addEventListener('ended', () => stopPreview());
+        audio.addEventListener('play',  () => { if (isCurrent()) requestAnimationFrame(tick); });
+        audio.addEventListener('pause', () => { if (isCurrent()) setPlayButtonState(tidalId, 'idle'); });
+        audio.addEventListener('ended', () => { if (isCurrent()) stopPreview(); });
         audio.addEventListener('error', () => {
+            if (!isCurrent()) return;  // stale error from a previously-torn-down element
             appendLine(`✗ Preview playback failed (${audio.error?.code || '?'}).`);
             stopPreview();
         });
@@ -688,14 +917,15 @@ function renderQueue() {
         `;
         queueList.appendChild(row);
 
-        // If we have cached peaks for this track (already previewed), repaint
-        // the waveform after re-render so it doesn't reset to a blank canvas.
-        if (PREVIEW_FEATURE_ENABLED && t.tidalId && previewState.cache.has(t.tidalId)) {
+        // If we have cached peaks for this track (already previewed or
+        // pre-loaded), repaint the waveform so it doesn't reset to a blank
+        // canvas after re-render.
+        if (PREVIEW_FEATURE_ENABLED && t.tidalId && previewState.peaksCache.has(t.tidalId)) {
             const canvas = row.querySelector('.qi-waveform');
             const playBtn = row.querySelector('.qi-play');
             if (canvas) {
                 canvas.classList.remove('empty');
-                canvas.__peaks = previewState.cache.get(t.tidalId).peaks;
+                canvas.__peaks = previewState.peaksCache.get(t.tidalId);
                 const progress = (previewState.playingTidalId === t.tidalId && previewState.audio)
                     ? (previewState.audio.duration ? previewState.audio.currentTime / previewState.audio.duration : 0)
                     : 0;
@@ -703,7 +933,7 @@ function renderQueue() {
             }
             if (playBtn && previewState.playingTidalId === t.tidalId && previewState.audio && !previewState.audio.paused) {
                 playBtn.classList.add('playing');
-                playBtn.textContent = '⏸';
+                playBtn.innerHTML = PAUSE_ICON_HTML;
             }
         }
     }
@@ -856,14 +1086,24 @@ function seekFromMouseEvent(canvas, e) {
 queueList.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;  // left button only
     const wf = e.target.closest('.qi-waveform');
-    if (!wf || !wf.__peaks) return;
+    if (!wf) return;
     const tidalId = Number(wf.dataset.tidalId);
-    // Only scrubbable on the currently-playing track. (For other rows, the
-    // play button is the right affordance to start that track first.)
-    if (previewState.playingTidalId !== tidalId) return;
-    e.preventDefault();
-    scrubbing = { canvas: wf };
-    seekFromMouseEvent(wf, e);
+    const rect = wf.getBoundingClientRect();
+    const rel = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+
+    if (previewState.playingTidalId === tidalId) {
+        // Currently playing — start a scrub session.
+        if (!wf.__peaks) return;
+        e.preventDefault();
+        scrubbing = { canvas: wf };
+        seekFromMouseEvent(wf, e);
+    } else {
+        // Different track (or nothing playing) — start this one from the
+        // clicked position. Stops anything that was playing.
+        e.preventDefault();
+        const row = wf.closest('.queue-item');
+        togglePreview(tidalId, row, { initialSeekRatio: rel });
+    }
 });
 
 // Hover or active scrub drives the same redraw path.
@@ -964,6 +1204,9 @@ function addTracksToQueue(tracks) {
         existing.add(key);
         queue.push({ ...t, key: uniqueKey() });
         added++;
+        // Kick off waveform pre-loading for any track with a tidalId — peaks
+        // paint in as they're ready, without requiring a play click.
+        if (t.tidalId && !t.notFound) enqueuePreload(t.tidalId);
     }
     renderQueue();
     if (added) saveQueueSoon();
@@ -1156,6 +1399,7 @@ api.onDownloadLine(appendLine);
 api.onDownloadDone(({ code }) => {
     setDownloading(false);
     if (code === 0) {
+        playSuccessPing();
         appendBatchDoneNotice();
     } else {
         appendLine(`=== Exit code ${code} ===`);
@@ -1539,6 +1783,8 @@ function extractTracksFromOCR(text) {
     settings = await api.getSettings();
     folderInput.value = settings.downloadFolder || '';
     libraryInput.value = settings.libraryFolder || '';
+    // Restore saved preview volume (defaults to 60% if unset)
+    volumeSlider.value = Math.round(getPreviewVolume() * 100);
     updateOpenButtonStates();
     await refreshAuthStatus();
 
@@ -1572,6 +1818,11 @@ function extractTracksFromOCR(text) {
             });
             renderQueue();
             appendLine(`↺ Restored ${queue.length} track${queue.length === 1 ? '' : 's'} from your last session.`);
+            // Pre-load waveforms for the restored queue (concurrency-2, so a
+            // long queue trickles in without blasting the network at once).
+            for (const t of queue) {
+                if (t.tidalId && !t.notFound) enqueuePreload(t.tidalId);
+            }
         }
     } catch { /* no saved queue or read error — start empty */ }
 
