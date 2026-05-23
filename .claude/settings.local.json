@@ -5,7 +5,21 @@
       "Bash(node -e \"const lib = require\\('./tidal_lib'\\); console.log\\('OK. LIBRARY_PATH:', JSON.stringify\\(lib.LIBRARY_PATH\\), 'exports:', Object.keys\\(lib\\).length\\);\")",
       "Bash(node --check electron-main.js)",
       "Bash(node --check renderer/app.js)",
-      "PowerShell(Get-Process electron -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Process electron -ErrorAction SilentlyContinue)",
+      "Bash(node --check electron-preload.js)",
+      "Bash(node --check tidal_download.js)",
+      "Bash(node --check bulk_runner.js)",
+      "PowerShell($env:npm_config_platform = \"darwin\"; $env:npm_config_arch = \"arm64\"; node ./node_modules/ffmpeg-static/install.js; Remove-Item Env:npm_config_platform, Env:npm_config_arch; if \\(Test-Path node_modules/ffmpeg-static/ffmpeg\\) { \\(Get-Item node_modules/ffmpeg-static/ffmpeg\\).Length / 1MB } else { Write-Output \"FAIL: ffmpeg binary not present\" })",
+      "Bash(gh release *)",
+      "Bash(git add *)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(node --check tidal_auth_node.js)",
+      "PowerShell($paths = @\\(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\", \"$env:LOCALAPPDATA\\\\Microsoft\\\\WinGet\\\\Links\\\\gh.exe\", \"$env:LOCALAPPDATA\\\\Programs\\\\GitHub CLI\\\\gh.exe\"\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Output \"Found: $p\"; & $p --version 2>$null | Select-Object -First 1; break } })",
+      "Bash(node -e \"const { authenticate } = require\\('./tidal_auth_node'\\); console.log\\('authenticate export:', typeof authenticate\\);\")",
+      "PowerShell(Get-ChildItem -Path \"$env:LOCALAPPDATA\\\\Microsoft\\\\WinGet\\\\Packages\" -Filter \"gh.exe\" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Format-List)"
     ]
   }
 }

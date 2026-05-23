@@ -309,51 +309,79 @@ ipcMain.handle('update:apply', () => {
         // last three segments to get the .app bundle path.
         const appBundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
         const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.sh`);
-        // The script waits for our PID to die, strips quarantine on the new
-        // .app (so Gatekeeper doesn't re-warn on relaunch), renames old → .bak,
-        // moves new into place, re-signs ad-hoc (the move can invalidate the
-        // signature), opens the new .app, and self-deletes. If anything in
-        // the rename/move chain fails, we attempt to roll back from .bak so
-        // the user is never left with no .app.
+        const logPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.log`);
+        // The script:
+        //   1. Redirects ALL output to a log file (~/Library/Logs would be nicer
+        //      but /tmp is reliable and the user can `cat` it after a failed update).
+        //   2. Waits for our PID to die (parent Electron process).
+        //   3. Strips com.apple.quarantine on the new .app so Gatekeeper doesn't
+        //      re-prompt on the relaunched build.
+        //   4. Renames old → .bak, moves new into place, re-signs ad-hoc
+        //      (the move can invalidate the signature), removes the .bak, opens
+        //      the new .app. Rolls back from .bak if anything fails so the user
+        //      is never left without an .app.
+        //   5. Self-deletes the script (but keeps the log around for diagnosis).
+        // The `trap` + `set -x` lines make the log thorough enough to debug.
         const script = [
             '#!/bin/bash',
+            `LOG="${logPath}"`,
+            'exec >>"$LOG" 2>&1',
+            'set -x',
+            'echo "=== robogears update script started at $(date) ==="',
             'PID=$1',
             `NEW_APP="${newPath}"`,
             `OLD_APP="${appBundle}"`,
             'BACKUP="${OLD_APP}.bak"',
+            'echo "PID=$PID NEW=$NEW_APP OLD=$OLD_APP"',
+            'echo "Waiting for parent process $PID to exit..."',
             'for i in $(seq 1 30); do',
-            '    if ! ps -p $PID > /dev/null 2>&1; then break; fi',
+            '    if ! ps -p $PID > /dev/null 2>&1; then echo "Parent gone after ${i}s"; break; fi',
             '    sleep 1',
             'done',
             'xattr -dr com.apple.quarantine "$NEW_APP" 2>/dev/null || true',
             'rm -rf "$BACKUP" 2>/dev/null',
+            'echo "Renaming old -> backup..."',
             'if mv "$OLD_APP" "$BACKUP"; then',
+            '    echo "Moving new -> old..."',
             '    if mv "$NEW_APP" "$OLD_APP"; then',
-            '        codesign --force --deep --sign - "$OLD_APP" 2>/dev/null || true',
+            '        echo "Re-signing ad-hoc..."',
+            '        codesign --force --deep --sign - "$OLD_APP" 2>&1 || true',
+            '        echo "Removing backup..."',
             '        rm -rf "$BACKUP"',
+            '        echo "Opening new app..."',
             '        open "$OLD_APP"',
+            '        echo "Done."',
             '    else',
-            '        # Roll back: restore the old .app from backup',
+            '        echo "ERROR: mv NEW->OLD failed, rolling back."',
             '        mv "$BACKUP" "$OLD_APP"',
             '        open "$OLD_APP"',
             '    fi',
+            'else',
+            '    echo "ERROR: mv OLD->BACKUP failed (permission? path?)."',
             'fi',
+            'echo "=== script finished at $(date) ==="',
             'rm -f "$0"',
             '',
         ].join('\n');
         fs.writeFileSync(scriptPath, script);
         fs.chmodSync(scriptPath, 0o755);
-        const child = spawn('/bin/bash', [scriptPath, String(process.pid)], {
+        // Use `nohup` so the script ignores SIGHUP when the parent process dies.
+        // Detached + unref alone is not always enough on macOS — the child can
+        // get killed alongside the parent if it hasn't fully reparented yet.
+        const child = spawn('/usr/bin/nohup', ['/bin/bash', scriptPath, String(process.pid)], {
             detached: true,
             stdio: 'ignore',
         });
         child.unref();
+        // Stash the log path so the renderer can show it if anything goes sideways.
+        global._lastUpdateLogPath = logPath;
     } else {
         return { ok: false, error: `Self-install not implemented for ${process.platform}` };
     }
 
-    // Give the spawn a beat to take hold before the parent dies
-    setTimeout(() => app.quit(), 200);
+    // Give the spawn a beat to fully reparent (especially through nohup on
+    // macOS) before the parent dies. 200ms was sometimes too tight.
+    setTimeout(() => app.quit(), 500);
     return { ok: true };
 });
 
