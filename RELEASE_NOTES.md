@@ -1,10 +1,10 @@
-# What's new in v0.1.18
+# What's new in v0.1.19
 
 ## Validation bump
-- No code changes from v0.1.17. This release exists so anyone on v0.1.17 has something newer to update to, end-to-end exercising the DMG-only auto-update path on macOS (and the portable-exe swap on Windows).
-- If you're already on v0.1.17: hitting **Download update** in the activity log should fetch the artifact, restart the app, and land you on this version with no manual steps.
+- No code changes from v0.1.18. Continues exercising the DMG-only auto-update path on macOS (and the portable-exe swap on Windows). If you're already on v0.1.17 or v0.1.18, hitting **Download update** should land you here automatically.
+- Pure release-plumbing test — no user-facing functionality change.
 
-If you're still on v0.1.16 or earlier on macOS, you'll need to install the v0.1.17 (or this) DMG manually once — older builds look for a `mac-arm64.zip` asset that no longer exists. After that one-time install, all future updates auto-apply.
+If you're still on v0.1.16 or earlier on macOS, you'll need to install the latest DMG manually once — older builds look for a `mac-arm64.zip` asset that no longer exists. After that one-time install, all future updates auto-apply.
 
 ---
 
@@ -22,4 +22,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.17...v0.1.18
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.18...v0.1.19
