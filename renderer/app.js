@@ -32,6 +32,8 @@ const queueSection = $('#queue-section');
 const queueList = $('#queue-list');
 const queueCount = $('#queue-count');
 const clearQueueBtn = $('#clear-queue');
+const cancelQueueBtn = $('#cancel-queue');
+const retryAllBtn = $('#retry-all');
 const downloadAllBtn = $('#download-all');
 const searchModalTitle = $('#search-modal-title');
 const searchModalHint = $('#search-modal-hint');
@@ -99,6 +101,35 @@ function playDownloadChime() {
     const t = ctx.currentTime + 0.02;
     blip(523.25, t, 0.13);          // C5
     blip(783.99, t + 0.09, 0.18);   // G5 (overlapping for chord feel)
+}
+// Mirror of playDownloadChime — same sine-pair instrumentation but the
+// pitches descend (G5 → C5) so it reads as the "stopping" counterpart to
+// the "starting" chime. Slightly shorter so it feels decisive.
+function playCancelChime() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const blip = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc2.type = 'sine';
+        osc.frequency.value = freq;
+        osc2.frequency.value = freq * 1.005;
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.22, startTime + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        osc.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc2.start(startTime);
+        osc.stop(startTime + duration + 0.05);
+        osc2.stop(startTime + duration + 0.05);
+    };
+    const t = ctx.currentTime + 0.02;
+    blip(783.99, t, 0.10);          // G5
+    blip(523.25, t + 0.07, 0.15);   // C5
 }
 // Two-tone descending honk. Shared between the "Coming soon" easter egg and
 // the download-blocked warning — only frequencies and the lowpass cutoff differ.
@@ -326,8 +357,16 @@ function renderQueue() {
         const progressBar = t.dlStatus === 'downloading'
             ? `<div class="qi-progress"><div class="qi-progress-fill" style="width:${t.dlPercent ?? 0}%"></div></div>`
             : '';
+        // Multi-select checkbox: only on failed rows that have a tidalId (a
+        // retriable failure). Pick any subset to retry as a batch via the
+        // "Retry selected" header button.
+        const canSelect = t.dlStatus === 'failed' && t.tidalId;
+        const checkbox = canSelect
+            ? `<span class="qi-check ${t.selected ? 'checked' : ''}" data-key="${t.key}" role="checkbox" aria-checked="${t.selected ? 'true' : 'false'}" tabindex="0" title="Select for batch retry"></span>`
+            : '';
 
         row.innerHTML = `
+            ${checkbox}
             <div class="qi-info">
                 <div class="qi-title">${escapeHtml(t.title)}</div>
                 <div class="qi-artist">${escapeHtml(t.artist)}${t.duration ? ` · ${fmtDuration(t.duration)}` : ''} ${status}</div>
@@ -346,6 +385,22 @@ function renderQueue() {
         downloadAllBtn.textContent = isDownloading ? 'Downloading…' : `Download (${downloadable.length})`;
     } else {
         downloadAllBtn.textContent = isDownloading ? 'Downloading…' : 'Download all';
+    }
+    // Retry header button — adapts to selection state:
+    //   • 1+ failed tracks selected via checkbox → "↻ Retry selected (M)"
+    //   • else 2+ failed tracks                  → "↻ Retry all (N)"
+    //   • otherwise                              → hidden
+    // Per-row retry buttons still handle the single-track immediate case.
+    const failedTracks  = queue.filter(t => t.dlStatus === 'failed' && t.tidalId);
+    const selectedTracks = failedTracks.filter(t => t.selected);
+    if (!isDownloading && selectedTracks.length >= 1) {
+        retryAllBtn.hidden = false;
+        retryAllBtn.textContent = `↻ Retry selected (${selectedTracks.length})`;
+    } else if (!isDownloading && failedTracks.length >= 2) {
+        retryAllBtn.hidden = false;
+        retryAllBtn.textContent = `↻ Retry all (${failedTracks.length})`;
+    } else {
+        retryAllBtn.hidden = true;
     }
     renderBatchProgress();
 }
@@ -388,6 +443,16 @@ function updateRowPercent(tidalId, percent) {
 }
 
 queueList.addEventListener('click', (e) => {
+    const check = e.target.closest('.qi-check');
+    if (check) {
+        const key = check.dataset.key;
+        const item = queue.find(t => t.key === key);
+        if (item) {
+            item.selected = !item.selected;
+            renderQueue();
+        }
+        return;
+    }
     const addBtn = e.target.closest('.qi-add');
     if (addBtn) {
         const key = addBtn.dataset.key;
@@ -553,10 +618,59 @@ function setDownloading(state) {
     isDownloading = state;
     addBtn.disabled = state;
     clearQueueBtn.disabled = state;
+    // Cancel button rides alongside Clear all — only visible while a batch is in flight.
+    cancelQueueBtn.hidden = !state;
+    cancelQueueBtn.disabled = false;
+    cancelQueueBtn.textContent = 'Cancel';
     renderQueue();
     downloadAllBtn.textContent = state ? 'Downloading…' : 'Download all';
     downloadAllBtn.disabled = state || queue.length === 0;
 }
+
+cancelQueueBtn.addEventListener('click', async () => {
+    if (!isDownloading) return;
+    playCancelChime();
+    cancelQueueBtn.disabled = true;
+    cancelQueueBtn.textContent = 'Cancelling…';
+    // Kill the child download process. The bulk:done event will follow, which
+    // triggers our normal post-batch cleanup. Mark any not-yet-terminal items
+    // as 'failed' so they show retry buttons instead of being stuck in
+    // 'downloading' or 'queued' forever.
+    await api.cancelDownload();
+    for (const t of queue) {
+        if (t.dlStatus === 'downloading' || t.dlStatus === 'queued') {
+            t.dlStatus = 'failed';
+            t.dlPercent = 0;
+        }
+    }
+    appendLine('⊗ Download cancelled.');
+    renderQueue();
+});
+
+// Retry all / Retry selected. Same button — if any failed tracks are
+// checkbox-selected, retry just those. Otherwise retry every failed track.
+// The per-row ↻ button still does immediate single-track retry.
+retryAllBtn.addEventListener('click', async () => {
+    if (isDownloading) return;
+    const failed = queue.filter(t => t.dlStatus === 'failed' && t.tidalId);
+    const selected = failed.filter(t => t.selected);
+    const targets = selected.length > 0 ? selected : failed;
+    if (!targets.length) return;
+    if (!settings.downloadFolder) {
+        playWarningHonk();
+        appendLine('⚠ Pick a download folder in Settings first.');
+        return;
+    }
+    for (const t of targets) {
+        t.dlStatus = 'queued';
+        t.dlPercent = 0;
+        t.selected = false; // clear selection — they're being processed
+    }
+    playDownloadChime();
+    setDownloading(true);
+    appendLine(`↻ Retrying ${targets.length} track${targets.length === 1 ? '' : 's'}…`);
+    await api.startBulk({ tracks: targets, outDir: settings.downloadFolder });
+});
 
 downloadAllBtn.addEventListener('click', async () => {
     if (isDownloading || !queue.length) return;

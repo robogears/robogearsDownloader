@@ -9,7 +9,15 @@
 <body>
     <header class="topbar">
         <div class="brand">
-            <span class="logo-dot"></span>
+            <svg class="brand-logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <!-- Vinyl record with a download arrow on the label.
+                     Simplified version of build/icon.svg for the topbar — no outer
+                     rounded background (would blend with the black topbar) and no
+                     grooves (would just be noise at this size). -->
+                <circle cx="12" cy="12" r="10" fill="#fff"/>
+                <circle cx="12" cy="12" r="5" fill="#000"/>
+                <path d="M10.5 7 L13.5 7 L13.5 10 L15.5 10 L12 14 L8.5 10 L10.5 10 Z" fill="#fff"/>
+            </svg>
             <span class="brand-name">robogears Downloader</span>
             <span class="brand-version" id="brand-version"></span>
         </div>
@@ -50,6 +58,8 @@
             <div class="queue-head">
                 <span class="queue-title">Queue <span class="queue-count" id="queue-count">0</span></span>
                 <div class="queue-actions">
+                    <button id="cancel-queue" class="text-btn cancel-btn" hidden>Cancel</button>
+                    <button id="retry-all" class="text-btn retry-all-btn" hidden>↻ Retry all</button>
                     <button id="clear-queue" class="text-btn">Clear all</button>
                     <button id="download-all" class="primary-btn">Download all</button>
                 </div>

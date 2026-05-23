@@ -57,23 +57,9 @@ input, textarea { user-select: text; }
     font-weight: 700;
     letter-spacing: -0.2px;
 }
-.logo-dot {
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    background: var(--text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: none;
-    position: relative;
-}
-.logo-dot::after {
-    content: "";
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--bg);
+.brand-logo {
+    flex-shrink: 0;
+    display: block;
 }
 .brand-name {
     font-size: 16px;
@@ -215,6 +201,19 @@ textarea {
     padding: 8px 14px;
 }
 .text-btn:hover { color: var(--text); }
+.text-btn.cancel-btn {
+    color: var(--error);
+}
+.text-btn.cancel-btn:hover {
+    color: #ff8a8a;
+}
+.text-btn.retry-all-btn {
+    color: var(--text);
+}
+.text-btn.retry-all-btn:hover {
+    color: var(--text);
+    background: var(--bg-elev);
+}
 
 .hint {
     margin: 12px 0 0;
@@ -584,6 +583,32 @@ textarea {
 .qi-retry:hover {
     color: var(--text);
     border-color: var(--text);
+}
+
+.qi-check {
+    width: 18px;
+    height: 18px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.15s, background 0.15s;
+    user-select: none;
+}
+.qi-check:hover { border-color: var(--text); }
+.qi-check.checked {
+    background: var(--text);
+    border-color: var(--text);
+}
+.qi-check.checked::after {
+    content: "✓";
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
 }
 
 /* ─── Overall batch progress (above the queue list) ───────────────────────── */
