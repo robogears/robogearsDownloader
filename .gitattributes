@@ -1,0 +1,5 @@
+# Shell scripts must always check out with LF endings — bash on macOS/Linux
+# interprets CRLF as part of the command and throws cryptic `\r: command not
+# found` errors. Force normalization regardless of local autocrlf setting.
+*.command text eol=lf
+*.sh      text eol=lf
