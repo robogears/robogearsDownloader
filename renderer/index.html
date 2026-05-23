@@ -19,11 +19,6 @@
                 <path d="M10.5 7 L13.5 7 L13.5 10 L15.5 10 L12 14 L8.5 10 L10.5 10 Z" fill="#fff"/>
             </svg>
             <span class="brand-name">robogears Downloader</span>
-            <span class="topbar-loading" id="topbar-loading" hidden>
-                <span class="topbar-spinner" aria-hidden="true"></span>
-                <span class="topbar-loading-text" id="topbar-loading-text">Loading…</span>
-                <button class="topbar-loading-cancel" id="topbar-loading-cancel" hidden title="Cancel" aria-label="Cancel">×</button>
-            </span>
             <span class="brand-version" id="brand-version"></span>
         </div>
         <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
@@ -196,9 +191,15 @@
         </div>
     </div>
 
-    <!-- Loading state lives in the topbar now (see #topbar-loading above). The
-         old full-screen overlay was too heavy for the resolver — it blocked
-         the rest of the UI even though resolves are non-interactive. -->
+    <!-- Loading overlay — full-screen blur with spinner + cycling funny text.
+         Used during URL resolution. -->
+    <div class="loading" id="loading" hidden>
+        <div class="loading-inner">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loading-text">Loading…</div>
+            <button class="text-btn loading-cancel-btn" id="loading-cancel" hidden>Cancel</button>
+        </div>
+    </div>
 
 
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>

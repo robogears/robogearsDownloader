@@ -43,9 +43,9 @@ const searchModalTitle = $('#search-modal-title');
 const searchModalHint = $('#search-modal-hint');
 const searchResultsEl = $('#search-results');
 const addSelectedBtn = $('#add-selected');
-const topbarLoadingEl = $('#topbar-loading');
-const topbarLoadingTextEl = $('#topbar-loading-text');
-const topbarLoadingCancelBtn = $('#topbar-loading-cancel');
+const loadingEl = $('#loading');
+const loadingTextEl = $('#loading-text');
+const loadingCancelBtn = $('#loading-cancel');
 
 // Cap activity-log lines so a long-running session doesn't hold the DOM
 // hostage. 2000 = plenty for normal use; if the user batches more than that
@@ -288,32 +288,34 @@ let _loadingOnCancel = null;
 function showLoading(text, { cancellable = false, onCancel = null } = {}) {
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
     if (text) {
-        topbarLoadingTextEl.textContent = text;
+        loadingTextEl.textContent = text;
     } else {
         const pick = () => FUNNY_LOADING[Math.floor(Math.random() * FUNNY_LOADING.length)];
         let last = pick();
-        topbarLoadingTextEl.textContent = last;
+        loadingTextEl.textContent = last;
         _loadingCycler = setInterval(() => {
             let next = pick();
             while (next === last && FUNNY_LOADING.length > 1) next = pick();
             last = next;
-            topbarLoadingTextEl.textContent = next;
+            loadingTextEl.textContent = next;
         }, 2500);
     }
     _loadingOnCancel = cancellable ? onCancel : null;
-    topbarLoadingCancelBtn.hidden = !cancellable;
-    topbarLoadingCancelBtn.disabled = false;
-    topbarLoadingEl.hidden = false;
+    loadingCancelBtn.hidden = !cancellable;
+    loadingCancelBtn.disabled = false;
+    loadingCancelBtn.textContent = 'Cancel';
+    loadingEl.hidden = false;
 }
 function hideLoading() {
-    topbarLoadingEl.hidden = true;
-    topbarLoadingCancelBtn.hidden = true;
+    loadingEl.hidden = true;
+    loadingCancelBtn.hidden = true;
     _loadingOnCancel = null;
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
 }
-topbarLoadingCancelBtn.addEventListener('click', () => {
+loadingCancelBtn.addEventListener('click', () => {
     if (!_loadingOnCancel) return;
-    topbarLoadingCancelBtn.disabled = true;
+    loadingCancelBtn.disabled = true;
+    loadingCancelBtn.textContent = 'Cancelling…';
     try { _loadingOnCancel(); } catch {}
 });
 function openModal(id) { $('#' + id).hidden = false; }

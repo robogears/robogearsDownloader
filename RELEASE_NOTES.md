@@ -1,9 +1,10 @@
-# What's new in v0.1.22
+# What's new in v0.1.23
 
-## Queue row sizing fix
-- Song titles in the queue are now always shown in full. The waveform is what shrinks when space is tight, not the title. Previously a long song name could get truncated to an ellipsis as the waveform held its 80 px minimum; now the title is sacred and the waveform yields whatever space it needs.
+## Loading overlay restored
+- The full-screen loading overlay is back — full blur backdrop, centered spinner, cycling funny-message text, Cancel button. Replaces the topbar pill that was introduced in v0.1.20. The overlay reads more clearly while a URL is resolving.
 
-That's the whole release. Pure CSS tweak.
+## Docs
+- README.md rewritten to match the current state of the project — pre-built binary install instructions, current feature list, links to the portable docs (`waveformplayback.md`, `updater.md`).
 
 ---
 
@@ -21,4 +22,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.21...v0.1.22
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.22...v0.1.23

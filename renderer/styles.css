@@ -834,58 +834,49 @@ textarea {
     white-space: nowrap;
 }
 
-/* ─── Topbar loading indicator (replaces the full-screen overlay) ─────────── */
-.topbar-loading {
-    display: inline-flex;
+/* ─── Loading overlay ──────────────────────────────────────────────────── */
+.loading {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 3px 10px;
-    background: var(--bg-elev);
-    border-radius: var(--r-pill);
-    font-size: 11.5px;
-    color: var(--text-muted);
-    font-weight: 500;
-    -webkit-app-region: no-drag;
-    margin-left: 4px;
-    max-width: 360px;
-    overflow: hidden;
+    justify-content: center;
+    z-index: 100;
 }
-.topbar-loading[hidden] { display: none; }
-.topbar-spinner {
-    width: 11px;
-    height: 11px;
+.loading[hidden] { display: none; }
+.loading-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    color: var(--text);
+}
+.spinner {
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    border: 1.5px solid var(--border-strong);
+    border: 2.5px solid var(--border-strong);
     border-top-color: var(--text);
     animation: spin 0.8s linear infinite;
-    flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.topbar-loading-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-.topbar-loading-cancel {
-    background: transparent;
-    border: 0;
+.loading-text {
+    font-size: 13px;
     color: var(--text-muted);
-    cursor: pointer;
-    padding: 0 2px;
-    font-size: 14px;
-    line-height: 1;
-    border-radius: 3px;
-    flex-shrink: 0;
-    transition: color 0.15s, background 0.15s;
+    font-weight: 500;
 }
-.topbar-loading-cancel:hover {
+.loading-cancel-btn {
+    margin-top: 4px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    background: transparent;
+}
+.loading-cancel-btn:hover {
     color: var(--text);
-    background: var(--card);
-}
-.topbar-loading-cancel:disabled {
-    opacity: 0.5;
-    cursor: default;
+    border-color: var(--text);
 }
 
 /* ─── Modals ───────────────────────────────────────────────────────────── */
