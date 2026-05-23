@@ -1,12 +1,27 @@
-# What's new in v0.1.16
+# What's new in v0.1.17
 
-## Polished install window
-- The DMG installer's background scene got three improvements:
-  - **No more white when you resize.** The backdrop is now a 1920×1200 canvas (same dark black as the rest), so dragging the window larger just reveals more black instead of macOS's default white-area-beyond-image.
-  - **Tonearm now sits vertically off to the side** of the platter, in the natural at-rest position. Doesn't cross the groove rings anymore.
-  - **Footer reads `DON'T FORGET to allow the app in System Settings → Privacy & Security`** in bold-white. The old "right-click → Open" hint isn't enough on newer macOS (Ventura+) — Gatekeeper now sends users to System Settings and the **DON'T FORGET** wording makes that step harder to miss.
+## Cover art now displays in Rekordbox (and other strict players)
+- New FLAC downloads tag the embedded cover-art as picture type **3 ("Cover (front)")** instead of type 0 ("Other"). Strict players that filter on picture type — Rekordbox, Mixxx, Serato, etc. — now show the artwork. Lenient apps like Windows Explorer were already fine either way, which is why the bug went unnoticed until tracks were imported into DJ software.
+- Files already on disk won't auto-update. Re-download them, or run any FLAC tag editor to set the picture type to *Cover (front)* on what you already have.
 
-No code changes. Pure DMG-art polish.
+## Quality-of-life pass
+- **Queue persists across app restarts.** Close mid-review or mid-batch and the queue is still there next launch.
+- **Settings split into tabs:** Folders / TIDAL / Updates. Less scrolling.
+- **"Open folder" button** appears in the activity log after a successful batch finishes — one click to the files.
+- **Open buttons** next to the Download and Library folder paths in Settings.
+- **Hi-Res badge** now persists from search results into the queue (used to vanish once a track was added).
+- **Live library-scan progress** (`Scanning 234 / 500…`) replaces the silent spinner.
+- **Cancel button** on the loading overlay during slow Spotify resolves.
+- **Spotify 100-track cap** is now called out explicitly when you paste a long playlist — used to silently drop tracks 101+.
+- Activity log capped at 2000 lines so long sessions don't bog down the DOM.
+- FFmpeg presence verified at startup; clear warning instead of a confusing mid-download failure if it's missing.
+
+## macOS distribution
+- macOS ships as `.dmg` only now (the `.zip` target is gone). The in-app updater mounts the DMG via `hdiutil` and extracts the `.app` via `ditto`, which preserves extended attributes the old unzip flow could mangle.
+
+## Internal
+- Removed the dead `download:start` IPC handler and `startDownload` preload binding — legacy single-URL flow that no UI was calling anymore (bulk handles everything).
+- Removed the no-op `--allow-aac` CLI flag. AAC fallback behavior is controlled by `--flac-only` only.
 
 ---
 
@@ -24,4 +39,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.15...v0.1.16
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.16...v0.1.17

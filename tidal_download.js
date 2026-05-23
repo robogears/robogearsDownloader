@@ -292,6 +292,15 @@ async function remuxToFlac(srcM4a, dstFlac, info, albumInfo, coverBuf) {
     if (coverBuf) args.push('-map', '1:v', '-disposition:v', 'attached_pic');
     args.push('-c:a', 'copy');
     if (coverBuf) args.push('-c:v', 'copy');
+    // FLAC PICTURE block needs picture-type 3 ("Cover (front)") for strict
+    // players like Rekordbox to render the artwork. FFmpeg's FLAC muxer reads
+    // the cover stream's `comment` metadata to set this — without it, type
+    // defaults to 0 ("Other"), which lenient apps (Windows Explorer) display
+    // anyway but strict ones silently skip.
+    if (coverBuf) {
+        args.push('-metadata:s:v', 'title=Album cover');
+        args.push('-metadata:s:v', 'comment=Cover (front)');
+    }
     for (const [k, v] of Object.entries(tags)) {
         if (v) args.push('-metadata', `${k}=${v}`);
     }
