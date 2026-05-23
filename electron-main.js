@@ -50,6 +50,9 @@ function childEnv() {
         ELECTRON_RUN_AS_NODE: '1',
         FORCE_COLOR: '0',
         TIDAL_LIBRARY_FOLDER: s.libraryFolder || '',
+        // Tells tidal_download.js to emit __TRACK_PROGRESS__ markers so the
+        // renderer can show per-track progress bars in the queue.
+        BULK_RUNNER_PROGRESS: '1',
     };
 }
 
@@ -170,14 +173,15 @@ ipcMain.handle('shell:open-external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
 });
 
-// ─── Self-install (Windows portable only) ─────────────────────────────────────
-// process.env.PORTABLE_EXECUTABLE_FILE is set by electron-builder's portable
-// launcher to the absolute path of the .exe the user double-clicked (which
-// is what we need to replace — process.execPath inside the running app
-// points to a temp extracted copy of the Electron binary, not the file
-// the user actually has on disk).
+// ─── Self-install ─────────────────────────────────────────────────────────────
+// Windows portable: replace the launcher .exe (path from PORTABLE_EXECUTABLE_FILE).
+// macOS: replace the .app bundle (path derived from process.execPath).
+// Dev / non-portable Windows / Linux: falls back to opening the release page.
 function canSelfInstall() {
-    return process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE;
+    if (!app.isPackaged) return false;
+    if (process.platform === 'win32') return !!process.env.PORTABLE_EXECUTABLE_FILE;
+    if (process.platform === 'darwin') return true;
+    return false;
 }
 ipcMain.handle('update:can-self-install', () => canSelfInstall());
 
@@ -215,19 +219,46 @@ function downloadToFile(url, destPath, onProgress) {
     });
 }
 
+// Extract a macOS .zip into a staging dir using `ditto` (preserves extended
+// attributes properly; `unzip` can mangle them). Returns the path to the
+// extracted .app bundle inside the staging dir.
+function extractMacZip(zipPath) {
+    return new Promise((resolve, reject) => {
+        const extractDir = path.join(os.tmpdir(), `robogears-update-${Date.now()}`);
+        fs.mkdirSync(extractDir, { recursive: true });
+        const p = spawn('ditto', ['-x', '-k', zipPath, extractDir]);
+        p.on('error', reject);
+        p.on('close', (code) => {
+            if (code !== 0) return reject(new Error(`ditto exit ${code}`));
+            // Find the .app bundle in the extracted dir
+            const entries = fs.readdirSync(extractDir);
+            const appName = entries.find(n => n.endsWith('.app'));
+            if (!appName) return reject(new Error('No .app bundle in extracted zip'));
+            resolve(path.join(extractDir, appName));
+        });
+    });
+}
+
 ipcMain.handle('update:download', async (_e, url) => {
     if (!canSelfInstall()) return { ok: false, error: 'Self-install not supported on this build' };
     if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return { ok: false, error: 'Invalid URL' };
-    const destPath = path.join(os.tmpdir(), `robogears-downloader-${Date.now()}.exe`);
+    const ext = process.platform === 'darwin' ? '.zip' : '.exe';
+    const destPath = path.join(os.tmpdir(), `robogears-downloader-${Date.now()}${ext}`);
     try {
         await downloadToFile(url, destPath, (got, total) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('update:download-progress', { downloaded: got, total });
             }
         });
-        // Remember the path for the apply step
-        global._pendingUpdatePath = destPath;
-        return { ok: true, path: destPath };
+        if (process.platform === 'darwin') {
+            // Unzip to a staging dir and remember the extracted .app path
+            const extractedApp = await extractMacZip(destPath);
+            global._pendingUpdatePath = extractedApp;
+            try { fs.unlinkSync(destPath); } catch {} // zip no longer needed
+        } else {
+            global._pendingUpdatePath = destPath;
+        }
+        return { ok: true, path: global._pendingUpdatePath };
     } catch (e) {
         try { fs.unlinkSync(destPath); } catch {}
         return { ok: false, error: e.message };
@@ -236,39 +267,91 @@ ipcMain.handle('update:download', async (_e, url) => {
 
 ipcMain.handle('update:apply', () => {
     if (!canSelfInstall()) return { ok: false, error: 'Self-install not supported on this build' };
-    const launcher = process.env.PORTABLE_EXECUTABLE_FILE;
-    const newExe = global._pendingUpdatePath;
-    if (!launcher || !newExe || !fs.existsSync(newExe)) {
+    const newPath = global._pendingUpdatePath;
+    if (!newPath || !fs.existsSync(newPath)) {
         return { ok: false, error: 'No downloaded update available' };
     }
-    // Detached .cmd that polls until the locked .exe can be overwritten, then
-    // swaps it and relaunches. Self-deletes when done. Up to 30 retries (~30s).
-    const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.cmd`);
-    const script = [
-        '@echo off',
-        'setlocal',
-        `set "LAUNCHER=${launcher}"`,
-        `set "NEW=${newExe}"`,
-        'set /a count=0',
-        ':retry',
-        'move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1',
-        'if errorlevel 1 (',
-        '    timeout /t 1 /nobreak >NUL',
-        '    set /a count+=1',
-        '    if %count% lss 30 goto retry',
-        '    exit /b 1',
-        ')',
-        'start "" "%LAUNCHER%"',
-        'del "%~f0"',
-        '',
-    ].join('\r\n');
-    fs.writeFileSync(scriptPath, script);
-    const child = spawn('cmd.exe', ['/C', scriptPath], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-    });
-    child.unref();
+
+    if (process.platform === 'win32') {
+        // ─── Windows portable ───────────────────────────────────────
+        const launcher = process.env.PORTABLE_EXECUTABLE_FILE;
+        const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.cmd`);
+        // Detached .cmd that polls until the locked .exe can be overwritten,
+        // then swaps it and relaunches. Self-deletes when done. ~30s retries.
+        const script = [
+            '@echo off',
+            'setlocal',
+            `set "LAUNCHER=${launcher}"`,
+            `set "NEW=${newPath}"`,
+            'set /a count=0',
+            ':retry',
+            'move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1',
+            'if errorlevel 1 (',
+            '    timeout /t 1 /nobreak >NUL',
+            '    set /a count+=1',
+            '    if %count% lss 30 goto retry',
+            '    exit /b 1',
+            ')',
+            'start "" "%LAUNCHER%"',
+            'del "%~f0"',
+            '',
+        ].join('\r\n');
+        fs.writeFileSync(scriptPath, script);
+        const child = spawn('cmd.exe', ['/C', scriptPath], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+        child.unref();
+    } else if (process.platform === 'darwin') {
+        // ─── macOS ──────────────────────────────────────────────────
+        // process.execPath is .../<App>.app/Contents/MacOS/<exe>. Strip the
+        // last three segments to get the .app bundle path.
+        const appBundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
+        const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.sh`);
+        // The script waits for our PID to die, strips quarantine on the new
+        // .app (so Gatekeeper doesn't re-warn on relaunch), renames old → .bak,
+        // moves new into place, re-signs ad-hoc (the move can invalidate the
+        // signature), opens the new .app, and self-deletes. If anything in
+        // the rename/move chain fails, we attempt to roll back from .bak so
+        // the user is never left with no .app.
+        const script = [
+            '#!/bin/bash',
+            'PID=$1',
+            `NEW_APP="${newPath}"`,
+            `OLD_APP="${appBundle}"`,
+            'BACKUP="${OLD_APP}.bak"',
+            'for i in $(seq 1 30); do',
+            '    if ! ps -p $PID > /dev/null 2>&1; then break; fi',
+            '    sleep 1',
+            'done',
+            'xattr -dr com.apple.quarantine "$NEW_APP" 2>/dev/null || true',
+            'rm -rf "$BACKUP" 2>/dev/null',
+            'if mv "$OLD_APP" "$BACKUP"; then',
+            '    if mv "$NEW_APP" "$OLD_APP"; then',
+            '        codesign --force --deep --sign - "$OLD_APP" 2>/dev/null || true',
+            '        rm -rf "$BACKUP"',
+            '        open "$OLD_APP"',
+            '    else',
+            '        # Roll back: restore the old .app from backup',
+            '        mv "$BACKUP" "$OLD_APP"',
+            '        open "$OLD_APP"',
+            '    fi',
+            'fi',
+            'rm -f "$0"',
+            '',
+        ].join('\n');
+        fs.writeFileSync(scriptPath, script);
+        fs.chmodSync(scriptPath, 0o755);
+        const child = spawn('/bin/bash', [scriptPath, String(process.pid)], {
+            detached: true,
+            stdio: 'ignore',
+        });
+        child.unref();
+    } else {
+        return { ok: false, error: `Self-install not implemented for ${process.platform}` };
+    }
+
     // Give the spawn a beat to take hold before the parent dies
     setTimeout(() => app.quit(), 200);
     return { ok: true };
@@ -525,15 +608,33 @@ ipcMain.handle('bulk:start', async (_e, { tracks, outDir }) => {
         env: childEnv(),
     });
 
+    // Intercept the `__TRACK_*__:` marker lines that bulk_runner + tidal_download
+    // emit so we can route them to typed per-track IPC events. Everything else
+    // gets forwarded into the activity log as before.
+    const dispatchLine = (line) => {
+        let m;
+        if ((m = line.match(/^__TRACK_START__:(\d+)$/))) {
+            mainWindow.webContents.send('bulk:track-start', { tidalId: Number(m[1]) });
+            return;
+        }
+        if ((m = line.match(/^__TRACK_PROGRESS__:(\d+):(\d+)$/))) {
+            mainWindow.webContents.send('bulk:track-progress', { tidalId: Number(m[1]), percent: Number(m[2]) });
+            return;
+        }
+        if ((m = line.match(/^__TRACK_DONE__:(\d+):(\w+)$/))) {
+            mainWindow.webContents.send('bulk:track-done', { tidalId: Number(m[1]), status: m[2] });
+            return;
+        }
+        if (line.length) mainWindow.webContents.send('download:line', line);
+    };
+
     const forward = (stream) => {
         let buf = '';
         stream.on('data', d => {
             buf += d.toString();
             const lines = buf.split(/\r?\n/);
             buf = lines.pop();
-            for (const line of lines) {
-                if (line.length) mainWindow.webContents.send('download:line', line);
-            }
+            for (const line of lines) dispatchLine(line);
         });
     };
     forward(activeChild.stdout);

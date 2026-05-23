@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
 
     // Bulk (queue of tracks → batch download)
     startBulk:      (p)   => ipcRenderer.invoke('bulk:start', p),
+    onTrackStart:    (cb) => ipcRenderer.on('bulk:track-start',    (_e, p) => cb(p)),
+    onTrackProgress: (cb) => ipcRenderer.on('bulk:track-progress', (_e, p) => cb(p)),
+    onTrackDone:     (cb) => ipcRenderer.on('bulk:track-done',     (_e, p) => cb(p)),
 
     // Resolver: input → tracks for the queue
     resolveInput:   (p)   => ipcRenderer.invoke('resolve:input', p),

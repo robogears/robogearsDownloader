@@ -17,6 +17,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const http = require('http');
 const { spawn } = require('child_process');
 const lib = require('./tidal_lib');
 
@@ -170,7 +172,7 @@ function parseManifest(playback) {
 
 // ─── Parallel segment downloads ─────────────────────────────────────────────
 
-async function downloadSegmentsParallel(manifest, dest, concurrency) {
+async function downloadSegmentsParallel(manifest, dest, concurrency, onProgress) {
     const { baseUrl, initTemplate, mediaTemplate, segments } = manifest;
     const results = new Array(segments.length);
     let nextIdx = 0;
@@ -185,20 +187,74 @@ async function downloadSegmentsParallel(manifest, dest, concurrency) {
             const segUrl = baseUrl + mediaTemplate.replace('$Number$', segments[i]);
             results[i] = await lib.fetchBuffer(segUrl);
             completed++;
-            process.stdout.write(`\r    Downloaded ${completed}/${segments.length} segments...`);
+            // Only paint the carriage-return progress line when stdout is a real
+            // TTY (i.e., running standalone from a terminal). When piped via
+            // bulk_runner → electron-main, the `\r` would collide with our
+            // structured `__TRACK_PROGRESS__` markers and leak them into the
+            // activity log; in that case the markers (emitted via onProgress)
+            // carry the same information cleanly.
+            if (process.stdout.isTTY) {
+                process.stdout.write(`\r    Downloaded ${completed}/${segments.length} segments...`);
+            }
+            if (onProgress) {
+                onProgress(Math.floor((completed / segments.length) * 100));
+            }
         }
     };
 
     const workerCount = Math.min(concurrency, segments.length);
     await Promise.all(Array.from({ length: workerCount }, worker));
 
-    process.stdout.write('\n');
+    if (process.stdout.isTTY) process.stdout.write('\n');
     fs.writeFileSync(dest, Buffer.concat([initBuf, ...results]));
 }
 
-async function downloadDirect(url, dest) {
-    const buf = await lib.fetchBuffer(url);
-    fs.writeFileSync(dest, buf);
+// Streaming download with intermediate byte-level progress. We can't reuse
+// lib.fetchBuffer here because it accumulates the whole response into a
+// Buffer and only resolves at the end — no intermediate ticks. For BTS
+// manifests (single direct URL, no segments), this is the only place we
+// get real per-track progress.
+function downloadDirect(url, dest, onProgress) {
+    return new Promise((resolve, reject) => {
+        const doGet = (u, redirects = 0) => {
+            if (redirects > 5) return reject(new Error('Too many redirects'));
+            const proto = u.startsWith('https') ? https : http;
+            const req = proto.get(u, { headers: { 'User-Agent': 'okhttp/5.3.2' } }, (res) => {
+                if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+                    res.resume();
+                    return doGet(res.headers.location, redirects + 1);
+                }
+                if (res.statusCode !== 200) {
+                    res.resume();
+                    return reject(new Error(`HTTP ${res.statusCode} for ${u}`));
+                }
+                const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
+                let downloaded = 0;
+                const out = fs.createWriteStream(dest);
+                res.on('data', (chunk) => {
+                    downloaded += chunk.length;
+                    if (onProgress) {
+                        const pct = total > 0
+                            ? Math.floor((downloaded / total) * 100)
+                            : 0; // unknown size — leave at 0 until done
+                        onProgress(pct);
+                    }
+                });
+                res.pipe(out);
+                out.on('finish', () => {
+                    out.close(() => {
+                        if (onProgress) onProgress(100);
+                        resolve();
+                    });
+                });
+                out.on('error', reject);
+                res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(60_000, () => { req.destroy(new Error(`Download timed out`)); });
+        };
+        doGet(url);
+    });
 }
 
 // ─── FFmpeg remux/tag ────────────────────────────────────────────────────────
@@ -364,10 +420,24 @@ async function downloadTrack(trackId, outDir, cred, flags, { albumPreFetched = n
     const tmpExt = manifest.mimeType?.includes('mp4') ? 'm4a' : 'flac';
     const tmpPath = path.join(outDir, `${title}.tmp.${tmpExt}`);
 
+    // Per-track progress markers for the bulk runner (consumed by electron-main,
+    // suppressed from the activity log there). Throttled to one emission per
+    // change in integer percent so we don't spam stdout.
+    let _lastPct = -1;
+    const onProgress = process.env.BULK_RUNNER_PROGRESS
+        ? (pct) => {
+            const clamped = Math.max(0, Math.min(100, pct));
+            if (clamped !== _lastPct) {
+                _lastPct = clamped;
+                console.log(`__TRACK_PROGRESS__:${trackId}:${clamped}`);
+            }
+        }
+        : null;
+
     // Audio + cover in parallel
     const audioPromise = (manifest.type === 'dash_segments')
-        ? downloadSegmentsParallel(manifest, tmpPath, flags.concurrency)
-        : downloadDirect(manifest.url, tmpPath);
+        ? downloadSegmentsParallel(manifest, tmpPath, flags.concurrency, onProgress)
+        : downloadDirect(manifest.url, tmpPath, onProgress);
     const coverPromise = lib.fetchCover(info.album?.cover);
 
     await audioPromise;

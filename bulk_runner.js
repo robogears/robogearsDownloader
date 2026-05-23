@@ -89,12 +89,25 @@ function runDownload(trackId, outDir) {
             }
         }
 
-        if (!trackId) { notFound++; console.log(''); continue; }
+        if (!trackId) {
+            notFound++;
+            // Mark the queue item (by its original tidalId from the input, if any)
+            // as not-found so the renderer can surface it. With no tidalId at all
+            // we have nothing to key on — that path is OCR-only, currently gated off.
+            if (t.tidalId) console.log(`__TRACK_DONE__:${t.tidalId}:notFound`);
+            console.log('');
+            continue;
+        }
 
+        // Stable markers parsed by electron-main and routed to the renderer as
+        // per-track state events. Suppressed from the activity log there.
+        console.log(`__TRACK_START__:${trackId}`);
         const code = await runDownload(trackId, outDir);
-        if (code === 0) ok++;
-        else if (code === 2) skipped++;
-        else failed++;
+        let status;
+        if (code === 0) { ok++; status = 'downloaded'; }
+        else if (code === 2) { skipped++; status = 'skipped'; }
+        else { failed++; status = 'failed'; }
+        console.log(`__TRACK_DONE__:${trackId}:${status}`);
         console.log('');
     }
 

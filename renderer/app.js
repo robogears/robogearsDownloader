@@ -275,6 +275,11 @@ api.onUpdateAvailable(insertUpdateNotice);
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
 
+// Per-track progress state lives on the queue items themselves:
+//   t.dlStatus = 'queued' | 'downloading' | 'downloaded' | 'skipped' | 'failed' | 'notFound'
+//   t.dlPercent = 0–100 (only meaningful while 'downloading')
+// `notFound` is a *resolver-time* property already on the item; we mirror it
+// into dlStatus so the row rendering goes through one path.
 function renderQueue() {
     queueCount.textContent = queue.length;
     queueSection.hidden = queue.length === 0;
@@ -292,10 +297,17 @@ function renderQueue() {
         const row = document.createElement('div');
         row.className = 'queue-item'
             + (t.notFound ? ' notfound' : '')
-            + (excluded ? ' excluded' : '');
+            + (excluded ? ' excluded' : '')
+            + (t.dlStatus ? ` dl-${t.dlStatus}` : '');
+        row.dataset.tidalId = t.tidalId || '';
+        row.dataset.key = t.key;
 
         let status = '';
-        if (t.notFound) status = '<span class="badge bad" title="Not on TIDAL">not found</span>';
+        if (t.dlStatus === 'downloading') status = `<span class="badge dl-running">↓ ${t.dlPercent ?? 0}%</span>`;
+        else if (t.dlStatus === 'downloaded') status = '<span class="badge dl-ok">✓ done</span>';
+        else if (t.dlStatus === 'skipped') status = '<span class="badge dl-skip">⏭ skipped</span>';
+        else if (t.dlStatus === 'failed') status = '<span class="badge dl-fail">✗ failed</span>';
+        else if (t.notFound || t.dlStatus === 'notFound') status = '<span class="badge bad" title="Not on TIDAL">not found</span>';
         else if (isExact) status = `<span class="badge dupe" title="${escapeHtml(lm.path)}">📁 already in library</span>`;
         else if (isSimilar) status = `<span class="badge similar" title="${escapeHtml(lm.path)}">⚠ similar version in library</span>`;
         else if (t.source === 'spotify') status = '<span class="badge">Spotify</span>';
@@ -305,9 +317,14 @@ function renderQueue() {
             ? `<div class="qi-libnote">Library: ${escapeHtml(lm.libraryTitle)}</div>`
             : '';
 
-        // Show "+ Add" only on currently-excluded items
         const addButton = excluded
             ? `<button class="qi-add" data-key="${t.key}" title="Add to download list">+ Add</button>`
+            : '';
+        const retryButton = t.dlStatus === 'failed'
+            ? `<button class="qi-retry" data-key="${t.key}" title="Re-download this track">↻ Retry</button>`
+            : '';
+        const progressBar = t.dlStatus === 'downloading'
+            ? `<div class="qi-progress"><div class="qi-progress-fill" style="width:${t.dlPercent ?? 0}%"></div></div>`
             : '';
 
         row.innerHTML = `
@@ -315,20 +332,59 @@ function renderQueue() {
                 <div class="qi-title">${escapeHtml(t.title)}</div>
                 <div class="qi-artist">${escapeHtml(t.artist)}${t.duration ? ` · ${fmtDuration(t.duration)}` : ''} ${status}</div>
                 ${libNote}
+                ${progressBar}
             </div>
             ${addButton}
+            ${retryButton}
             <button class="qi-remove" data-key="${t.key}" aria-label="Remove from queue">✕</button>
         `;
         queueList.appendChild(row);
     }
     const downloadable = queue.filter(t => !t.notFound && t.included);
     downloadAllBtn.disabled = isDownloading || downloadable.length === 0;
-    // Show count of items that will download vs. total
     if (queue.length && downloadable.length !== queue.length) {
         downloadAllBtn.textContent = isDownloading ? 'Downloading…' : `Download (${downloadable.length})`;
     } else {
         downloadAllBtn.textContent = isDownloading ? 'Downloading…' : 'Download all';
     }
+    renderBatchProgress();
+}
+
+// Overall batch progress bar above the queue list. Shown while a download is
+// in flight; counts items whose dlStatus has moved out of 'queued' / 'downloading'.
+function renderBatchProgress() {
+    let el = document.querySelector('.batch-progress');
+    const inFlight = isDownloading
+        ? queue.filter(t => t.included && !t.notFound)
+        : [];
+    if (!inFlight.length) {
+        if (el) el.remove();
+        return;
+    }
+    const done = inFlight.filter(t =>
+        t.dlStatus === 'downloaded' || t.dlStatus === 'skipped'
+        || t.dlStatus === 'failed' || t.dlStatus === 'notFound'
+    ).length;
+    const pct = Math.floor((done / inFlight.length) * 100);
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'batch-progress';
+        el.innerHTML = `<div class="batch-progress-bar"></div><span class="batch-progress-label"></span>`;
+        queueSection.insertBefore(el, queueList);
+    }
+    el.querySelector('.batch-progress-bar').style.width = pct + '%';
+    el.querySelector('.batch-progress-label').textContent = `${done} / ${inFlight.length}`;
+}
+
+// Lightweight surgical updates while a track is downloading — avoids re-rendering
+// the entire queue on every percent tick.
+function updateRowPercent(tidalId, percent) {
+    const row = queueList.querySelector(`.queue-item[data-tidal-id="${tidalId}"]`);
+    if (!row) return;
+    const badge = row.querySelector('.badge.dl-running');
+    if (badge) badge.textContent = `↓ ${percent}%`;
+    const fill = row.querySelector('.qi-progress-fill');
+    if (fill) fill.style.width = percent + '%';
 }
 
 queueList.addEventListener('click', (e) => {
@@ -342,12 +398,57 @@ queueList.addEventListener('click', (e) => {
         }
         return;
     }
+    const retryBtn = e.target.closest('.qi-retry');
+    if (retryBtn) {
+        const key = retryBtn.dataset.key;
+        const item = queue.find(t => t.key === key);
+        if (!item || !item.tidalId) return;
+        if (isDownloading) {
+            appendLine('⚠ A batch is already running — retry once it finishes.');
+            return;
+        }
+        if (!settings.downloadFolder) {
+            playWarningHonk();
+            appendLine('⚠ Pick a download folder in Settings first.');
+            return;
+        }
+        item.dlStatus = 'queued';
+        item.dlPercent = 0;
+        renderQueue();
+        appendLine(`↻ Retrying ${item.title}…`);
+        setDownloading(true);
+        api.startBulk({ tracks: [item], outDir: settings.downloadFolder });
+        return;
+    }
     const removeBtn = e.target.closest('.qi-remove');
     if (removeBtn) {
         const key = removeBtn.dataset.key;
         queue = queue.filter(t => t.key !== key);
         renderQueue();
     }
+});
+
+// Per-track events from bulk_runner → keep queue state in sync + drive the UI.
+api.onTrackStart(({ tidalId }) => {
+    const item = queue.find(t => t.tidalId === tidalId);
+    if (!item) return;
+    item.dlStatus = 'downloading';
+    item.dlPercent = 0;
+    renderQueue();
+});
+api.onTrackProgress(({ tidalId, percent }) => {
+    const item = queue.find(t => t.tidalId === tidalId);
+    if (!item) return;
+    item.dlPercent = percent;
+    // Surgical DOM update to avoid re-rendering the whole list on every tick
+    updateRowPercent(tidalId, percent);
+});
+api.onTrackDone(({ tidalId, status }) => {
+    const item = queue.find(t => t.tidalId === tidalId);
+    if (!item) return;
+    item.dlStatus = status;
+    item.dlPercent = status === 'downloaded' ? 100 : (item.dlPercent || 0);
+    renderQueue();
 });
 
 clearQueueBtn.addEventListener('click', () => {
@@ -483,6 +584,13 @@ downloadAllBtn.addEventListener('click', async () => {
     setDownloading(true);
     appendLine('');
     appendLine(`=== Starting batch (${downloadable.length} tracks) ===`);
+    // Mark each track that's about to be sent off so the row shows "queued"
+    // until the bulk_runner emits its first __TRACK_START__ for it.
+    for (const t of downloadable) {
+        t.dlStatus = 'queued';
+        t.dlPercent = 0;
+    }
+    renderQueue();
 
     await api.startBulk({ tracks: downloadable, outDir: settings.downloadFolder });
 });
@@ -492,8 +600,21 @@ api.onDownloadDone(({ code }) => {
     setDownloading(false);
     if (code === 0) appendLine('=== ✓ Batch finished ===');
     else appendLine(`=== Exit code ${code} ===`);
-    // Remove downloaded items from queue (keep not-found ones)
-    queue = queue.filter(t => t.notFound);
+    // Drop successfully-downloaded and skipped tracks. Keep failed and
+    // not-found ones so the user can retry / inspect them. Reset transient
+    // state on anything that didn't get a terminal status (defensive).
+    queue = queue.filter(t =>
+        t.notFound
+        || t.dlStatus === 'failed'
+        || t.dlStatus === 'notFound'
+        || (!t.dlStatus && t.included)
+    );
+    for (const t of queue) {
+        if (t.dlStatus !== 'failed' && t.dlStatus !== 'notFound') {
+            delete t.dlStatus;
+            delete t.dlPercent;
+        }
+    }
     renderQueue();
 });
 
