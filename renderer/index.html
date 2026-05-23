@@ -102,26 +102,43 @@
                 <button class="icon-btn close-modal" data-close="settings-modal" aria-label="Close">✕</button>
             </div>
             <div class="modal-body">
-                <label class="label">Download folder</label>
-                <div class="folder-row">
-                    <input id="folder-input" type="text" readonly>
-                    <button id="folder-browse" class="secondary-btn">Browse…</button>
+                <div class="modal-tabs" role="tablist">
+                    <button class="modal-tab active" data-tab="folders" role="tab">Folders</button>
+                    <button class="modal-tab" data-tab="tidal" role="tab">TIDAL</button>
+                    <button class="modal-tab" data-tab="updates" role="tab">Updates</button>
                 </div>
-                <p class="hint">Every download goes here directly — no subfolders.</p>
 
-                <label class="label" style="margin-top:22px;">Music library folder (for duplicate check)</label>
-                <div class="folder-row">
-                    <input id="library-input" type="text" readonly placeholder="(none — duplicate check disabled)">
-                    <button id="library-browse" class="secondary-btn">Browse…</button>
-                    <button id="library-clear" class="text-btn" title="Clear">Clear</button>
-                </div>
-                <div class="library-status-row">
-                    <span id="library-status" class="auth-status">…</span>
-                    <button id="library-rescan-btn" class="text-btn">Refresh</button>
-                </div>
-                <p class="hint">Read-only. The app reads audio-tag metadata (title, artist, duration) as well as filenames. Re-scans automatically on each launch.</p>
+                <!-- Folders tab -->
+                <div class="modal-pane" data-pane="folders">
+                    <label class="label">Download folder</label>
+                    <div class="folder-row">
+                        <input id="folder-input" type="text" readonly>
+                        <button id="folder-browse" class="secondary-btn">Browse…</button>
+                        <button id="folder-open" class="text-btn" title="Open folder">Open</button>
+                    </div>
+                    <p class="hint">Every download goes here directly — no subfolders.</p>
 
-                <div class="auth-section">
+                    <label class="label" style="margin-top:22px;">Music library folder (for duplicate check)</label>
+                    <div class="folder-row">
+                        <input id="library-input" type="text" readonly placeholder="(none — duplicate check disabled)">
+                        <button id="library-browse" class="secondary-btn">Browse…</button>
+                        <button id="library-open" class="text-btn" title="Open folder">Open</button>
+                        <button id="library-clear" class="text-btn" title="Clear">Clear</button>
+                    </div>
+                    <div class="library-status-row">
+                        <span id="library-status" class="auth-status">…</span>
+                        <button id="library-rescan-btn" class="text-btn">Refresh</button>
+                    </div>
+                    <p class="hint">Read-only. The app reads audio-tag metadata (title, artist, duration) as well as filenames. Re-scans automatically on each launch.</p>
+
+                    <div class="reset-section">
+                        <button id="reset-config-btn" class="text-btn">Reset config</button>
+                        <p class="hint">Forgets your download and library folder choices. TIDAL sign-in is kept.</p>
+                    </div>
+                </div>
+
+                <!-- TIDAL tab -->
+                <div class="modal-pane" data-pane="tidal" hidden>
                     <label class="label">TIDAL account</label>
                     <div class="auth-row">
                         <span id="auth-status" class="auth-status">…</span>
@@ -130,7 +147,8 @@
                     <p class="hint">Required once per device. Opens a browser tab where you log in to TIDAL and click <em>Allow</em>.</p>
                 </div>
 
-                <div class="updates-section">
+                <!-- Updates tab -->
+                <div class="modal-pane" data-pane="updates" hidden>
                     <label class="label">Updates</label>
                     <div class="auth-row">
                         <span id="update-status" class="auth-status">Current version: …</span>
@@ -138,12 +156,6 @@
                     </div>
                     <p class="hint">Checks GitHub for a newer release. If one's found, a download notice appears in the activity log.</p>
                 </div>
-
-                <div class="reset-section">
-                    <button id="reset-config-btn" class="text-btn">Reset config</button>
-                    <p class="hint">Forgets your download and library folder choices. TIDAL sign-in is kept.</p>
-                </div>
-
             </div>
             <div class="modal-foot">
                 <button class="primary-btn" data-close="settings-modal">Done</button>
@@ -173,6 +185,7 @@
         <div class="loading-inner">
             <div class="spinner"></div>
             <div class="loading-text" id="loading-text">Loading…</div>
+            <button class="text-btn loading-cancel-btn" id="loading-cancel" hidden>Cancel</button>
         </div>
     </div>
 

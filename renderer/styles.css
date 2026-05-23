@@ -361,7 +361,8 @@ textarea {
     border-top: 1px solid var(--border);
 }
 .log-line.muted    { color: var(--text-dim); }
-.log-line.update-notice {
+.log-line.update-notice,
+.log-line.batch-done-notice {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -372,6 +373,22 @@ textarea {
     border-radius: var(--r-md);
     padding: 8px 12px;
     margin: 6px 0;
+}
+.batch-open-folder-btn {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    padding: 5px 12px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
+}
+.batch-open-folder-btn:hover {
+    border-color: var(--text);
+    background: var(--card);
 }
 .update-download-btn {
     background: var(--text);
@@ -716,6 +733,16 @@ textarea {
     color: var(--text-muted);
     font-weight: 500;
 }
+.loading-cancel-btn {
+    margin-top: 4px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    background: transparent;
+}
+.loading-cancel-btn:hover {
+    color: var(--text);
+    border-color: var(--text);
+}
 
 /* ─── Modals ───────────────────────────────────────────────────────────── */
 .modal-backdrop {
@@ -785,6 +812,38 @@ textarea {
     color: var(--text);
     font-style: normal;
     font-weight: 600;
+}
+
+/* Settings tabs */
+.modal-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin: 0 -26px 22px;
+    padding: 0 22px;
+}
+.modal-tab {
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    padding: 10px 16px;
+    cursor: pointer;
+    font: 13px inherit;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.modal-tab:hover { color: var(--text); }
+.modal-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--text);
+}
+.modal-pane[hidden] { display: none; }
+.modal-pane .reset-section {
+    margin-top: 28px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
 }
 
 .folder-row,

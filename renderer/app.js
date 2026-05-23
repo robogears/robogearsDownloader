@@ -14,8 +14,10 @@ const clearActivityBtn = $('#clear-btn');
 const settingsBtn = $('#settings-btn');
 const folderInput = $('#folder-input');
 const folderBrowse = $('#folder-browse');
+const folderOpen = $('#folder-open');
 const libraryInput = $('#library-input');
 const libraryBrowse = $('#library-browse');
+const libraryOpen = $('#library-open');
 const libraryClear = $('#library-clear');
 const libraryStatusEl = $('#library-status');
 const libraryRescanBtn = $('#library-rescan-btn');
@@ -41,14 +43,37 @@ const searchResultsEl = $('#search-results');
 const addSelectedBtn = $('#add-selected');
 const loadingEl = $('#loading');
 const loadingTextEl = $('#loading-text');
+const loadingCancelBtn = $('#loading-cancel');
+
+// Cap activity-log lines so a long-running session doesn't hold the DOM
+// hostage. 2000 = plenty for normal use; if the user batches more than that
+// they really do want the older lines to drop off.
+const ACTIVITY_LOG_MAX = 2000;
 
 let settings = { downloadFolder: '' };
-let queue = [];                  // [{ tidalId, title, artist, duration, source, notFound, key }]
+let queue = [];                  // [{ tidalId, title, artist, duration, source, notFound, key, hiRes }]
 let pendingResults = [];          // search modal candidates
 let isDownloading = false;
 let searchDebounce = null;
 
 const URL_RE = /^https?:\/\/|spotify\.com|tidal\.com/i;
+
+// ─── Queue persistence ───────────────────────────────────────────────────────
+// Saves the queue to userData/queue.json so it survives app restarts. Strips
+// per-session state (dlStatus / dlPercent / selected) that should reset.
+const TRANSIENT_QUEUE_FIELDS = ['dlStatus', 'dlPercent', 'selected'];
+let _queueSaveTimer = null;
+function saveQueueSoon() {
+    clearTimeout(_queueSaveTimer);
+    _queueSaveTimer = setTimeout(() => {
+        const persisted = queue.map(t => {
+            const c = { ...t };
+            for (const k of TRANSIENT_QUEUE_FIELDS) delete c[k];
+            return c;
+        });
+        api.saveQueue(persisted).catch(() => {});
+    }, 400);
+}
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
 
@@ -175,7 +200,11 @@ const FUNNY_LOADING = [
 ];
 let _loadingCycler = null;
 
-function showLoading(text) {
+// Optional onCancel handler set by callers that support cancellation (the URL
+// resolver currently). When set, the loading overlay shows a Cancel button.
+let _loadingOnCancel = null;
+
+function showLoading(text, { cancellable = false, onCancel = null } = {}) {
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
     if (text) {
         // Caller provided specific text — show as-is (e.g. OCR phases)
@@ -193,12 +222,24 @@ function showLoading(text) {
             loadingTextEl.textContent = next;
         }, 2500);
     }
+    _loadingOnCancel = cancellable ? onCancel : null;
+    loadingCancelBtn.hidden = !cancellable;
+    loadingCancelBtn.disabled = false;
+    loadingCancelBtn.textContent = 'Cancel';
     loadingEl.hidden = false;
 }
 function hideLoading() {
     loadingEl.hidden = true;
+    loadingCancelBtn.hidden = true;
+    _loadingOnCancel = null;
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
 }
+loadingCancelBtn.addEventListener('click', () => {
+    if (!_loadingOnCancel) return;
+    loadingCancelBtn.disabled = true;
+    loadingCancelBtn.textContent = 'Cancelling…';
+    try { _loadingOnCancel(); } catch {}
+});
 function openModal(id) { $('#' + id).hidden = false; }
 function closeModal(id) { $('#' + id).hidden = true; }
 document.querySelectorAll('[data-close]').forEach(el => {
@@ -225,6 +266,16 @@ function appendLine(line) {
     div.textContent = line;
     activityEl.appendChild(div);
     activityEl.scrollTop = activityEl.scrollHeight;
+    // Cap activity log size. Skip the welcome line as the trim target so the
+    // update-notice insertion (which anchors off welcomeLineEl) keeps working.
+    while (activityEl.childElementCount > ACTIVITY_LOG_MAX) {
+        const first = activityEl.firstElementChild;
+        if (first === welcomeLineEl && first.nextSibling) {
+            activityEl.removeChild(first.nextSibling);
+        } else {
+            activityEl.removeChild(first);
+        }
+    }
     return div;
 }
 
@@ -344,6 +395,10 @@ function renderQueue() {
         else if (t.source === 'spotify') status = '<span class="badge">Spotify</span>';
         else if (t.source === 'ocr') status = '<span class="badge">OCR</span>';
 
+        // Hi-Res badge — kept independent of status so the indication survives
+        // alongside download progress / library badges.
+        const hiResBadge = t.hiRes ? '<span class="badge hi-res">Hi-Res</span>' : '';
+
         const libNote = (isExact || isSimilar) && lm.libraryTitle
             ? `<div class="qi-libnote">Library: ${escapeHtml(lm.libraryTitle)}</div>`
             : '';
@@ -369,7 +424,7 @@ function renderQueue() {
             ${checkbox}
             <div class="qi-info">
                 <div class="qi-title">${escapeHtml(t.title)}</div>
-                <div class="qi-artist">${escapeHtml(t.artist)}${t.duration ? ` · ${fmtDuration(t.duration)}` : ''} ${status}</div>
+                <div class="qi-artist">${escapeHtml(t.artist)}${t.duration ? ` · ${fmtDuration(t.duration)}` : ''} ${hiResBadge}${status}</div>
                 ${libNote}
                 ${progressBar}
             </div>
@@ -460,6 +515,7 @@ queueList.addEventListener('click', (e) => {
         if (item) {
             item.included = true;
             renderQueue();
+            saveQueueSoon();
         }
         return;
     }
@@ -490,6 +546,7 @@ queueList.addEventListener('click', (e) => {
         const key = removeBtn.dataset.key;
         queue = queue.filter(t => t.key !== key);
         renderQueue();
+        saveQueueSoon();
     }
 });
 
@@ -520,6 +577,7 @@ clearQueueBtn.addEventListener('click', () => {
     if (isDownloading) return;
     queue = [];
     renderQueue();
+    saveQueueSoon();
 });
 
 function addTracksToQueue(tracks) {
@@ -534,6 +592,7 @@ function addTracksToQueue(tracks) {
         added++;
     }
     renderQueue();
+    if (added) saveQueueSoon();
     return added;
 }
 
@@ -558,10 +617,14 @@ async function handleInput() {
         return;
     }
 
-    showLoading();   // random funny message, cycles every 2.5s
+    showLoading(null, {
+        cancellable: true,
+        onCancel: () => api.cancelResolve(),
+    });
     try {
         const r = await api.resolveInput({ input });
         hideLoading();
+        if (r.cancelled) { appendLine('⊗ Resolve cancelled.'); return; }
         if (!r.ok) { appendLine(`✗ ${r.error}`); return; }
 
         if (r.kind === 'url') {
@@ -569,6 +632,12 @@ async function handleInput() {
             const missing = r.tracks.length - found;
             const added = addTracksToQueue(r.tracks);
             appendLine(`+ Added ${added} track${added === 1 ? '' : 's'} from link${missing ? ` (${missing} not on TIDAL)` : ''}.`);
+            // Spotify's public embed caps playlists at 100 tracks. If the
+            // resolver hit that cap, warn the user explicitly — otherwise
+            // they'd never know tracks 101+ silently dropped off.
+            if (r.capped) {
+                appendLine('⚠ Spotify caps playlists at 100 tracks via the public embed. Tracks past #100 weren\'t included.');
+            }
             urlInput.value = '';
         } else {
             // Search results: show modal
@@ -712,8 +781,11 @@ downloadAllBtn.addEventListener('click', async () => {
 api.onDownloadLine(appendLine);
 api.onDownloadDone(({ code }) => {
     setDownloading(false);
-    if (code === 0) appendLine('=== ✓ Batch finished ===');
-    else appendLine(`=== Exit code ${code} ===`);
+    if (code === 0) {
+        appendBatchDoneNotice();
+    } else {
+        appendLine(`=== Exit code ${code} ===`);
+    }
     // Drop successfully-downloaded and skipped tracks. Keep failed and
     // not-found ones so the user can retry / inspect them. Reset transient
     // state on anything that didn't get a terminal status (defensive).
@@ -730,7 +802,27 @@ api.onDownloadDone(({ code }) => {
         }
     }
     renderQueue();
+    saveQueueSoon();
 });
+
+// Special activity-log row shown when a batch finishes successfully —
+// inline "Open folder" button so the user can jump straight to the files.
+function appendBatchDoneNotice() {
+    const row = document.createElement('div');
+    row.className = 'log-line batch-done-notice';
+    const label = document.createElement('span');
+    label.innerHTML = '<strong>✓ Batch finished.</strong>';
+    row.appendChild(label);
+    if (settings.downloadFolder) {
+        const btn = document.createElement('button');
+        btn.className = 'batch-open-folder-btn';
+        btn.textContent = 'Open folder';
+        btn.addEventListener('click', () => api.openFolder(settings.downloadFolder));
+        row.appendChild(btn);
+    }
+    activityEl.appendChild(row);
+    activityEl.scrollTop = activityEl.scrollHeight;
+}
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
@@ -741,13 +833,23 @@ settingsBtn.addEventListener('click', async () => {
 });
 
 
+function updateOpenButtonStates() {
+    folderOpen.disabled = !settings.downloadFolder;
+    libraryOpen.disabled = !settings.libraryFolder;
+}
+
 folderBrowse.addEventListener('click', async () => {
     const folder = await api.pickFolder();
     if (folder) {
         settings.downloadFolder = folder;
         folderInput.value = folder;
         await api.saveSettings(settings);
+        updateOpenButtonStates();
     }
+});
+
+folderOpen.addEventListener('click', () => {
+    if (settings.downloadFolder) api.openFolder(settings.downloadFolder);
 });
 
 libraryBrowse.addEventListener('click', async () => {
@@ -756,14 +858,20 @@ libraryBrowse.addEventListener('click', async () => {
         settings.libraryFolder = folder;
         libraryInput.value = folder;
         await api.saveSettings(settings);
+        updateOpenButtonStates();
         appendLine(`📁 Music library folder set to: ${folder}`);
     }
+});
+
+libraryOpen.addEventListener('click', () => {
+    if (settings.libraryFolder) api.openFolder(settings.libraryFolder);
 });
 
 libraryClear.addEventListener('click', async () => {
     settings.libraryFolder = '';
     libraryInput.value = '';
     await api.saveSettings(settings);
+    updateOpenButtonStates();
     appendLine('📁 Music library folder cleared (duplicate check disabled).');
     refreshLibraryStatus();
 });
@@ -787,8 +895,20 @@ resetConfigBtn.addEventListener('click', async () => {
     settings = await api.resetSettings();
     folderInput.value = '';
     libraryInput.value = '';
+    updateOpenButtonStates();
     refreshLibraryStatus();
     appendLine('⚙ Config reset. Pick a download folder in Settings to continue.');
+});
+
+// ─── Settings tabs ───────────────────────────────────────────────────────────
+document.querySelectorAll('.modal-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const which = tab.dataset.tab;
+        document.querySelectorAll('.modal-tab').forEach(t =>
+            t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.modal-pane').forEach(p =>
+            p.hidden = p.dataset.pane !== which);
+    });
 });
 
 checkUpdatesBtn.addEventListener('click', async () => {
@@ -831,6 +951,15 @@ async function refreshLibraryStatus() {
 
 api.onLibraryScanned(({ count }) => {
     libraryStatusEl.textContent = `${count} file${count === 1 ? '' : 's'} indexed`;
+});
+
+// Live progress while scanLibrary is running. The throttling lives in the
+// scanner itself (one tick per ~25 files), so this just paints whatever
+// arrives.
+api.onLibraryScanProgress(({ done, total }) => {
+    libraryStatusEl.textContent = total
+        ? `Scanning ${done} / ${total}…`
+        : 'Scanning…';
 });
 
 
@@ -1036,6 +1165,7 @@ function extractTracksFromOCR(text) {
     settings = await api.getSettings();
     folderInput.value = settings.downloadFolder || '';
     libraryInput.value = settings.libraryFolder || '';
+    updateOpenButtonStates();
     await refreshAuthStatus();
 
     // Show current app version in the topbar and in Settings → Updates
@@ -1053,6 +1183,23 @@ function extractTracksFromOCR(text) {
     } else {
         welcomeLineEl = appendLine(`Ready. Downloads go to: ${settings.downloadFolder}`);
     }
+
+    // Restore any queue from a previous session. Transient state was stripped
+    // before save, so dlStatus / dlPercent / selected start clean. Defensive
+    // pass anyway in case an older save shape sneaks through.
+    try {
+        const saved = await api.getQueue();
+        if (Array.isArray(saved) && saved.length) {
+            queue = saved.map(t => {
+                const c = { ...t };
+                for (const k of TRANSIENT_QUEUE_FIELDS) delete c[k];
+                if (!c.key) c.key = uniqueKey();
+                return c;
+            });
+            renderQueue();
+            appendLine(`↺ Restored ${queue.length} track${queue.length === 1 ? '' : 's'} from your last session.`);
+        }
+    } catch { /* no saved queue or read error — start empty */ }
 
     // Apply any update notice that arrived before the welcome line existed.
     if (pendingUpdate) {

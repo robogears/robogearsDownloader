@@ -23,6 +23,15 @@ if (app.isPackaged) {
 const lib = require('./tidal_lib');
 
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
+const QUEUE_PATH = () => path.join(app.getPath('userData'), 'queue.json');
+
+// Forward library-scan progress events to the renderer, throttled inside
+// scanLibrary itself (one tick per ~25 files).
+function sendScanProgress(done, total) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:scan-progress', { done, total });
+    }
+}
 
 function loadSettings() {
     try { return JSON.parse(fs.readFileSync(SETTINGS_PATH(), 'utf8')); }
@@ -34,7 +43,7 @@ function saveSettings(s) {
     if (typeof s.libraryFolder === 'string' && s.libraryFolder !== prev.libraryFolder) {
         lib.setLibraryPath(s.libraryFolder);
         // Kick off a fresh background scan with the new path
-        lib.scanLibrary().then(c => {
+        lib.scanLibrary(sendScanProgress).then(c => {
             if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
         }).catch(() => {});
     }
@@ -42,6 +51,9 @@ function saveSettings(s) {
 
 let mainWindow = null;
 let activeChild = null;
+// Set by resolve:input at the start of each call, flipped to true by
+// resolve:cancel so the resolver workers can bail out at iteration boundaries.
+let resolverCancelled = false;
 
 function childEnv() {
     const s = loadSettings();
@@ -479,7 +491,7 @@ app.whenReady().then(async () => {
     // configured a library folder. On first launch (no settings) we skip
     // entirely so the app doesn't index a phantom path.
     if (s.libraryFolder) {
-        lib.scanLibrary().then(c => {
+        lib.scanLibrary(sendScanProgress).then(c => {
             if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
         }).catch(() => {});
     }
@@ -488,10 +500,35 @@ app.whenReady().then(async () => {
     // log. Renderer handles the race if it isn't ready yet (queues the payload).
     checkForUpdatesAndNotify().catch(() => {});
 
+    // Confirm bundled ffmpeg is actually invokable. If neither the asar-unpacked
+    // path nor a system 'ffmpeg' on PATH responds to `-version`, surface a clear
+    // warning to the activity log instead of letting the user discover it
+    // mid-download as a confusing "ffmpeg exited 1".
+    verifyFfmpegAvailable();
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
 });
+
+function verifyFfmpegAvailable() {
+    let ffmpegPath;
+    try {
+        const fp = require('ffmpeg-static');
+        const unpacked = fp && fp.replace('app.asar', 'app.asar.unpacked');
+        ffmpegPath = (unpacked && fs.existsSync(unpacked)) ? unpacked
+                   : (fp && fs.existsSync(fp)) ? fp
+                   : 'ffmpeg';
+    } catch { ffmpegPath = 'ffmpeg'; }
+
+    const probe = spawn(ffmpegPath, ['-version'], { stdio: 'ignore' });
+    probe.on('error', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download:line',
+                '⚠ FFmpeg not found — downloads will not work. Reinstall the app or report this.');
+        }
+    });
+}
 
 app.on('window-all-closed', () => {
     if (activeChild) try { activeChild.kill(); } catch {}
@@ -523,15 +560,34 @@ ipcMain.handle('settings:pick-folder', async () => {
 ipcMain.handle('open-folder', (_e, p) => shell.openPath(p));
 
 ipcMain.handle('library:status', async () => {
-    const c = await lib.scanLibrary();
+    const c = await lib.scanLibrary(sendScanProgress);
     return { count: c.entries.length, path: lib.LIBRARY_PATH };
 });
 
 ipcMain.handle('library:rescan', async () => {
     lib.rescanLibrary();
-    const c = await lib.scanLibrary();
+    const c = await lib.scanLibrary(sendScanProgress);
     if (mainWindow) mainWindow.webContents.send('library:scanned', { count: c.entries.length });
     return { ok: true, count: c.entries.length };
+});
+
+// ─── IPC: queue persistence ──────────────────────────────────────────────────
+// Renderer reads on boot, writes on every user-driven queue mutation.
+// Transient per-track state (dlStatus, dlPercent, selected) is stripped by
+// the renderer before saving — those reset on each session.
+
+ipcMain.handle('queue:get', () => {
+    try { return JSON.parse(fs.readFileSync(QUEUE_PATH(), 'utf8')); }
+    catch { return []; }
+});
+
+ipcMain.handle('queue:save', (_e, queue) => {
+    try {
+        fs.writeFileSync(QUEUE_PATH(), JSON.stringify(queue || [], null, 2));
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
 });
 
 // ─── IPC: token check (so the UI knows if auth is needed) ─────────────────────
@@ -585,6 +641,7 @@ ipcMain.handle('download:cancel', () => {
 // ─── IPC: resolve URL or search query → queue-ready tracks ──────────────────
 
 ipcMain.handle('resolve:input', async (_e, { input }) => {
+    resolverCancelled = false;
     try {
         const cred = lib.loadCred();
         const token = await lib.getToken(cred);
@@ -592,16 +649,29 @@ ipcMain.handle('resolve:input', async (_e, { input }) => {
 
         const parsed = lib.parseInputUrl(input);
         if (parsed) {
-            const tracks = await lib.resolveUrlToTracks(input, token, country);
-            return { ok: true, kind: 'url', tracks: tracks || [] };
+            const result = await lib.resolveUrlToTracks(input, token, country, {
+                isCancelled: () => resolverCancelled,
+            });
+            if (resolverCancelled || result?.cancelled) {
+                return { ok: false, cancelled: true };
+            }
+            return {
+                ok: true,
+                kind: 'url',
+                tracks: result?.tracks || [],
+                capped: !!result?.capped,
+            };
         }
         // Not a URL — treat as search query
         const tracks = await lib.searchTracksForQueue(input, token, country, 10);
+        if (resolverCancelled) return { ok: false, cancelled: true };
         return { ok: true, kind: 'search', tracks };
     } catch (e) {
         return { ok: false, error: e.message };
     }
 });
+
+ipcMain.handle('resolve:cancel', () => { resolverCancelled = true; return { ok: true }; });
 
 ipcMain.handle('resolve:ocr-tracks', async (_e, { tracks }) => {
     // tracks: [{ title, artist }] from OCR — resolve each to a TIDAL match

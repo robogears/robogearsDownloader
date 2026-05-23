@@ -42,10 +42,16 @@ contextBridge.exposeInMainWorld('api', {
 
     // Resolver: input → tracks for the queue
     resolveInput:   (p)   => ipcRenderer.invoke('resolve:input', p),
+    cancelResolve:  ()    => ipcRenderer.invoke('resolve:cancel'),
     resolveOcr:     (p)   => ipcRenderer.invoke('resolve:ocr-tracks', p),
+
+    // Queue persistence (across app restarts)
+    getQueue:       ()    => ipcRenderer.invoke('queue:get'),
+    saveQueue:      (q)   => ipcRenderer.invoke('queue:save', q),
 
     // Library (read-only duplicate index)
     libraryStatus:   ()  => ipcRenderer.invoke('library:status'),
     libraryRescan:   ()  => ipcRenderer.invoke('library:rescan'),
     onLibraryScanned: (cb) => ipcRenderer.on('library:scanned', (_e, p) => cb(p)),
+    onLibraryScanProgress: (cb) => ipcRenderer.on('library:scan-progress', (_e, p) => cb(p)),
 });

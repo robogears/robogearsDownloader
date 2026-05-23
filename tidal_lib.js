@@ -313,9 +313,10 @@ async function searchTracks(query, token, countryCode = 'US', limit = 10) {
  *
  * For pure search queries (no URL), call searchTracksForQueue() instead.
  */
-async function resolveUrlToTracks(input, token, countryCode = 'US') {
+async function resolveUrlToTracks(input, token, countryCode = 'US', { isCancelled = null } = {}) {
     const parsed = parseInputUrl(input);
     if (!parsed) return null;
+    const cancelled = () => typeof isCancelled === 'function' && isCancelled();
 
     const tidalEntry = (t) => ({
         tidalId: t.id,
@@ -324,6 +325,7 @@ async function resolveUrlToTracks(input, token, countryCode = 'US') {
         duration: t.duration,
         source: 'tidal',
         matchMethod: 'direct',
+        hiRes: t.mediaMetadata?.tags?.includes('HIRES_LOSSLESS') || false,
     });
 
     if (parsed.source === 'tidal') {
@@ -338,12 +340,14 @@ async function resolveUrlToTracks(input, token, countryCode = 'US') {
             const items = await getPlaylistItems(parsed.id, token, countryCode);
             out = items.map(i => i.item || i).filter(t => t?.id && t.type !== 'video').map(tidalEntry);
         }
+        if (cancelled()) return { tracks: [], cancelled: true };
         await enrichWithLibraryStatus(out);
-        return out;
+        return { tracks: out, capped: false };
     }
 
     if (parsed.source === 'spotify') {
         let spTracks = [];
+        let capped = false;
         if (parsed.type === 'track') {
             const t = await getSpotifyTrack(parsed.id);
             spTracks = t ? [t] : [];
@@ -353,15 +357,17 @@ async function resolveUrlToTracks(input, token, countryCode = 'US') {
         } else if (parsed.type === 'playlist') {
             const pl = await getSpotifyPlaylist(parsed.id);
             spTracks = (pl && Array.isArray(pl.tracks)) ? pl.tracks : [];
+            capped = !!(pl && pl._embedCapped);
         }
         spTracks = spTracks.filter(Boolean);
-        // (Library-status enrichment happens once at the end of this function)
+        if (cancelled()) return { tracks: [], cancelled: true };
 
-        // Parallel ISRC/search resolution, 8 at a time
+        // Parallel ISRC/search resolution, 8 at a time. Workers exit early on cancel.
         const results = new Array(spTracks.length);
         let next = 0;
         const worker = async () => {
             while (true) {
+                if (cancelled()) return;
                 const i = next++;
                 if (i >= spTracks.length) return;
                 const sp = spTracks[i];
@@ -376,6 +382,7 @@ async function resolveUrlToTracks(input, token, countryCode = 'US') {
                         tidalId: match?.track?.id || null,
                         matchMethod: match?.method || null,
                         notFound: !match,
+                        hiRes: match?.track?.mediaMetadata?.tags?.includes('HIRES_LOSSLESS') || false,
                     };
                 } catch {
                     results[i] = {
@@ -390,8 +397,11 @@ async function resolveUrlToTracks(input, token, countryCode = 'US') {
             }
         };
         await Promise.all(Array.from({ length: 8 }, worker));
-        await enrichWithLibraryStatus(results);
-        return results;
+        if (cancelled()) return { tracks: [], cancelled: true };
+        // Drop unresolved slots (cancellation can leave holes in the array)
+        const filtered = results.filter(Boolean);
+        await enrichWithLibraryStatus(filtered);
+        return { tracks: filtered, capped };
     }
     return null;
 }
@@ -661,7 +671,7 @@ function loadMM() {
  * Async — metadata parsing is I/O-bound. Concurrency-limited (8 in flight).
  * Result is cached for the process lifetime; call `rescanLibrary()` to refresh.
  */
-async function scanLibrary() {
+async function scanLibrary(onProgress) {
     if (_libraryCache !== null) return _libraryCache;
     if (_libraryScanPromise) return _libraryScanPromise;
 
@@ -689,8 +699,15 @@ async function scanLibrary() {
         };
         walk(LIBRARY_PATH);
 
-        // Second pass: read metadata in parallel (concurrency 8)
+        const total = files.length;
+        if (typeof onProgress === 'function') onProgress(0, total);
+
+        // Second pass: read metadata in parallel (concurrency 8). Throttle the
+        // progress event to roughly one per 25 files (or the final tick) so we
+        // don't flood the IPC channel.
         let nextIdx = 0;
+        let done = 0;
+        let lastReportedAt = 0;
         const worker = async () => {
             while (true) {
                 const i = nextIdx++;
@@ -722,6 +739,12 @@ async function scanLibrary() {
                     metaArtist: normalizeFullForMatch(metaArtist),
                     metaDuration,
                 });
+
+                done++;
+                if (typeof onProgress === 'function' && (done - lastReportedAt >= 25 || done === total)) {
+                    lastReportedAt = done;
+                    onProgress(done, total);
+                }
             }
         };
         await Promise.all(Array.from({ length: 8 }, worker));
