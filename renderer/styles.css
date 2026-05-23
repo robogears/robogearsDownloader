@@ -610,7 +610,9 @@ textarea {
 
 .qi-waveform {
     flex: 1 1 auto;
-    min-width: 80px;
+    /* Allow shrinking down to nothing if the title needs the room. The
+       waveform is the thing that flexes; the title is sacred. */
+    min-width: 0;
     height: 22px;
     cursor: pointer;
     border-radius: 4px;
@@ -632,11 +634,14 @@ textarea {
     display: none;
 }
 
-/* When title gets long, let it shrink (with ellipsis) instead of squeezing
-   the waveform below its min-width. */
+/* Title stays at its natural width — the waveform yields, not the title.
+   Override the default qi-title ellipsis/overflow rules so the full song
+   name is always visible. */
 .qi-title-row .qi-title {
-    flex: 0 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
 }
 
 .badge {
