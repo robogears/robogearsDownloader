@@ -1,20 +1,19 @@
-# What's new in v0.1.12
+# What's new in v0.1.13
 
-## macOS update relauncher — hardened
-- The **Restart to apply** flow on macOS was silently failing for some users — the app would close but the .app on disk wouldn't actually get replaced. Root cause: the detached bash relauncher was getting reaped by the parent Electron process's exit (`detached: true` + `child.unref()` isn't always enough to survive SIGHUP on macOS), so the move-swap-relaunch sequence never ran.
-- Fix: wrap the relauncher in **`nohup`** so it ignores SIGHUP, and bump the parent-exit delay from 200 ms to 500 ms to give the child time to fully reparent before the parent dies.
-- The relauncher script now also writes a verbose trace log to `/tmp/robogears-update-<timestamp>.log` with `set -x` enabled — if anything still goes wrong, you can `cat` that file to see exactly which step failed (parent-PID wait, quarantine strip, the rename, the move, the codesign, or the open).
+## macOS update relauncher — second pass
+- The `nohup` wrapping in v0.1.12 wasn't enough on some macOS setups — the relauncher script was still being reaped along with the parent Electron process, so **Restart to apply** closed the app without actually swapping the `.app`. This release moves the daemonization *into* the script itself: a classic Unix double-fork (`nohup "$0" --daemonized "$@" & disown`) so the actual work runs in a process with no parent that can drag it down. Plus an explicit `trap "" HUP TERM` for double safety.
+- If anything still goes sideways, you can now find the diagnostic trail in **`~/Library/Logs/robogears Downloader/`** (was `os.tmpdir()` before, which is `/var/folders/<random>/` on macOS — basically un-findable). Two files now:
+  - `attempts.log` — appended **before** any spawn happens. If this file doesn't exist after a failed update, the apply IPC itself didn't run. If it exists but the script log doesn't, the spawn failed and the error is captured here.
+  - `update-<timestamp>.log` — full `set -x` trace of the script if it actually ran, showing exactly which step (`mv`, `codesign`, `open`, etc.) failed or succeeded.
 
-## macOS dev launcher
-- New `start_app.command` at the repo root — macOS equivalent of `start_app.bat`. Double-click from Finder to launch the app in dev mode, just like Windows. Marked executable in git so it's runnable immediately after a fresh clone.
-- Also added a `.gitattributes` rule that pins shell scripts to LF line endings — prevents the classic `\r: command not found` bash error that can hit anyone editing the script on Windows and pushing it.
+If you've been hitting the "app closes but doesn't update" issue on macOS, install this build manually one more time and the next update click will either work or leave a real diagnostic trail.
 
 ---
 
 # Install
 
 - **Windows**: download `robogears-downloader.exe`, double-click. Windows SmartScreen will warn the first time — click **More info → Run anyway**. Portable; runs from anywhere with no installer. Future updates apply themselves via the in-app updater.
-- **macOS** (Apple Silicon): download `robogears-downloader-mac-arm64.zip`, unzip, drag `robogears Downloader.app` to `/Applications`. On first launch **right-click → Open** to bypass Gatekeeper. After this build, future updates apply themselves automatically.
+- **macOS** (Apple Silicon): download `robogears-downloader-mac-arm64.zip`, unzip, drag `robogears Downloader.app` to `/Applications`. On first launch **right-click → Open** to bypass Gatekeeper.
 
 Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloader\` on Windows, `~/Library/Application Support/robogears Downloader/` on macOS).
 
@@ -25,4 +24,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.11...v0.1.12
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.12...v0.1.13

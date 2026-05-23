@@ -308,26 +308,46 @@ ipcMain.handle('update:apply', () => {
         // process.execPath is .../<App>.app/Contents/MacOS/<exe>. Strip the
         // last three segments to get the .app bundle path.
         const appBundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
-        const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.sh`);
-        const logPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.log`);
-        // The script:
-        //   1. Redirects ALL output to a log file (~/Library/Logs would be nicer
-        //      but /tmp is reliable and the user can `cat` it after a failed update).
-        //   2. Waits for our PID to die (parent Electron process).
-        //   3. Strips com.apple.quarantine on the new .app so Gatekeeper doesn't
-        //      re-prompt on the relaunched build.
-        //   4. Renames old → .bak, moves new into place, re-signs ad-hoc
-        //      (the move can invalidate the signature), removes the .bak, opens
-        //      the new .app. Rolls back from .bak if anything fails so the user
-        //      is never left without an .app.
-        //   5. Self-deletes the script (but keeps the log around for diagnosis).
-        // The `trap` + `set -x` lines make the log thorough enough to debug.
+        // Put logs in ~/Library/Logs/robogears Downloader/ — a predictable,
+        // standard macOS log location. Previously we used os.tmpdir() but
+        // that's /var/folders/... on macOS which is hard to find.
+        const logDir = path.join(os.homedir(), 'Library', 'Logs', 'robogears Downloader');
+        try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+        const ts = Date.now();
+        const scriptPath = path.join(os.tmpdir(), `robogears-update-${ts}.sh`);
+        const logPath = path.join(logDir, `update-${ts}.log`);
+        // Write a "this IPC fired" breadcrumb BEFORE we spawn anything, so even
+        // if the spawn silently fails we can prove the apply was reached.
+        const attemptLogPath = path.join(logDir, 'attempts.log');
+        try {
+            fs.appendFileSync(attemptLogPath,
+                `[${new Date().toISOString()}] applyUpdate fired\n` +
+                `  parent pid: ${process.pid}\n` +
+                `  app bundle: ${appBundle}\n` +
+                `  new app:    ${newPath}\n` +
+                `  script:     ${scriptPath}\n` +
+                `  log:        ${logPath}\n`
+            );
+        } catch {}
+
+        // The script daemonizes itself via a `setsid`-style double-fork so it
+        // 100% survives the parent's death. First-fork branch detaches the
+        // shell completely from the controlling terminal; second-fork branch
+        // does the actual work.
         const script = [
             '#!/bin/bash',
             `LOG="${logPath}"`,
+            '# Stage 1: re-exec into a fully detached background subshell.',
+            'if [ "$1" != "--daemonized" ]; then',
+            '    nohup "$0" --daemonized "$@" </dev/null >/dev/null 2>&1 &',
+            '    disown',
+            '    exit 0',
+            'fi',
+            'shift  # drop --daemonized',
             'exec >>"$LOG" 2>&1',
             'set -x',
             'echo "=== robogears update script started at $(date) ==="',
+            'trap "" HUP TERM  # belt and suspenders on top of nohup',
             'PID=$1',
             `NEW_APP="${newPath}"`,
             `OLD_APP="${appBundle}"`,
@@ -365,15 +385,22 @@ ipcMain.handle('update:apply', () => {
         ].join('\n');
         fs.writeFileSync(scriptPath, script);
         fs.chmodSync(scriptPath, 0o755);
-        // Use `nohup` so the script ignores SIGHUP when the parent process dies.
-        // Detached + unref alone is not always enough on macOS — the child can
-        // get killed alongside the parent if it hasn't fully reparented yet.
-        const child = spawn('/usr/bin/nohup', ['/bin/bash', scriptPath, String(process.pid)], {
+
+        // Spawn the script. The stage-1 branch above runs synchronously,
+        // immediately backgrounds the real work, and exits — so even if the
+        // parent kills the spawned shell, the actual update runs on.
+        const child = spawn('/bin/bash', [scriptPath, String(process.pid)], {
             detached: true,
             stdio: 'ignore',
         });
+        child.on('error', (err) => {
+            try {
+                fs.appendFileSync(attemptLogPath,
+                    `  SPAWN ERROR: ${err.message}\n`
+                );
+            } catch {}
+        });
         child.unref();
-        // Stash the log path so the renderer can show it if anything goes sideways.
         global._lastUpdateLogPath = logPath;
     } else {
         return { ok: false, error: `Self-install not implemented for ${process.platform}` };
