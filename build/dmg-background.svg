@@ -1,6 +1,14 @@
-<svg width="540" height="400" viewBox="0 0 540 400" xmlns="http://www.w3.org/2000/svg">
-    <!-- Match the app's pure-black monochrome theme. -->
-    <rect width="540" height="400" fill="#0a0a0a"/>
+<svg width="1920" height="1200" viewBox="0 0 1920 1200" xmlns="http://www.w3.org/2000/svg">
+    <!-- Full-canvas black background. The Finder DMG window opens at 540×400
+         (set in dmg.window in package.json) but the user can drag the resize
+         handle to make it bigger. Finder doesn't tile or scale the background
+         image — anywhere beyond the image's bounds shows Finder's default
+         white. Solution: paint a huge canvas in the same dark color so any
+         resize just reveals more black. The turntable scene below stays
+         pinned to the top-left 540×400 region so it lines up with the icon
+         positions configured in dmg.contents (which are coordinates in the
+         window's content area, not the image). -->
+    <rect width="1920" height="1200" fill="#0a0a0a"/>
 
     <!-- Title -->
     <text x="270" y="55" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
@@ -28,31 +36,31 @@
         <circle r="52" stroke="#2a2a2a" stroke-width="1"/>
     </g>
 
-    <!-- Tonearm: pivot mounted upper-right of the platter, arm sweeps across
-         to a cartridge head poised over the outer groove of the platter —
-         the natural "playing" position. The needle drops between the platter
-         and the app icon (the "record"), pointing at where the record arrives
-         after the drag. -->
+    <!-- Tonearm in the "at-rest" position — pivot top-right, shaft straight
+         down, cartridge headshell at the bottom. Sits entirely to the right
+         of the platter so it doesn't overlay the groove rings. -->
     <g stroke-linecap="round" stroke-linejoin="round">
         <!-- Pivot base + center pin -->
-        <circle cx="495" cy="130" r="11" fill="#1f1f1f" stroke="#5a5a5a" stroke-width="2"/>
-        <circle cx="495" cy="130" r="3" fill="#7a7a7a"/>
+        <circle cx="510" cy="115" r="11" fill="#1f1f1f" stroke="#5a5a5a" stroke-width="2"/>
+        <circle cx="510" cy="115" r="3" fill="#7a7a7a"/>
 
-        <!-- Tonearm shaft -->
-        <line x1="490" y1="134" x2="310" y2="218" stroke="#5a5a5a" stroke-width="4"/>
+        <!-- Vertical tonearm shaft -->
+        <line x1="510" y1="121" x2="510" y2="225" stroke="#5a5a5a" stroke-width="4"/>
 
-        <!-- Cartridge headshell — small block at the tip of the arm, hovering
-             just above the outer edge of the platter. -->
-        <rect x="278" y="214" width="36" height="14" rx="2"
+        <!-- Cartridge headshell at the bottom of the shaft -->
+        <rect x="494" y="222" width="32" height="14" rx="2"
               fill="#1f1f1f" stroke="#5a5a5a" stroke-width="1.5"/>
 
-        <!-- Stylus / needle pointing down toward the platter -->
-        <line x1="296" y1="228" x2="296" y2="238" stroke="#9a9a9a" stroke-width="2"/>
+        <!-- Stylus / needle pointing straight down -->
+        <line x1="510" y1="236" x2="510" y2="244" stroke="#9a9a9a" stroke-width="2"/>
     </g>
 
-    <!-- Footer note for first-launch Gatekeeper -->
+    <!-- First-launch Gatekeeper reminder. On newer macOS (Ventura+), the
+         "right-click → Open" trick doesn't work for unsigned apps — the
+         user has to go to System Settings → Privacy & Security and click
+         "Open Anyway". Make this prominent so they don't get stuck. -->
     <text x="270" y="362" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
-          font-size="11" fill="#5a5a5a" text-anchor="middle">
-        First launch: right-click the installed app and choose Open.
+          font-size="12" text-anchor="middle">
+        <tspan font-weight="700" fill="#ffffff" letter-spacing="0.5">DON'T FORGET</tspan><tspan font-weight="400" fill="#9a9a9a"> to allow the app in System Settings → Privacy &amp; Security</tspan>
     </text>
 </svg>

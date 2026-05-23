@@ -1,22 +1,19 @@
-# What's new in v0.1.15
+# What's new in v0.1.16
 
-## macOS now ships as a proper DMG installer
-- First-time install on macOS is now the standard drag-to-Applications experience: double-click `robogears-downloader-mac-arm64.dmg`, a window opens with a custom turntable-themed backdrop — the app icon on the left as a record, the Applications folder on the right as a platter, a tonearm sweeping across in between. Drag the record onto the platter.
-- The `.zip` is still produced (and is what the in-app updater downloads — smaller, no mount step), but humans installing for the first time get the better window.
+## Polished install window
+- The DMG installer's background scene got three improvements:
+  - **No more white when you resize.** The backdrop is now a 1920×1200 canvas (same dark black as the rest), so dragging the window larger just reveals more black instead of macOS's default white-area-beyond-image.
+  - **Tonearm now sits vertically off to the side** of the platter, in the natural at-rest position. Doesn't cross the groove rings anymore.
+  - **Footer reads `DON'T FORGET to allow the app in System Settings → Privacy & Security`** in bold-white. The old "right-click → Open" hint isn't enough on newer macOS (Ventura+) — Gatekeeper now sends users to System Settings and the **DON'T FORGET** wording makes that step harder to miss.
 
-## App Translocation fix — auto-update now actually swaps the .app
-- macOS Gatekeeper's "Path Randomization" was silently running the app from a **read-only** `/var/folders/.../AppTranslocation/...` shadow whenever it was launched from outside `/Applications/`. The in-app updater dutifully ran but `mv` failed with "Read-only file system" — the app closed, didn't update. This was the bug the diagnostic logs in v0.1.13 finally uncovered.
-- The updater now detects a translocated install path and treats `/Applications/<App>.app` as the install destination instead. Combined with the new DMG flow (which puts the app in `/Applications/` properly), translocation should be a non-issue from this build forward.
-
-## Tidying
-- The duplicate copies macOS auto-named for you during testing — `robogears Downloader 2.app`, `… 3.app`, `… 4.app` — can be safely dragged to Trash after this install lands. The single canonical copy will be at `/Applications/robogears Downloader.app`.
+No code changes. Pure DMG-art polish.
 
 ---
 
 # Install
 
 - **Windows**: download `robogears-downloader.exe`, double-click. Windows SmartScreen will warn the first time — click **More info → Run anyway**. Portable; runs from anywhere with no installer. Future updates apply themselves via the in-app updater.
-- **macOS** (Apple Silicon): download `robogears-downloader-mac-arm64.dmg`, double-click it, then drag the app icon onto the Applications folder shortcut in the window that opens. On first launch **right-click → Open** to bypass Gatekeeper (the app uses an ad-hoc signature, not a paid Apple Developer cert).
+- **macOS** (Apple Silicon): download `robogears-downloader-mac-arm64.dmg`, double-click it, then drag the app icon onto the Applications folder shortcut in the window that opens. **Don't forget** to allow the app in System Settings → Privacy & Security on first launch.
 
 Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloader\` on Windows, `~/Library/Application Support/robogears Downloader/` on macOS).
 
@@ -27,4 +24,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.14...v0.1.15
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.15...v0.1.16
