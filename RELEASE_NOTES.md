@@ -1,12 +1,9 @@
-# What's new in v0.1.13
+# What's new in v0.1.14
 
-## macOS update relauncher — second pass
-- The `nohup` wrapping in v0.1.12 wasn't enough on some macOS setups — the relauncher script was still being reaped along with the parent Electron process, so **Restart to apply** closed the app without actually swapping the `.app`. This release moves the daemonization *into* the script itself: a classic Unix double-fork (`nohup "$0" --daemonized "$@" & disown`) so the actual work runs in a process with no parent that can drag it down. Plus an explicit `trap "" HUP TERM` for double safety.
-- If anything still goes sideways, you can now find the diagnostic trail in **`~/Library/Logs/robogears Downloader/`** (was `os.tmpdir()` before, which is `/var/folders/<random>/` on macOS — basically un-findable). Two files now:
-  - `attempts.log` — appended **before** any spawn happens. If this file doesn't exist after a failed update, the apply IPC itself didn't run. If it exists but the script log doesn't, the spawn failed and the error is captured here.
-  - `update-<timestamp>.log` — full `set -x` trace of the script if it actually ran, showing exactly which step (`mv`, `codesign`, `open`, etc.) failed or succeeded.
-
-If you've been hitting the "app closes but doesn't update" issue on macOS, install this build manually one more time and the next update click will either work or leave a real diagnostic trail.
+## Validation build for the macOS auto-update flow
+- No new user-visible features. This release exists so anyone running v0.1.13 can exercise the new macOS self-install path — the double-fork daemonization + `~/Library/Logs/robogears Downloader/` diagnostics introduced in v0.1.13 only matter if there's actually something for the in-app updater to point at.
+- If you're on v0.1.13 and clicking **Restart to apply** does the right thing — the app downloads this build, swaps the `.app`, and relaunches automatically — the macOS auto-update path is finally settled. From v0.1.15 onward you should never have to manually reinstall.
+- If something still goes wrong, check `~/Library/Logs/robogears Downloader/attempts.log` (and `update-<timestamp>.log` if it exists) — the diagnostic trail will tell us exactly where to look next.
 
 ---
 
@@ -24,4 +21,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.12...v0.1.13
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.13...v0.1.14
