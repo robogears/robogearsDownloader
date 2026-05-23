@@ -78,7 +78,6 @@
     "dmg": {
       "title": "Install robogears Downloader",
       "background": "build/dmg-background.png",
-      "backgroundColor": "#0a0a0a",
       "iconSize": 100,
       "window": {
         "width": 540,
