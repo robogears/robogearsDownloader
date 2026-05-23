@@ -6,6 +6,8 @@ Paste a TIDAL or Spotify link — track, album, or playlist — or type a song n
 
 ## Install
 
+Please note: older versions (pre 0.1.21) are pretty buggy and broken so it's highly recommended to download the lastest:
+
 Grab the latest release from [the releases page](https://github.com/robogears/robogearsDownloader/releases/latest):
 
 - **Windows**: `robogears-downloader.exe`. Portable — runs from anywhere, no installer. First launch shows a SmartScreen warning (**More info → Run anyway**).
