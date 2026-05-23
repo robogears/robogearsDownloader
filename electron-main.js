@@ -306,8 +306,17 @@ ipcMain.handle('update:apply', () => {
     } else if (process.platform === 'darwin') {
         // ─── macOS ──────────────────────────────────────────────────
         // process.execPath is .../<App>.app/Contents/MacOS/<exe>. Strip the
-        // last three segments to get the .app bundle path.
-        const appBundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
+        // last three segments to get the .app bundle the OS is running from.
+        // NOTE: if Gatekeeper has translocated us (i.e., we were launched from
+        // outside /Applications/ with quarantine still set), this path is a
+        // READ-ONLY shadow copy at /var/folders/.../AppTranslocation/... — we
+        // can't modify it. In that case we install to /Applications/ instead.
+        const runningAppBundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
+        const isTranslocated = runningAppBundle.includes('/AppTranslocation/');
+        const targetAppBundle = isTranslocated
+            ? path.join('/Applications', app.getName() + '.app')
+            : runningAppBundle;
+        const appBundle = targetAppBundle;
         // Put logs in ~/Library/Logs/robogears Downloader/ — a predictable,
         // standard macOS log location. Previously we used os.tmpdir() but
         // that's /var/folders/... on macOS which is hard to find.
@@ -330,10 +339,18 @@ ipcMain.handle('update:apply', () => {
             );
         } catch {}
 
-        // The script daemonizes itself via a `setsid`-style double-fork so it
-        // 100% survives the parent's death. First-fork branch detaches the
-        // shell completely from the controlling terminal; second-fork branch
-        // does the actual work.
+        // The script daemonizes itself via a double-fork so it survives the
+        // parent's death. Stage 1 backgrounds itself with nohup + disown +
+        // </dev/null >/dev/null 2>&1; stage 2 (with --daemonized) does the
+        // actual work.
+        //
+        // The work itself installs the new .app at $TARGET — which is either
+        // (a) the same path the user is running from (in-place update on a
+        // properly installed .app) or (b) /Applications/<App>.app if the
+        // running copy was Gatekeeper-translocated to a read-only shadow.
+        // Either way, we back up any existing copy at $TARGET, move the new
+        // .app in, re-sign ad-hoc, and `open` it. Roll back from .bak if any
+        // step fails so the user is never left without a working app.
         const script = [
             '#!/bin/bash',
             `LOG="${logPath}"`,
@@ -350,34 +367,42 @@ ipcMain.handle('update:apply', () => {
             'trap "" HUP TERM  # belt and suspenders on top of nohup',
             'PID=$1',
             `NEW_APP="${newPath}"`,
-            `OLD_APP="${appBundle}"`,
-            'BACKUP="${OLD_APP}.bak"',
-            'echo "PID=$PID NEW=$NEW_APP OLD=$OLD_APP"',
+            `TARGET="${targetAppBundle}"`,
+            `RUNNING_FROM="${runningAppBundle}"`,
+            `TRANSLOCATED="${isTranslocated ? '1' : '0'}"`,
+            'BACKUP="${TARGET}.bak"',
+            'echo "PID=$PID NEW=$NEW_APP TARGET=$TARGET RUNNING_FROM=$RUNNING_FROM TRANSLOCATED=$TRANSLOCATED"',
             'echo "Waiting for parent process $PID to exit..."',
             'for i in $(seq 1 30); do',
             '    if ! ps -p $PID > /dev/null 2>&1; then echo "Parent gone after ${i}s"; break; fi',
             '    sleep 1',
             'done',
             'xattr -dr com.apple.quarantine "$NEW_APP" 2>/dev/null || true',
-            'rm -rf "$BACKUP" 2>/dev/null',
-            'echo "Renaming old -> backup..."',
-            'if mv "$OLD_APP" "$BACKUP"; then',
-            '    echo "Moving new -> old..."',
-            '    if mv "$NEW_APP" "$OLD_APP"; then',
-            '        echo "Re-signing ad-hoc..."',
-            '        codesign --force --deep --sign - "$OLD_APP" 2>&1 || true',
-            '        echo "Removing backup..."',
-            '        rm -rf "$BACKUP"',
-            '        echo "Opening new app..."',
-            '        open "$OLD_APP"',
-            '        echo "Done."',
-            '    else',
-            '        echo "ERROR: mv NEW->OLD failed, rolling back."',
-            '        mv "$BACKUP" "$OLD_APP"',
-            '        open "$OLD_APP"',
+            '# If something is already at TARGET, back it up first so we can roll back.',
+            'if [ -d "$TARGET" ]; then',
+            '    echo "Backing up existing $TARGET..."',
+            '    rm -rf "$BACKUP" 2>/dev/null',
+            '    if ! mv "$TARGET" "$BACKUP"; then',
+            '        echo "ERROR: could not back up existing TARGET (permission?). Aborting."',
+            '        rm -f "$0"',
+            '        exit 1',
             '    fi',
+            'fi',
+            'echo "Moving NEW -> TARGET..."',
+            'if mv "$NEW_APP" "$TARGET"; then',
+            '    echo "Re-signing ad-hoc..."',
+            '    codesign --force --deep --sign - "$TARGET" 2>&1 || true',
+            '    echo "Removing backup..."',
+            '    rm -rf "$BACKUP" 2>/dev/null',
+            '    echo "Opening new app at $TARGET..."',
+            '    open "$TARGET"',
+            '    echo "Done."',
             'else',
-            '    echo "ERROR: mv OLD->BACKUP failed (permission? path?)."',
+            '    echo "ERROR: mv NEW->TARGET failed. Rolling back."',
+            '    if [ -d "$BACKUP" ] && [ ! -d "$TARGET" ]; then',
+            '        mv "$BACKUP" "$TARGET"',
+            '    fi',
+            '    [ -d "$TARGET" ] && open "$TARGET"',
             'fi',
             'echo "=== script finished at $(date) ==="',
             'rm -f "$0"',

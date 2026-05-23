@@ -1,0 +1,58 @@
+<svg width="540" height="400" viewBox="0 0 540 400" xmlns="http://www.w3.org/2000/svg">
+    <!-- Match the app's pure-black monochrome theme. -->
+    <rect width="540" height="400" fill="#0a0a0a"/>
+
+    <!-- Title -->
+    <text x="270" y="55" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+          font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle"
+          letter-spacing="-0.4">
+        Install robogears Downloader
+    </text>
+
+    <!-- Subtitle -->
+    <text x="270" y="82" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+          font-size="13" font-weight="400" fill="#9a9a9a" text-anchor="middle">
+        Drop the needle — drag the record onto the platter
+    </text>
+
+    <!-- Turntable platter: concentric grooves behind where the /Applications
+         folder icon will be. The icon (100×100, centered at 400,220) sits on
+         top of the inner rings; the outer ones extend past the icon's edges
+         so it reads as "platter under folder". -->
+    <g transform="translate(400, 220)" fill="none">
+        <circle r="92" stroke="#3a3a3a" stroke-width="2"/>
+        <circle r="84" stroke="#2f2f2f" stroke-width="1"/>
+        <circle r="76" stroke="#2f2f2f" stroke-width="1"/>
+        <circle r="68" stroke="#2f2f2f" stroke-width="1"/>
+        <circle r="60" stroke="#2f2f2f" stroke-width="1"/>
+        <circle r="52" stroke="#2a2a2a" stroke-width="1"/>
+    </g>
+
+    <!-- Tonearm: pivot mounted upper-right of the platter, arm sweeps across
+         to a cartridge head poised over the outer groove of the platter —
+         the natural "playing" position. The needle drops between the platter
+         and the app icon (the "record"), pointing at where the record arrives
+         after the drag. -->
+    <g stroke-linecap="round" stroke-linejoin="round">
+        <!-- Pivot base + center pin -->
+        <circle cx="495" cy="130" r="11" fill="#1f1f1f" stroke="#5a5a5a" stroke-width="2"/>
+        <circle cx="495" cy="130" r="3" fill="#7a7a7a"/>
+
+        <!-- Tonearm shaft -->
+        <line x1="490" y1="134" x2="310" y2="218" stroke="#5a5a5a" stroke-width="4"/>
+
+        <!-- Cartridge headshell — small block at the tip of the arm, hovering
+             just above the outer edge of the platter. -->
+        <rect x="278" y="214" width="36" height="14" rx="2"
+              fill="#1f1f1f" stroke="#5a5a5a" stroke-width="1.5"/>
+
+        <!-- Stylus / needle pointing down toward the platter -->
+        <line x1="296" y1="228" x2="296" y2="238" stroke="#9a9a9a" stroke-width="2"/>
+    </g>
+
+    <!-- Footer note for first-launch Gatekeeper -->
+    <text x="270" y="362" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+          font-size="11" fill="#5a5a5a" text-anchor="middle">
+        First launch: right-click the installed app and choose Open.
+    </text>
+</svg>
