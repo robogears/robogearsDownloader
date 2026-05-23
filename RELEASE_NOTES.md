@@ -1,10 +1,16 @@
-# What's new in v0.1.19
+# What's new in v0.1.20
 
-## Validation bump
-- No code changes from v0.1.18. Continues exercising the DMG-only auto-update path on macOS (and the portable-exe swap on Windows). If you're already on v0.1.17 or v0.1.18, hitting **Download update** should land you here automatically.
-- Pure release-plumbing test — no user-facing functionality change.
+## Experimental: inline waveform preview
+- Each queue row now has a circular **play button** on the left and a dynamic **waveform** that fills the space between the title and the action buttons. Click play; the waveform paints in once the audio loads.
+- **Hold the left mouse button and drag** across the waveform to scrub through the track. Audio keeps playing while you drag, so you can skim for the drop / chorus / intro.
+- **Spotlight hover effect** — bars near the cursor swell up slightly with a thin tracking cursor line. Pure flair, but it makes the waveform feel alive.
+- Works on both DASH and BTS TIDAL manifests. Caches the last 3 decoded tracks in memory; clicking play on a previously-previewed track is instant.
+- Previews fetch at LOSSLESS quality (smaller than Hi-Res, faster). The first preview click on a track takes a few seconds — subsequent toggles are immediate.
+- Tracks that are actively downloading, or have no TIDAL match (Spotify-not-found rows), hide the preview controls so they don't clash with the download UI.
 
-If you're still on v0.1.16 or earlier on macOS, you'll need to install the latest DMG manually once — older builds look for a `mac-arm64.zip` asset that no longer exists. After that one-time install, all future updates auto-apply.
+## Polish
+- The **loading indicator moved from a full-screen overlay to a small pill in the topbar** between the app name and the version number. Funny rotating messages still cycle, slow Spotify resolves can still be cancelled — but the rest of the UI stays usable while you wait.
+- Play / pause icons are now inline SVGs instead of unicode characters, so they're crisply centered in their button.
 
 ---
 
@@ -22,4 +28,4 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.18...v0.1.19
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.19...v0.1.20

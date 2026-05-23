@@ -509,6 +509,83 @@ textarea {
     background: var(--card);
 }
 
+/* ─── Experimental: preview play button + waveform ────────────────────────── */
+.qi-play {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.qi-play svg { display: block; }
+.qi-play:hover {
+    color: var(--text);
+    border-color: var(--text);
+    background: var(--card);
+}
+.qi-play.playing {
+    color: var(--bg);
+    background: var(--text);
+    border-color: var(--text);
+}
+.qi-play.loading {
+    color: var(--text-muted);
+    border-style: dashed;
+    animation: qi-play-spin 1.2s linear infinite;
+}
+@keyframes qi-play-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* Title + waveform live on the same row so the waveform expands to fill
+   whatever's left between the end of the title text and the action buttons. */
+.qi-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.qi-waveform {
+    flex: 1 1 auto;
+    min-width: 80px;
+    height: 22px;
+    cursor: pointer;
+    border-radius: 4px;
+    background: transparent;
+    display: block;
+    transition: background 0.12s;
+}
+.qi-waveform:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.qi-waveform.empty {
+    /* placeholder before peaks are computed — same footprint, no cursor */
+    cursor: default;
+}
+.queue-item.dl-downloading .qi-waveform,
+.queue-item.notfound .qi-waveform,
+.queue-item.notfound .qi-play {
+    /* hide preview controls during active download or for not-found rows */
+    display: none;
+}
+
+/* When title gets long, let it shrink (with ellipsis) instead of squeezing
+   the waveform below its min-width. */
+.qi-title-row .qi-title {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
 .badge {
     display: inline-block;
     font-size: 10px;
@@ -699,49 +776,58 @@ textarea {
     white-space: nowrap;
 }
 
-/* ─── Loading overlay ──────────────────────────────────────────────────── */
-.loading {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    display: flex;
+/* ─── Topbar loading indicator (replaces the full-screen overlay) ─────────── */
+.topbar-loading {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    z-index: 100;
-}
-.loading[hidden] { display: none; }
-.loading-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    color: var(--text);
-}
-.spinner {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 2.5px solid var(--border-strong);
-    border-top-color: var(--text);
-    animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.loading-text {
-    font-size: 13px;
+    gap: 8px;
+    padding: 3px 10px;
+    background: var(--bg-elev);
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
     color: var(--text-muted);
     font-weight: 500;
+    -webkit-app-region: no-drag;
+    margin-left: 4px;
+    max-width: 360px;
+    overflow: hidden;
 }
-.loading-cancel-btn {
-    margin-top: 4px;
-    color: var(--text-muted);
-    border: 1px solid var(--border-strong);
+.topbar-loading[hidden] { display: none; }
+.topbar-spinner {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    border-top-color: var(--text);
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.topbar-loading-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.topbar-loading-cancel {
     background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 3px;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
 }
-.loading-cancel-btn:hover {
+.topbar-loading-cancel:hover {
     color: var(--text);
-    border-color: var(--text);
+    background: var(--card);
+}
+.topbar-loading-cancel:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 /* ─── Modals ───────────────────────────────────────────────────────────── */

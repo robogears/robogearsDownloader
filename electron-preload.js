@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('api', {
     cancelResolve:  ()    => ipcRenderer.invoke('resolve:cancel'),
     resolveOcr:     (p)   => ipcRenderer.invoke('resolve:ocr-tracks', p),
 
+    // Preview audio (experimental — waveform feature)
+    getPreviewAudio: (tidalId) => ipcRenderer.invoke('preview:get-audio', { tidalId }),
+
     // Queue persistence (across app restarts)
     getQueue:       ()    => ipcRenderer.invoke('queue:get'),
     saveQueue:      (q)   => ipcRenderer.invoke('queue:save', q),

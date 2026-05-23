@@ -673,6 +673,111 @@ ipcMain.handle('resolve:input', async (_e, { input }) => {
 
 ipcMain.handle('resolve:cancel', () => { resolverCancelled = true; return { ok: true }; });
 
+// ─── IPC: preview audio (experimental waveform feature) ─────────────────────
+// Fetches the raw audio bytes for a TIDAL track so the renderer can decode
+// for waveform peaks + play via a blob-backed <audio> element. LOSSLESS
+// quality (smaller than HI_RES) for faster fetch on preview. Supports both
+// BTS (single direct URL) and DASH (parallel segment fetch + concat).
+
+// Inline DASH manifest parser — sibling of tidal_download.js#parseManifest's
+// DASH branch. Kept local rather than imported because tidal_download.js has
+// a side-effecting main() at module scope that would run on require().
+function _parseDashForPreview(decodedXml) {
+    const xmlUnescape = s => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    const baseUrlMatch = decodedXml.match(/<BaseURL[^>]*>(.*?)<\/BaseURL>/s);
+    const baseUrl = baseUrlMatch ? xmlUnescape(baseUrlMatch[1].trim()) : '';
+
+    if (!decodedXml.includes('SegmentTemplate') && baseUrl) {
+        return { type: 'direct', url: baseUrl };
+    }
+    const initMatch = decodedXml.match(/initialization="([^"]+)"/);
+    const mediaMatch = decodedXml.match(/media="([^"]+)"/);
+    if (!initMatch || !mediaMatch) throw new Error('Could not parse DASH manifest');
+
+    const segments = [];
+    const startNumberMatch = decodedXml.match(/startNumber="(\d+)"/);
+    let segNum = startNumberMatch ? parseInt(startNumberMatch[1], 10) : 1;
+    const sElements = decodedXml.match(/<S\b[^>]*\/>/g) || [];
+    for (const el of sElements) {
+        const rMatch = el.match(/\br="(\d+)"/);
+        const repeat = rMatch ? parseInt(rMatch[1], 10) : 0;
+        for (let i = 0; i <= repeat; i++) segments.push(segNum++);
+    }
+    if (!segments.length) throw new Error('No segments found in DASH manifest');
+
+    return {
+        type: 'dash_segments',
+        baseUrl,
+        initTemplate: xmlUnescape(initMatch[1]),
+        mediaTemplate: xmlUnescape(mediaMatch[1]),
+        segments,
+    };
+}
+
+// Download all DASH segments in parallel (concurrency 8) and concat into one
+// fragmented-MP4 buffer the browser can play and decode via Web Audio.
+async function _fetchDashAudioBuffer(parsed) {
+    const initBuf = await lib.fetchBuffer(parsed.baseUrl + parsed.initTemplate, { timeout: 60_000, retries: 2 });
+    const buffers = new Array(parsed.segments.length);
+    let nextIdx = 0;
+    const worker = async () => {
+        while (true) {
+            const i = nextIdx++;
+            if (i >= parsed.segments.length) return;
+            const segUrl = parsed.baseUrl + parsed.mediaTemplate.replace('$Number$', parsed.segments[i]);
+            buffers[i] = await lib.fetchBuffer(segUrl, { timeout: 60_000, retries: 2 });
+        }
+    };
+    await Promise.all(Array.from({ length: 8 }, worker));
+    return Buffer.concat([initBuf, ...buffers]);
+}
+
+ipcMain.handle('preview:get-audio', async (_e, { tidalId }) => {
+    try {
+        const cred = lib.loadCred();
+        const token = await lib.getToken(cred);
+        const country = await lib.getCountryCode(cred);
+        const playback = await lib.getPlaybackInfo(tidalId, token, 'LOSSLESS', country);
+        const { manifestMimeType, manifest } = playback;
+        const decoded = Buffer.from(manifest, 'base64').toString('utf8');
+
+        // BTS / direct — JSON blob with a single signed URL
+        if (manifestMimeType && manifestMimeType.startsWith('application/vnd.tidal.')) {
+            const json = JSON.parse(decoded);
+            if (json.encryptionType && json.encryptionType !== 'NONE') {
+                return { ok: false, error: 'Track is DRM-encrypted' };
+            }
+            if (!json.urls || !json.urls.length) {
+                return { ok: false, error: 'No stream URL in manifest' };
+            }
+            const audioBytes = await lib.fetchBuffer(json.urls[0], { timeout: 60_000, retries: 2 });
+            return {
+                ok: true,
+                audioBytes,
+                mimeType: json.mimeType || 'audio/flac',
+            };
+        }
+
+        // DASH — segmented MPEG-DASH manifest (XML)
+        if (manifestMimeType === 'application/dash+xml') {
+            const parsed = _parseDashForPreview(decoded);
+            if (parsed.type === 'direct') {
+                const audioBytes = await lib.fetchBuffer(parsed.url, { timeout: 60_000, retries: 2 });
+                return { ok: true, audioBytes, mimeType: 'audio/flac' };
+            }
+            const audioBytes = await _fetchDashAudioBuffer(parsed);
+            // Segments concat'd form a fragmented MP4 (typically FLAC-in-MP4
+            // for LOSSLESS, AAC-in-MP4 for non-lossless). Chromium plays both
+            // via blob-URL on the <audio> element.
+            return { ok: true, audioBytes, mimeType: 'audio/mp4' };
+        }
+
+        return { ok: false, error: `Unknown manifest type: ${manifestMimeType}` };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+});
+
 ipcMain.handle('resolve:ocr-tracks', async (_e, { tracks }) => {
     // tracks: [{ title, artist }] from OCR — resolve each to a TIDAL match
     try {

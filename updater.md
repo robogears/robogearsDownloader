@@ -632,12 +632,65 @@ async function checkForUpdatesAndNotify() {
 | `Error: spawn <binary> ENOTDIR` in a packaged build | A binary from an npm package (e.g., `ffmpeg-static`) has its path inside `app.asar`. Electron's fs patches make `existsSync` return true but `spawn` goes through the raw OS exec syscall and chokes. | `asarUnpack` the package + rewrite the path: `require('foo-bin').replace('app.asar', 'app.asar.unpacked')`. |
 | macOS .app shows "damaged and can't be opened" | The Apple-Silicon `.app` is completely unsigned. arm64 Gatekeeper rejects unsigned binaries entirely (not the standard "unidentified developer" warning — a harsher error). | Ad-hoc sign in an `afterPack` hook with `codesign --force --deep --sign -`. |
 | CI fails with "GH_TOKEN is not set" on tag push | electron-builder auto-publishes when it sees a tag, demands a token. | `"publish": null` in `package.json#build`. Publish via a separate CI step instead. |
-| GitHub release body is empty after CI completes | `softprops/action-gh-release` sometimes preserves an empty body when updating an existing release. | Always verify body length post-CI: `gh release view vX.Y.Z --json body --jq '(.body \| length)'`. If 0, `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md`. |
+| GitHub release body is empty after CI completes | `softprops/action-gh-release@v2` produces an empty body on essentially *every* release in our experience — not "sometimes". Treat it as a guaranteed post-CI fix-up, not a flake. | Always verify body length post-CI: `gh release view vX.Y.Z --json body --jq '(.body \| length)'`. If 0 (it will be), `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md`, then re-verify. |
+| Draft release URL contains `untagged-<hash>` instead of the tag name | Cosmetic — softprops creates drafts at a hash-based URL; GitHub moves them to `/releases/tag/vX.Y.Z` only when published. | Not a bug. The draft *has* the tag (`gh release view vX.Y.Z` resolves it fine); only the public URL changes on publish. |
 | macOS "Restart to apply" closes the app but doesn't update | App is running from `/var/folders/.../AppTranslocation/...` (read-only shadow). `mv` fails with "Read-only file system". | Detect `/AppTranslocation/` in the path, install to `/Applications/<AppName>.app` instead of trying to swap in place. |
 | Detached child process never runs after `app.quit()` | `detached: true` + `unref()` isn't always enough on macOS — SIGHUP can still propagate. | Wrap in `nohup`, AND have the script double-fork itself via `nohup "$0" --daemonized "$@" </dev/null >/dev/null 2>&1 & disown`. |
 | First-launch Gatekeeper still prompts after auto-update on macOS | The newly-moved `.app` inherited the quarantine attribute from the download. | `xattr -dr com.apple.quarantine "$NEW_APP"` in the relauncher script BEFORE moving into place. |
 | `/releases/latest` doesn't return your draft | By design — drafts and pre-releases are invisible to `/latest`. | Users on the current published version won't see notices for drafts you've cut but haven't clicked Publish on. This is usually what you want. |
 | Update available appears but Download opens browser instead | The renderer fell through `canSelfInstall() === false` to the `openExternal` path. | Check that the user is on a version that *had* the self-install code at the time of build. Bootstrap problem: the auto-update code itself has to be installed via the OLD manual flow before it can take over. |
+| Update fails for users on the version *just before* an asset rename | Old installed version's updater hardcodes a substring match for the OLD asset name (e.g., `mac-arm64.zip`); the new release ships only the new name (e.g., `mac-arm64.dmg`). No match → updater falls back to `release.html_url` → downloader streams HTML and the extractor chokes on the "archive". | Ship BOTH formats for ONE transition release, then drop the old in the next. Or accept that one cohort does a one-time manual install — document the workaround in that version's release notes. Note this is distinct from the "introducing the updater" bootstrap problem above. |
+| `softprops/action-gh-release@v2` fails with "Bad credentials" on first run | Possibly transient — observed even with `permissions: contents: write` set on the release job. The default `GITHUB_TOKEN` is what gets rejected. | `gh run rerun <run-id> --failed` — re-run just the release job (builds stay cached, so it's seconds). If the second attempt also fails, fall back to creating the release manually with `gh release create` against the artifacts the build jobs uploaded. |
+
+---
+
+## Patterns worth borrowing
+
+**Validation bump after a structural updater change.** When you ship a change to the updater itself — new asset format, new spawn-survival logic, new path-resolution code — also ship a *no-code-change* patch release right after it. The prior version then has something newer to update to, exercising the full end-to-end path with zero ambiguity: if a bug shows up, you know it's in the updater code or release plumbing, not in whatever feature came alongside. Same pattern as a smoke deploy after an infrastructure migration. (In this repo: v0.1.13 → v0.1.14, v0.1.17 → v0.1.18.)
+
+**Document the bootstrap path in release notes.** Any time you make a change that orphans the previous version's auto-update — first time the updater ships, asset rename, asset path move — write the manual workaround into THAT release's notes. Don't make the affected users guess. A one-line "If you're on vX.Y, download this DMG once and drag it in; future updates auto-apply" goes a long way.
+
+**Verify the release body every single time.** softprops leaves the body empty on every release we've shipped, full stop. Either bake `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` into the workflow as a post-publish step (with `${{ steps.softprops.outputs.id != '' }}` or similar guard), or make body-verification + manual fix step 5 of your ship checklist and never skip it. The empty-body failure mode is silent — users see a blank GitHub release page and panic.
+
+**Separate "create draft" from "publish".** Let CI always produce a *draft* (`draft: true` in softprops). Then publish manually via `gh release edit vX.Y.Z --draft=false` once you've eyeballed the artifacts and notes. This catches release-notes typos, missing artifacts, and CI-side body-empty regressions before they hit users. It also lets you abandon a botched release without burning a version number (delete the draft + tag, fix, re-tag the same version).
+
+---
+
+## A copy-pasteable ship-tail
+
+Everything *after* `git push origin <tag>` in the ship process is mechanical and identical every time. Stash this as a tiny helper in any project using this pattern (PowerShell shown — trivially translatable to bash with `gh` calls):
+
+```powershell
+# Usage:  .\ship-tail.ps1 v0.1.17
+param([Parameter(Mandatory)][string]$Tag)
+
+$gh = "C:\Users\<you>\AppData\Local\Microsoft\WinGet\Links\gh.exe"  # or just "gh" if on PATH
+
+# 1. Wait for CI to finish. Assumes the tag-push triggered a run.
+$run = (& $gh run list --limit 1 --workflow release.yml --json databaseId --jq ".[0].databaseId")
+& $gh run watch $run --exit-status
+if ($LASTEXITCODE -ne 0) { Write-Error "CI failed for $Tag"; exit 1 }
+
+# 2. Body verification — guaranteed-empty on softprops, fix unconditionally.
+$len = & $gh release view $Tag --json body --jq "(.body | length)"
+if ([int]$len -lt 50) {
+    Write-Host "Body short ($len chars). Setting from RELEASE_NOTES.md."
+    & $gh release edit $Tag --notes-file RELEASE_NOTES.md
+    $len = & $gh release view $Tag --json body --jq "(.body | length)"
+    Write-Host "Body now $len chars."
+}
+
+# 3. Show summary, leave as draft for manual publish.
+& $gh release view $Tag --json url,isDraft,assets --jq "{url, isDraft, assets: [.assets[].name]}"
+Write-Host "Review and publish manually: gh release edit $Tag --draft=false"
+```
+
+Key things this captures that are easy to forget:
+- The CI-finished check happens inside `gh run watch --exit-status` (non-zero on failure → caller knows)
+- Body length is the only reliable post-CI signal that softprops did its job (it didn't)
+- Final state is *still a draft* — that's intentional. Publish is a deliberate human step.
+
+If you want fully automated, just append `& $gh release edit $Tag --draft=false` to the end. For a personal app it's fine; for anything user-facing keep the manual review.
 
 ---
 

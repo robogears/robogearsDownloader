@@ -41,14 +41,18 @@ const searchModalTitle = $('#search-modal-title');
 const searchModalHint = $('#search-modal-hint');
 const searchResultsEl = $('#search-results');
 const addSelectedBtn = $('#add-selected');
-const loadingEl = $('#loading');
-const loadingTextEl = $('#loading-text');
-const loadingCancelBtn = $('#loading-cancel');
+const topbarLoadingEl = $('#topbar-loading');
+const topbarLoadingTextEl = $('#topbar-loading-text');
+const topbarLoadingCancelBtn = $('#topbar-loading-cancel');
 
 // Cap activity-log lines so a long-running session doesn't hold the DOM
 // hostage. 2000 = plenty for normal use; if the user batches more than that
 // they really do want the older lines to drop off.
 const ACTIVITY_LOG_MAX = 2000;
+
+// Experimental — flip to false to disable the play-button + waveform preview
+// on queue rows entirely.
+const PREVIEW_FEATURE_ENABLED = true;
 
 let settings = { downloadFolder: '' };
 let queue = [];                  // [{ tidalId, title, artist, duration, source, notFound, key, hiRes }]
@@ -207,37 +211,32 @@ let _loadingOnCancel = null;
 function showLoading(text, { cancellable = false, onCancel = null } = {}) {
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
     if (text) {
-        // Caller provided specific text — show as-is (e.g. OCR phases)
-        loadingTextEl.textContent = text;
+        topbarLoadingTextEl.textContent = text;
     } else {
-        // Pick a random funny message, then cycle every 2.5s while still loading
         const pick = () => FUNNY_LOADING[Math.floor(Math.random() * FUNNY_LOADING.length)];
         let last = pick();
-        loadingTextEl.textContent = last;
+        topbarLoadingTextEl.textContent = last;
         _loadingCycler = setInterval(() => {
-            // Avoid repeating the same line back-to-back
             let next = pick();
             while (next === last && FUNNY_LOADING.length > 1) next = pick();
             last = next;
-            loadingTextEl.textContent = next;
+            topbarLoadingTextEl.textContent = next;
         }, 2500);
     }
     _loadingOnCancel = cancellable ? onCancel : null;
-    loadingCancelBtn.hidden = !cancellable;
-    loadingCancelBtn.disabled = false;
-    loadingCancelBtn.textContent = 'Cancel';
-    loadingEl.hidden = false;
+    topbarLoadingCancelBtn.hidden = !cancellable;
+    topbarLoadingCancelBtn.disabled = false;
+    topbarLoadingEl.hidden = false;
 }
 function hideLoading() {
-    loadingEl.hidden = true;
-    loadingCancelBtn.hidden = true;
+    topbarLoadingEl.hidden = true;
+    topbarLoadingCancelBtn.hidden = true;
     _loadingOnCancel = null;
     if (_loadingCycler) { clearInterval(_loadingCycler); _loadingCycler = null; }
 }
-loadingCancelBtn.addEventListener('click', () => {
+topbarLoadingCancelBtn.addEventListener('click', () => {
     if (!_loadingOnCancel) return;
-    loadingCancelBtn.disabled = true;
-    loadingCancelBtn.textContent = 'Cancelling…';
+    topbarLoadingCancelBtn.disabled = true;
     try { _loadingOnCancel(); } catch {}
 });
 function openModal(id) { $('#' + id).hidden = false; }
@@ -355,6 +354,246 @@ async function insertUpdateNotice({ version, downloadUrl }) {
 
 api.onUpdateAvailable(insertUpdateNotice);
 
+// ─── Audio preview / waveform (experimental) ────────────────────────────────
+// One playing track at a time. Click play on any queue row to fetch the audio
+// via main process, decode for peaks, and play through a blob-backed <audio>
+// element. The waveform canvas doubles as a scrub bar (click anywhere to seek)
+// and reacts under the cursor (bars near the mouse swell up slightly).
+//
+// Cache: per-tidalId entry holds the peaks Float32Array + the Blob URL the
+// <audio> element points at. LRU-evicted at 3 entries — keeps memory bounded
+// even after long preview sessions.
+
+const previewState = {
+    playingTidalId: null,
+    audio: null,
+    audioCtx: null,
+    cache: new Map(),
+    MAX_CACHE: 3,
+};
+
+function getPreviewCtx() {
+    if (!previewState.audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        previewState.audioCtx = new AC();
+    }
+    if (previewState.audioCtx.state === 'suspended') previewState.audioCtx.resume();
+    return previewState.audioCtx;
+}
+
+function evictPreviewCache() {
+    while (previewState.cache.size > previewState.MAX_CACHE) {
+        const oldestKey = previewState.cache.keys().next().value;
+        if (oldestKey === previewState.playingTidalId) {
+            // Don't evict the currently-playing entry; bump it to the end.
+            const entry = previewState.cache.get(oldestKey);
+            previewState.cache.delete(oldestKey);
+            previewState.cache.set(oldestKey, entry);
+            continue;
+        }
+        const old = previewState.cache.get(oldestKey);
+        try { URL.revokeObjectURL(old.blobUrl); } catch {}
+        previewState.cache.delete(oldestKey);
+    }
+}
+
+function computePeaks(audioBuffer, numBars) {
+    const channelData = audioBuffer.getChannelData(0);
+    const samplesPerBar = Math.max(1, Math.floor(channelData.length / numBars));
+    const peaks = new Float32Array(numBars);
+    for (let i = 0; i < numBars; i++) {
+        let max = 0;
+        const start = i * samplesPerBar;
+        const end = Math.min(start + samplesPerBar, channelData.length);
+        for (let j = start; j < end; j++) {
+            const v = Math.abs(channelData[j]);
+            if (v > max) max = v;
+        }
+        peaks[i] = max;
+    }
+    // Normalize to [0..1] in case the source isn't peak-normalized
+    let maxPeak = 0;
+    for (let i = 0; i < peaks.length; i++) if (peaks[i] > maxPeak) maxPeak = peaks[i];
+    if (maxPeak > 0) for (let i = 0; i < peaks.length; i++) peaks[i] /= maxPeak;
+    return peaks;
+}
+
+function drawWaveform(canvas, peaks, progress = 0, hover = -1) {
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = canvas.clientWidth || canvas.width;
+    const cssHeight = canvas.clientHeight || canvas.height;
+    if (canvas.width !== cssWidth * dpr || canvas.height !== cssHeight * dpr) {
+        canvas.width = cssWidth * dpr;
+        canvas.height = cssHeight * dpr;
+    }
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    const n = peaks.length;
+    const barWidth = cssWidth / n;
+    const midY = cssHeight / 2;
+    const hoverBar = hover >= 0 ? hover * n : -1;
+
+    for (let i = 0; i < n; i++) {
+        const x = i * barWidth;
+        const playedProgress = (i + 0.5) / n;
+        const isPlayed = playedProgress <= progress;
+
+        // Spotlight effect: bars within range of the mouse swell up slightly.
+        let boost = 1;
+        if (hoverBar >= 0) {
+            const dist = Math.abs(i - hoverBar);
+            if (dist < 10) boost = 1 + (1 - dist / 10) * 0.45;
+        }
+
+        const h = Math.max(1, peaks[i] * cssHeight * 0.78 * boost);
+        ctx.fillStyle = isPlayed ? '#ffffff' : 'rgba(255, 255, 255, 0.22)';
+        ctx.fillRect(x, midY - h / 2, Math.max(1, barWidth - 1), h);
+    }
+
+    // Hover cursor line — vertical thread following the mouse
+    if (hover >= 0) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        const cx = Math.floor(hover * cssWidth);
+        ctx.fillRect(cx, 2, 1, cssHeight - 4);
+    }
+    ctx.restore();
+}
+
+// Inline SVG icons — precise centering, no unicode whitespace quirks.
+const PLAY_ICON_HTML  = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><polygon points="2,1 9,5 2,9" fill="currentColor"/></svg>';
+const PAUSE_ICON_HTML = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><rect x="2" y="1.5" width="2" height="7" fill="currentColor"/><rect x="6" y="1.5" width="2" height="7" fill="currentColor"/></svg>';
+const LOADING_ICON_HTML = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><circle cx="5" cy="5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/></svg>';
+
+function setPlayButtonState(tidalId, state) {
+    const row = queueList.querySelector(`.queue-item[data-tidal-id="${tidalId}"]`);
+    if (!row) return;
+    const btn = row.querySelector('.qi-play');
+    if (!btn) return;
+    btn.classList.remove('playing', 'loading');
+    if (state === 'playing')      { btn.classList.add('playing'); btn.innerHTML = PAUSE_ICON_HTML; }
+    else if (state === 'loading') { btn.classList.add('loading'); btn.innerHTML = LOADING_ICON_HTML; }
+    else                          { btn.innerHTML = PLAY_ICON_HTML; }
+}
+
+async function loadPreviewAudio(tidalId) {
+    if (previewState.cache.has(tidalId)) {
+        // LRU bump
+        const entry = previewState.cache.get(tidalId);
+        previewState.cache.delete(tidalId);
+        previewState.cache.set(tidalId, entry);
+        return entry;
+    }
+    const r = await api.getPreviewAudio(tidalId);
+    if (!r.ok) throw new Error(r.error || 'preview fetch failed');
+
+    // The Buffer comes through as a Uint8Array view. Slice to a clean
+    // ArrayBuffer for decodeAudioData (which consumes its input).
+    const bytes = r.audioBytes;
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+
+    const ctx = getPreviewCtx();
+    if (!ctx) throw new Error('Web Audio not supported');
+
+    // decodeAudioData detaches its input, so give it a fresh copy and keep
+    // the original for the Blob.
+    const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
+    const peaks = computePeaks(audioBuffer, 200);
+
+    const blob = new Blob([ab], { type: r.mimeType || 'audio/flac' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const entry = { peaks, blobUrl };
+    previewState.cache.set(tidalId, entry);
+    evictPreviewCache();
+    return entry;
+}
+
+function stopPreview() {
+    const oldId = previewState.playingTidalId;
+    if (previewState.audio) {
+        try { previewState.audio.pause(); } catch {}
+        try { previewState.audio.src = ''; } catch {}
+    }
+    previewState.audio = null;
+    previewState.playingTidalId = null;
+    if (oldId) {
+        setPlayButtonState(oldId, 'idle');
+        const oldRow = queueList.querySelector(`.queue-item[data-tidal-id="${oldId}"]`);
+        const canvas = oldRow?.querySelector('.qi-waveform');
+        if (canvas && canvas.__peaks) drawWaveform(canvas, canvas.__peaks, 0);
+    }
+}
+
+async function togglePreview(tidalId, row) {
+    if (!row) return;
+
+    // Same track currently playing/paused → toggle pause state.
+    if (previewState.playingTidalId === tidalId && previewState.audio) {
+        if (previewState.audio.paused) {
+            await previewState.audio.play().catch(() => {});
+            setPlayButtonState(tidalId, 'playing');
+        } else {
+            previewState.audio.pause();
+            setPlayButtonState(tidalId, 'idle');
+        }
+        return;
+    }
+
+    // Switch tracks — stop current first.
+    stopPreview();
+
+    const canvas = row.querySelector('.qi-waveform');
+    if (!canvas) return;
+
+    setPlayButtonState(tidalId, 'loading');
+    try {
+        const { peaks, blobUrl } = await loadPreviewAudio(tidalId);
+
+        // Audio element
+        const audio = new Audio(blobUrl);
+        audio.volume = 0.6;
+        audio.preload = 'auto';
+        previewState.audio = audio;
+        previewState.playingTidalId = tidalId;
+
+        // Paint full waveform now that we have peaks
+        canvas.classList.remove('empty');
+        canvas.__peaks = peaks;
+        drawWaveform(canvas, peaks, 0);
+
+        const tick = () => {
+            if (previewState.playingTidalId !== tidalId || !previewState.audio) return;
+            const a = previewState.audio;
+            const progress = a.duration ? a.currentTime / a.duration : 0;
+            const liveCanvas = queueList.querySelector(`.qi-waveform[data-tidal-id="${tidalId}"]`);
+            if (liveCanvas) {
+                const hover = parseFloat(liveCanvas.dataset.hover);
+                drawWaveform(liveCanvas, peaks, progress, isFinite(hover) ? hover : -1);
+            }
+            if (!a.paused) requestAnimationFrame(tick);
+        };
+        audio.addEventListener('play', () => requestAnimationFrame(tick));
+        audio.addEventListener('pause', () => {
+            if (previewState.playingTidalId === tidalId) setPlayButtonState(tidalId, 'idle');
+        });
+        audio.addEventListener('ended', () => stopPreview());
+        audio.addEventListener('error', () => {
+            appendLine(`✗ Preview playback failed (${audio.error?.code || '?'}).`);
+            stopPreview();
+        });
+
+        await audio.play();
+        setPlayButtonState(tidalId, 'playing');
+    } catch (e) {
+        setPlayButtonState(tidalId, 'idle');
+        appendLine(`✗ Preview: ${e.message}`);
+    }
+}
+
 // ─── Queue ───────────────────────────────────────────────────────────────────
 
 // Per-track progress state lives on the queue items themselves:
@@ -420,10 +659,25 @@ function renderQueue() {
             ? `<span class="qi-check ${t.selected ? 'checked' : ''}" data-key="${t.key}" role="checkbox" aria-checked="${t.selected ? 'true' : 'false'}" tabindex="0" title="Select for batch retry"></span>`
             : '';
 
+        // Preview controls (experimental). Only show when we have a tidalId
+        // to look up — notFound rows have no source to preview.
+        const previewPlay = (PREVIEW_FEATURE_ENABLED && t.tidalId && !t.notFound)
+            ? `<button class="qi-play" data-tidal-id="${t.tidalId}" title="Play preview" aria-label="Play">${PLAY_ICON_HTML}</button>`
+            : '';
+        const previewWave = (PREVIEW_FEATURE_ENABLED && t.tidalId && !t.notFound)
+            ? `<canvas class="qi-waveform empty" data-tidal-id="${t.tidalId}" height="22" title="Click or drag to scrub"></canvas>`
+            : '';
+
+        // Title + waveform share a row so the waveform expands to fill the
+        // space between the end of the title and the action buttons.
         row.innerHTML = `
             ${checkbox}
+            ${previewPlay}
             <div class="qi-info">
-                <div class="qi-title">${escapeHtml(t.title)}</div>
+                <div class="qi-title-row">
+                    <div class="qi-title">${escapeHtml(t.title)}</div>
+                    ${previewWave}
+                </div>
                 <div class="qi-artist">${escapeHtml(t.artist)}${t.duration ? ` · ${fmtDuration(t.duration)}` : ''} ${hiResBadge}${status}</div>
                 ${libNote}
                 ${progressBar}
@@ -433,6 +687,25 @@ function renderQueue() {
             <button class="qi-remove" data-key="${t.key}" aria-label="Remove from queue">✕</button>
         `;
         queueList.appendChild(row);
+
+        // If we have cached peaks for this track (already previewed), repaint
+        // the waveform after re-render so it doesn't reset to a blank canvas.
+        if (PREVIEW_FEATURE_ENABLED && t.tidalId && previewState.cache.has(t.tidalId)) {
+            const canvas = row.querySelector('.qi-waveform');
+            const playBtn = row.querySelector('.qi-play');
+            if (canvas) {
+                canvas.classList.remove('empty');
+                canvas.__peaks = previewState.cache.get(t.tidalId).peaks;
+                const progress = (previewState.playingTidalId === t.tidalId && previewState.audio)
+                    ? (previewState.audio.duration ? previewState.audio.currentTime / previewState.audio.duration : 0)
+                    : 0;
+                drawWaveform(canvas, canvas.__peaks, progress);
+            }
+            if (playBtn && previewState.playingTidalId === t.tidalId && previewState.audio && !previewState.audio.paused) {
+                playBtn.classList.add('playing');
+                playBtn.textContent = '⏸';
+            }
+        }
     }
     const downloadable = queue.filter(t => !t.notFound && t.included);
     downloadAllBtn.disabled = isDownloading || downloadable.length === 0;
@@ -498,6 +771,16 @@ function updateRowPercent(tidalId, percent) {
 }
 
 queueList.addEventListener('click', (e) => {
+    // Preview play button
+    const playBtn = e.target.closest('.qi-play');
+    if (playBtn) {
+        e.stopPropagation();
+        const tidalId = Number(playBtn.dataset.tidalId);
+        const row = playBtn.closest('.queue-item');
+        togglePreview(tidalId, row);
+        return;
+    }
+
     const check = e.target.closest('.qi-check');
     if (check) {
         const key = check.dataset.key;
@@ -544,10 +827,100 @@ queueList.addEventListener('click', (e) => {
     const removeBtn = e.target.closest('.qi-remove');
     if (removeBtn) {
         const key = removeBtn.dataset.key;
+        // If we're previewing the track we're about to remove, stop first.
+        const removed = queue.find(t => t.key === key);
+        if (removed && removed.tidalId === previewState.playingTidalId) stopPreview();
         queue = queue.filter(t => t.key !== key);
         renderQueue();
         saveQueueSoon();
     }
+});
+
+// ─── Waveform hover + click-and-hold scrubbing ──────────────────────────────
+// Hover paints the spotlight + cursor line. Mousedown starts a scrub session
+// bound to that canvas; document-level mousemove/mouseup drive it until
+// release. A single click without drag is just a one-shot seek (mousedown
+// already moves the playhead immediately).
+
+let scrubbing = null;  // { canvas } while held down
+
+function seekFromMouseEvent(canvas, e) {
+    if (!previewState.audio || !previewState.audio.duration) return;
+    const rect = canvas.getBoundingClientRect();
+    const rel = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    previewState.audio.currentTime = rel * previewState.audio.duration;
+    if (canvas.__peaks) drawWaveform(canvas, canvas.__peaks, rel, rel);
+    canvas.dataset.hover = String(rel);
+}
+
+queueList.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;  // left button only
+    const wf = e.target.closest('.qi-waveform');
+    if (!wf || !wf.__peaks) return;
+    const tidalId = Number(wf.dataset.tidalId);
+    // Only scrubbable on the currently-playing track. (For other rows, the
+    // play button is the right affordance to start that track first.)
+    if (previewState.playingTidalId !== tidalId) return;
+    e.preventDefault();
+    scrubbing = { canvas: wf };
+    seekFromMouseEvent(wf, e);
+});
+
+// Hover or active scrub drives the same redraw path.
+queueList.addEventListener('mousemove', (e) => {
+    if (scrubbing) return;  // scrubbing handled by document-level listener below
+    const wf = e.target.closest?.('.qi-waveform');
+    if (!wf || !wf.__peaks) return;
+    const rect = wf.getBoundingClientRect();
+    const rel = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    wf.dataset.hover = String(rel);
+    const tidalId = Number(wf.dataset.tidalId);
+    const progress = (previewState.playingTidalId === tidalId && previewState.audio && previewState.audio.duration)
+        ? previewState.audio.currentTime / previewState.audio.duration
+        : 0;
+    drawWaveform(wf, wf.__peaks, progress, rel);
+});
+
+// While the button is held, follow the cursor anywhere on screen (so the user
+// can drag off the canvas and still scrub). End on mouseup.
+document.addEventListener('mousemove', (e) => {
+    if (!scrubbing) return;
+    seekFromMouseEvent(scrubbing.canvas, e);
+});
+document.addEventListener('mouseup', () => {
+    if (!scrubbing) return;
+    scrubbing = null;
+});
+
+// Use capture phase so we catch leaves off individual canvases reliably.
+queueList.addEventListener('mouseout', (e) => {
+    if (scrubbing) return;  // don't clear hover state while actively scrubbing
+    const wf = e.target.closest?.('.qi-waveform');
+    if (!wf || !wf.__peaks) return;
+    if (wf.contains(e.relatedTarget)) return;
+    delete wf.dataset.hover;
+    const tidalId = Number(wf.dataset.tidalId);
+    const progress = (previewState.playingTidalId === tidalId && previewState.audio && previewState.audio.duration)
+        ? previewState.audio.currentTime / previewState.audio.duration
+        : 0;
+    drawWaveform(wf, wf.__peaks, progress, -1);
+}, true);
+
+// Window resize → the waveform's CSS width changes (flex: 1). Redraw any
+// canvas that has cached peaks so it doesn't end up stretched. Debounced.
+let _resizeRedrawTimer = null;
+window.addEventListener('resize', () => {
+    clearTimeout(_resizeRedrawTimer);
+    _resizeRedrawTimer = setTimeout(() => {
+        queueList.querySelectorAll('.qi-waveform').forEach(wf => {
+            if (!wf.__peaks) return;
+            const tidalId = Number(wf.dataset.tidalId);
+            const progress = (previewState.playingTidalId === tidalId && previewState.audio && previewState.audio.duration)
+                ? previewState.audio.currentTime / previewState.audio.duration
+                : 0;
+            drawWaveform(wf, wf.__peaks, progress);
+        });
+    }, 120);
 });
 
 // Per-track events from bulk_runner → keep queue state in sync + drive the UI.
@@ -575,6 +948,7 @@ api.onTrackDone(({ tidalId, status }) => {
 
 clearQueueBtn.addEventListener('click', () => {
     if (isDownloading) return;
+    stopPreview();
     queue = [];
     renderQueue();
     saveQueueSoon();
