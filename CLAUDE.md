@@ -18,7 +18,7 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 
 **Where it lives:** `Z:\robogearsDownloader\` (also published at https://github.com/robogears/robogearsDownloader)
 
-**Current version:** v0.1.7. Ships as a portable Windows `.exe` and a macOS arm64 `.app` zip. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push. Auto-updates in-place on Windows portable; macOS users still re-download manually (waiting on code-signing/notarization to do the proper auto-update dance).
+**Current version:** v0.1.16 (published). Uncommitted changes for v0.1.17 are sitting on `main` — the macOS distribution drops the `.zip` in favor of a `.dmg`-only flow, and the in-app updater now mounts the DMG via `hdiutil` + extracts via `ditto`. Ships as a portable Windows `.exe` and a macOS arm64 `.dmg` with a custom turntable-themed install window. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push. **Auto-updates apply in-place on both platforms** as of v0.1.16 (Windows portable since v0.1.7, macOS since v0.1.15 after the App Translocation workaround landed).
 
 ---
 
@@ -34,16 +34,23 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 | Library deduplication via metadata + filename (exact vs similar) | ✅ works |
 | Settings: download/library folders (blank on first launch), library refresh, Reset config, Updates section | ✅ works |
 | In-app updater (checks GitHub releases on launch + manual button in Settings) | ✅ works |
-| Self-installing updater on Windows portable: Download update → Restart to apply (no manual file replacement) | ✅ works (Windows portable only; macOS opens browser) |
-| Cross-platform CI (Windows .exe + macOS arm64 .zip) via `.github/workflows/release.yml` | ✅ works |
+| Self-installing updater on **both** Windows portable AND macOS | ✅ works — Win swaps the `.exe` via a `.cmd` relauncher; macOS mounts the DMG (`hdiutil`), copies the `.app` out (`ditto`), and a double-fork bash relauncher installs to `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it |
+| Cross-platform CI (Windows `.exe` + macOS arm64 `.dmg`) via `.github/workflows/release.yml` | ✅ works |
+| macOS DMG with custom install window (turntable scene: app icon as record, `/Applications` as platter, vertical tonearm) | ✅ works |
+| Custom monochrome app icon (vinyl + download arrow), shown in topbar and as `.exe` / `.app` icon | ✅ works |
+| Per-track progress in the queue during bulk downloads (badge + thin progress bar per row) | ✅ works |
+| Overall batch progress bar above the queue (`N / M` counter) | ✅ works |
+| Cancel button during downloads + descending cancel chime | ✅ works |
+| Per-row `↻ Retry` button on failures + header `↻ Retry all (N)` / `↻ Retry selected (M)` with checkbox multi-select | ✅ works |
 | TIDAL OAuth runs in-process in Electron main (no spawned auth child) | ✅ works (`tidal_auth_node.authenticate()`) |
-| Auto-fallback FLAC → .m4a when no lossless master | ✅ works |
+| Auto-fallback FLAC → .m4a when no lossless master; FLAC detection uses `audioQuality` as primary signal | ✅ works |
 | Cover art embedded via piped FFmpeg stdin | ✅ works (no temp file) |
-| Parallel segment downloads (8 concurrent) | ✅ works |
+| Parallel segment downloads (8 concurrent) for DASH; streaming direct download with byte-level progress for BTS manifests | ✅ works |
+| Accepts both old `application/vnd.tidal.bt` and new `application/vnd.tidal.bts` manifest variants | ✅ works |
 | Retry on 429/5xx with exponential backoff | ✅ works |
 | Library scan reads audio tags (title, artist, duration) via `music-metadata` | ✅ works |
 | Funny rotating loading text during search/resolve | ✅ works |
-| Sound effects (download chime, blocked-action warning honk, "Coming soon" clown horn easter egg) | ✅ works (Web Audio, no asset shipping) |
+| Sound effects: download chime, cancel chime, blocked-action warning honk, "Coming soon" clown horn easter egg | ✅ works (Web Audio, no asset shipping) |
 | Batch summary distinguishes downloaded / skipped / failed / not-found | ✅ works |
 | Skip messages clarify "in downloads folder" vs "in music library" | ✅ works |
 
@@ -534,9 +541,55 @@ Add more entries to the `FUNNY_LOADING` array if the user requests it. They shou
 
 ## Where the last session left off
 
-Latest released version is **v0.1.7**. Nothing currently uncommitted. The Mac download bug chain (cwd: __dirname → ENOENT in v0.1.6; ffmpeg asar path → ENOTDIR in v0.1.7) should be fully closed; the user's verification on a freshly-downloaded v0.1.7 mac .app is the final confirmation.
+Latest released version is **v0.1.16**. Uncommitted on `main`: the macOS distribution drops the `.zip` in favor of a `.dmg`-only flow, and the in-app updater now downloads `.dmg`, mounts via `hdiutil`, copies the `.app` out via `ditto`, and unmounts. To be shipped as v0.1.17 on the next explicit ship instruction.
+
+The macOS auto-update flow is **finally working end-to-end** as of v0.1.15 — App Translocation was the bug that had been making "Restart to apply" silently fail. The user's diagnostic logs from v0.1.13 caught the root cause: when a quarantined `.app` is launched from outside `/Applications/`, macOS shadow-copies it to a read-only path under `/var/folders/.../AppTranslocation/...`, which is where our `mv OLD → BACKUP` was failing. v0.1.15 detects the translocated path and installs to `/Applications/<App>.app` directly. v0.1.16 added the DMG installer, which naturally avoids translocation (Finder trusts apps installed via DMG-drag-to-Applications). Together they close the chapter.
 
 ### Just landed (latest first)
+
+**v0.1.17 (uncommitted) — DMG-only on macOS:**
+- `package.json`: dropped the `zip` entry from `mac.target`. Build now produces only `.dmg`.
+- `.github/workflows/release.yml`: stops uploading + attaching the `.zip`.
+- `electron-main.js`: `getUpdateStatus` looks for `mac-arm64.dmg` instead of `mac-arm64.zip`. `update:download` now uses a new `mountAndExtractMacDmg` helper: `hdiutil attach -nobrowse -mountpoint <staging>`, find the `.app` inside, `ditto` copy it out to a writable staging dir, `hdiutil detach`. The existing relauncher script then moves the staged `.app` into `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it.
+- Users on v0.1.16 or earlier (which look for `.zip`) will get a 404 on the next update; one manual `.dmg` install fixes that and they're back on auto-update from v0.1.17 onward.
+
+**v0.1.16 — DMG install-window polish:**
+- DMG background canvas extended from 540×400 to 1920×1200 so resizing the Finder window no longer reveals the default white area beyond the original image.
+- Tonearm in the install-window backdrop moved from a diagonal sweep across the platter to a vertical at-rest position to the right of the platter rings — doesn't overlap the groove rings.
+- Footer reworded from "First launch: right-click → Open" to bold-white **DON'T FORGET to allow the app in System Settings → Privacy & Security** because newer macOS routes Gatekeeper-blocked apps through System Settings instead of the right-click bypass.
+- Pure art-only release. No code changes.
+
+**v0.1.15 — DMG installer + App Translocation fix:**
+- `mac.target` adds `dmg` alongside `zip`. New `build.dmg` config with a custom turntable-themed background image (`build/dmg-background.{svg,png}`): app icon as a record on the left, `/Applications` shortcut as a turntable platter on the right, tonearm between them. Subtitle "Drop the needle — drag the record onto the platter."
+- `update:apply` on macOS now detects when `app.getPath('exe')` points inside `/AppTranslocation/` (Gatekeeper Path Randomization for a quarantined `.app` launched outside `/Applications/`) and installs to `/Applications/<App>.app` instead of trying to swap the read-only translocated copy in place. Relauncher bash script unified around a `TARGET` variable that can differ from where the running app is loaded from.
+- First version where the macOS update path actually works for users who haven't yet installed the app to `/Applications/` via the DMG.
+
+**v0.1.13 / v0.1.14 — macOS update relauncher diagnostics + validation bump:**
+- v0.1.13: rewrote the bash relauncher to **double-fork daemonize** itself (`nohup "$0" --daemonized "$@" </dev/null >/dev/null 2>&1 & disown`). Stage 1 backgrounds immediately and exits; stage 2 with `--daemonized` does the actual work with `trap "" HUP TERM`. Survives the parent Electron process's death.
+- v0.1.13: moved the script log from `os.tmpdir()` (which is `/var/folders/<random>/T/` on macOS — basically un-findable) to **`~/Library/Logs/robogears Downloader/`** with two files: `attempts.log` (appended *before* spawn, so we can prove the IPC fired even if the script never ran) and `update-<ts>.log` (verbose `set -x` trace if it did run).
+- v0.1.14: validation bump only, no code changes. Existed so v0.1.13 had something newer to update to and we could exercise the diagnostic trail. The user's log file from this attempt is what surfaced the App Translocation bug.
+
+**v0.1.12 — first macOS self-install hardening attempt:**
+- Wrapped the macOS relauncher spawn in `nohup` and bumped the parent-exit delay 200ms → 500ms. Wasn't enough on its own — the script still got reaped before running. v0.1.13's diagnostic logging + v0.1.15's translocation fix were what actually closed it.
+- Also added `start_app.command` (the macOS analog of `start_app.bat`) and a `.gitattributes` rule pinning shell scripts to LF endings.
+
+**v0.1.11 — Cancel + Retry-all/selected + topbar logo:**
+- New red **Cancel** button next to "Clear all", visible only during a batch. Click plays `playCancelChime` (G5 → C5 — mirror of the existing download chime) and fires `api.cancelDownload`. In-flight + queued tracks flip to `failed` so they get retry buttons.
+- Queue header shows `↻ Retry all (N)` when 2+ failed; multi-select checkboxes appear on failed rows; the button switches to `↻ Retry selected (M)` if any checkbox is ticked. Selections clear when the retry batch fires.
+- Topbar `.logo-dot` replaced with an inline-SVG mini-version of the app icon (vinyl + download arrow, 22 px, no outer rounded square since it'd blend with the black topbar).
+
+**v0.1.10 — macOS self-install + per-track progress + retry:**
+- First version with `canSelfInstall()` returning true on macOS. Relauncher writes a detached bash script that waits for the parent PID, strips quarantine, mv-swaps the .app, re-signs ad-hoc, and `open`s the result. (Spawn-survival issues were addressed iteratively in v0.1.12-v0.1.15.)
+- Bulk-runner now emits `__TRACK_START__:<id>` and `__TRACK_DONE__:<id>:<status>` markers around each track. `tidal_download.js` emits `__TRACK_PROGRESS__:<id>:<pct>` (gated by `BULK_RUNNER_PROGRESS=1` env, throttled to one emission per integer-percent change). electron-main parses markers into typed `bulk:track-*` IPC events. Renderer attaches per-row state (`dlStatus`, `dlPercent`) and renders a thin progress bar under each downloading track plus an overall `N / M` batch progress bar above the queue. Per-row `↻ Retry` button appears on failures.
+- `downloadDirect` rewritten as a streaming HTTP download (no longer buffers the whole file in memory) so BTS-manifest direct downloads also tick progress.
+
+**v0.1.9 — FLAC detection fix + custom app icon:**
+- FLAC vs `.m4a` detection now prefers `raw.audioQuality === 'LOSSLESS' | 'HI_RES_LOSSLESS' | 'HI_RES'` as the primary signal (it's TIDAL's own tier label, more authoritative than the manifest's codec string — which the newer BTS manifests sometimes report differently). Case-insensitive codec/regex fallbacks still apply.
+- Custom monochrome app icon: black rounded square, white vinyl with subtle grooves, prominent white download arrow on the label. `build/icon.svg` is the source (1024×1024 PNG export at `build/icon.png` is what electron-builder picks up). Both `win.icon` and `mac.icon` point at it.
+
+**v0.1.8 — TIDAL BTS manifest:**
+- Accepts the newer `application/vnd.tidal.bts` manifest variant (was `application/vnd.tidal.bt`). Same JSON shape inside (single direct URL). Match changed from exact-string to `startsWith('application/vnd.tidal.')` so future variants don't break us.
+- Bundled with the CLAUDE.md refresh.
 
 **v0.1.7 — self-installing updater + ffmpeg path fix:**
 - **Self-installer on Windows portable.** Update notice in the activity log now has a multi-state button: `Download update` → `Downloading XX%` (live progress) → `Restart to apply` (white-filled style) → `Restarting…`. Main process downloads the new .exe to temp, then on apply writes a detached `.cmd` script that polls until the launcher file unlocks, swaps the .exe, relaunches it, and self-deletes. See "Self-installer" subsection under In-app updater.
