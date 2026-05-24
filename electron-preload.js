@@ -43,7 +43,8 @@ contextBridge.exposeInMainWorld('api', {
     // Resolver: input → tracks for the queue
     resolveInput:   (p)   => ipcRenderer.invoke('resolve:input', p),
     cancelResolve:  ()    => ipcRenderer.invoke('resolve:cancel'),
-    resolveOcr:     (p)   => ipcRenderer.invoke('resolve:ocr-tracks', p),
+    resolveTracklist: (p) => ipcRenderer.invoke('resolve:tracklist', p),
+    onTracklistProgress: (cb) => ipcRenderer.on('tracklist:progress', (_e, p) => cb(p)),
 
     // Preview audio (experimental — waveform feature)
     getPreviewAudio: (tidalId) => ipcRenderer.invoke('preview:get-audio', { tidalId }),

@@ -9,7 +9,8 @@ const addBtn = $('#add-btn');
 const inputHint = $('#input-hint');
 const dropZone = $('#drop-zone');
 const fileInput = $('#file-input');
-const comingSoonBadge = dropZone.querySelector('.coming-soon-badge');
+const exportifyLink = $('#exportify-link');
+const brandUpdatePill = $('#brand-update-pill');
 const clearActivityBtn = $('#clear-btn');
 const settingsBtn = $('#settings-btn');
 const folderInput = $('#folder-input');
@@ -432,6 +433,60 @@ async function insertUpdateNotice({ version, downloadUrl }) {
 }
 
 api.onUpdateAvailable(insertUpdateNotice);
+
+// ─── Topbar "Update now" pill — single-click download + auto-apply ──────────
+// Keeps the activity-log notice flow (two-click: Download then Restart) for
+// users who want to review. The pill is for the impatient: one click does
+// everything and restarts the app.
+let _pillUpdateUrl = null;
+let _pillUpdateState = 'idle';  // 'idle' | 'available' | 'downloading' | 'restarting'
+
+api.onUpdateAvailable((payload) => {
+    _pillUpdateUrl = payload.downloadUrl;
+    _pillUpdateState = 'available';
+    brandUpdatePill.hidden = false;
+    brandUpdatePill.disabled = false;
+    brandUpdatePill.textContent = 'Update now';
+});
+
+brandUpdatePill.addEventListener('click', async () => {
+    if (_pillUpdateState !== 'available' || !_pillUpdateUrl) return;
+
+    const selfInstall = await api.canSelfInstall().catch(() => false);
+    if (!selfInstall) {
+        // Dev / unsupported platform — fall back to the browser
+        api.openExternal(_pillUpdateUrl);
+        return;
+    }
+
+    _pillUpdateState = 'downloading';
+    brandUpdatePill.disabled = true;
+    brandUpdatePill.textContent = 'Downloading…';
+
+    const r = await api.downloadUpdate(_pillUpdateUrl);
+    if (!r || !r.ok) {
+        _pillUpdateState = 'available';
+        brandUpdatePill.disabled = false;
+        brandUpdatePill.textContent = 'Retry update';
+        return;
+    }
+
+    _pillUpdateState = 'restarting';
+    brandUpdatePill.textContent = 'Restarting…';
+    api.applyUpdate();
+});
+
+// Pill listens to the same progress events as the activity-log button — both
+// stay accurate if either one is in flight.
+api.onUpdateDownloadProgress(({ downloaded, total }) => {
+    if (_pillUpdateState !== 'downloading') return;
+    if (total > 0) {
+        const pct = Math.floor((downloaded / total) * 100);
+        brandUpdatePill.textContent = `Downloading ${pct}%`;
+    } else {
+        brandUpdatePill.textContent = `Downloading ${(downloaded / 1024 / 1024).toFixed(1)} MB`;
+    }
+});
 
 // ─── Easter egg: click the brand for a fart ─────────────────────────────────
 // Only the logo, name, and version accept clicks (the rest of the topbar row
@@ -863,7 +918,7 @@ function renderQueue() {
         else if (isExact) status = `<span class="badge dupe" title="${escapeHtml(lm.path)}">📁 already in library</span>`;
         else if (isSimilar) status = `<span class="badge similar" title="${escapeHtml(lm.path)}">⚠ similar version in library</span>`;
         else if (t.source === 'spotify') status = '<span class="badge">Spotify</span>';
-        else if (t.source === 'ocr') status = '<span class="badge">OCR</span>';
+        else if (t.source === 'import') status = '<span class="badge">Import</span>';
 
         // Hi-Res badge — kept independent of status so the indication survives
         // alongside download progress / library badges.
@@ -1637,146 +1692,190 @@ authUrlCopy.addEventListener('click', async () => {
     setTimeout(() => { authUrlCopy.textContent = 'Copy'; }, 1500);
 });
 
-// ─── Screenshot OCR → queue ──────────────────────────────────────────────────
+// ─── Tracklist import (CSV or pasted text) → queue ──────────────────────────
+//
+// Accepts:
+//   • CSV files (Exportify or any tool that has Track Name + Artist columns)
+//   • Plain-text files (one track per line, "Title - Artist")
+//   • Pasted text from clipboard (anywhere not in an input)
+// Bypasses the Spotify 100-track embed cap when the user has a full export.
 
-// Flip to true to re-enable the screenshot drop / paste flow. While false,
-// the drop-zone is greyed with a "Coming soon" badge and all OCR handlers
-// are unwired (drag/drop is still preventDefault'd so the browser doesn't
-// navigate to dropped files).
-const OCR_FEATURE_ENABLED = false;
+dropZone.addEventListener('click', () => fileInput.click());
 
-if (OCR_FEATURE_ENABLED) {
-    dropZone.addEventListener('click', () => fileInput.click());
+['dragover', 'dragenter'].forEach(ev =>
+    dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
+);
+['dragleave', 'drop'].forEach(ev =>
+    dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
+);
 
-    ['dragover', 'dragenter'].forEach(ev =>
-        dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
-    );
-    ['dragleave', 'drop'].forEach(ev =>
-        dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
-    );
-    dropZone.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('image/')) handleImage(file);
-    });
-    fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (file) handleImage(file);
+dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    try {
+        const text = await file.text();
+        await handleTracklistInput(text, file.name);
+    } catch (err) {
+        appendLine(`✗ Couldn't read ${file.name}: ${err.message}`);
+    }
+});
+
+fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const text = await file.text();
+        await handleTracklistInput(text, file.name);
+    } catch (err) {
+        appendLine(`✗ Couldn't read ${file.name}: ${err.message}`);
+    } finally {
         fileInput.value = '';
-    });
+    }
+});
 
-    // Clipboard paste — only act on images, leave text paste alone
-    document.addEventListener('paste', (e) => {
-        if (document.activeElement === urlInput) return;
-        const items = e.clipboardData?.items || [];
-        for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                const file = item.getAsFile();
-                if (file) handleImage(file);
-                e.preventDefault();
-                return;
-            }
-        }
-    });
-} else {
-    dropZone.classList.add('disabled');
-    // Eat drag/drop so dropping a file doesn't navigate the window away
-    ['dragover', 'dragenter', 'drop'].forEach(ev =>
-        dropZone.addEventListener(ev, e => e.preventDefault())
-    );
-    // Easter egg: clicking the "Coming soon" badge honks a clown horn.
-    comingSoonBadge.addEventListener('click', playClownHorn);
-}
+// Clipboard paste — when no input is focused. Heuristic skips tiny / single-
+// line pastes so a casual paste into the activity area doesn't trigger
+// tracklist parsing.
+document.addEventListener('paste', async (e) => {
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (text.length < 10) return;
+    if (!text.includes('\n') && !text.includes(',') && !/\s[-—–|]\s/.test(text)) return;
+    e.preventDefault();
+    await handleTracklistInput(text, 'pasted text');
+});
 
-async function handleImage(file) {
-    appendLine(`📷 Scanning screenshot (${file.name || 'pasted image'})…`);
-    if (typeof Tesseract === 'undefined') {
-        appendLine('   ✗ OCR library failed to load. Check internet connection (Tesseract.js loads from CDN).');
+// Exportify shortcut: opens https://exportify.net in the user's browser.
+// They log into Spotify there, pick the playlist, click Export, and drop
+// the resulting CSV onto our drop-zone. Two clicks.
+exportifyLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    api.openExternal('https://exportify.net');
+});
+
+// Tracks the active tracklist resolve so progress events know whether to
+// paint, and a duplicate paste while one is in flight gets ignored.
+let _tracklistInFlight = false;
+let _tracklistTotal = 0;
+
+api.onTracklistProgress(({ done, total }) => {
+    if (!_tracklistInFlight) return;
+    // Trust the renderer's stored total in case the main-process value drifts.
+    const n = _tracklistTotal || total;
+    loadingTextEl.textContent = `Matching ${done} / ${n} tracks on TIDAL…`;
+});
+
+async function handleTracklistInput(text, sourceName) {
+    if (_tracklistInFlight) return;  // another paste already resolving
+    const tracks = parseTracklistText(text);
+    if (!tracks.length) {
+        appendLine(`✗ No tracks found in ${sourceName}.`);
         return;
     }
+    appendLine(`📋 Parsed ${tracks.length} track${tracks.length === 1 ? '' : 's'} from ${sourceName}. Matching against TIDAL…`);
 
-    showLoading('Running OCR on screenshot…');
-    let worker;
+    _tracklistInFlight = true;
+    _tracklistTotal = tracks.length;
+    showLoading(`Matching 0 / ${tracks.length} tracks on TIDAL…`);
     try {
-        const url = URL.createObjectURL(file);
-        worker = await Tesseract.createWorker('eng');
-        const { data } = await worker.recognize(url);
-        await worker.terminate();
-        worker = null;
-        URL.revokeObjectURL(url);
-
-        const tracks = extractTracksFromOCR(data.text);
-        if (!tracks.length) {
-            hideLoading();
-            appendLine('   No tracks recognized. Try a clearer screenshot.');
-            return;
-        }
-        appendLine(`   Parsed ${tracks.length} candidate tracks. Matching against TIDAL…`);
-
-        // Match each on TIDAL (same operation as a search — use the funny text)
-        showLoading();
-        const r = await api.resolveOcr({ tracks });
+        const r = await api.resolveTracklist({ tracks });
         hideLoading();
-        if (!r.ok) { appendLine(`   ✗ ${r.error}`); return; }
+        if (!r.ok) { appendLine(`✗ ${r.error}`); return; }
 
         const matched = r.tracks.filter(t => !t.notFound).length;
         const missing = r.tracks.length - matched;
         const added = addTracksToQueue(r.tracks);
-        appendLine(`+ Added ${added} from screenshot. ${matched} matched, ${missing} not on TIDAL.`);
+        appendLine(`+ Added ${added} from import. ${matched} matched on TIDAL${missing ? `, ${missing} not found` : ''}.`);
     } catch (e) {
         hideLoading();
-        if (worker) try { await worker.terminate(); } catch {}
-        appendLine(`   ✗ OCR failed: ${e.message}`);
+        appendLine(`✗ ${e.message}`);
+    } finally {
+        _tracklistInFlight = false;
+        _tracklistTotal = 0;
     }
 }
 
-/**
- * Heuristic OCR parser. Spotify/TIDAL tracklists usually format each row as:
- *   <track number>
- *   <Title>
- *   <Artist>
- *
- * We anchor on the track-number line and grab the next two non-numeric lines.
- * If that doesn't yield results, fall back to "Title — Artist" line format.
- */
-function extractTracksFromOCR(text) {
+// Detects CSV vs plain-text automatically. CSV requires a header row that
+// contains a recognizable "title" column.
+function parseTracklistText(text) {
+    if (looksLikeCsv(text)) {
+        const fromCsv = parseCsvTracklist(text);
+        if (fromCsv.length) return fromCsv;
+    }
+    return parsePlainTextTracklist(text);
+}
+
+function looksLikeCsv(text) {
+    // First non-empty line has commas, and the file has multiple lines.
+    const firstLine = (text.split(/\r?\n/).find(l => l.trim().length) || '');
+    return firstLine.includes(',') && text.split(/\r?\n/).length >= 2;
+}
+
+// Small CSV parser with quoted-field support — handles fields with commas
+// inside quotes, and "" as an escaped quote. Returns an array of row arrays.
+function parseCsv(text) {
+    const rows = [];
+    let cur = []; let field = ''; let i = 0; let inQuote = false;
+    while (i < text.length) {
+        const c = text[i];
+        if (inQuote) {
+            if (c === '"' && text[i + 1] === '"') { field += '"'; i += 2; }
+            else if (c === '"') { inQuote = false; i++; }
+            else { field += c; i++; }
+        } else {
+            if (c === '"' && field === '') { inQuote = true; i++; }
+            else if (c === ',') { cur.push(field); field = ''; i++; }
+            else if (c === '\r') { i++; }
+            else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = ''; i++; }
+            else { field += c; i++; }
+        }
+    }
+    if (field !== '' || cur.length) { cur.push(field); rows.push(cur); }
+    return rows;
+}
+
+function parseCsvTracklist(text) {
+    const rows = parseCsv(text);
+    if (rows.length < 2) return [];
+    const header = rows[0].map(h => (h || '').toLowerCase().trim());
+    const titleIdx = header.findIndex(h => /\btrack name\b|\btitle\b|\bsong\b|\bname\b/.test(h));
+    const artistIdx = header.findIndex(h => /artist/.test(h));
+    if (titleIdx < 0) return [];
+    const out = [];
+    const seen = new Set();
+    for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const title = (r[titleIdx] || '').trim();
+        const artist = artistIdx >= 0 ? (r[artistIdx] || '').trim() : '';
+        if (!title) continue;
+        const key = `${title.toLowerCase()}|${artist.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ title, artist });
+    }
+    return out;
+}
+
+// Plain-text fallback. Each line is one track, separated by " - ", " — ",
+// " | ", or a tab.
+function parsePlainTextTracklist(text) {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const tracks = [];
-    const seenTitles = new Set();
-
-    // Pass 1: anchor on row numbers
-    for (let i = 0; i < lines.length - 2; i++) {
-        if (/^\d{1,4}$/.test(lines[i])) {
-            const title = lines[i + 1];
-            const artist = lines[i + 2];
-            if (title && artist && !/^\d+$/.test(title) && !/^\d+$/.test(artist)
-                && title.length > 1 && artist.length > 1
-                && !/^\d+:\d{2}$/.test(title) && !/^\d+:\d{2}$/.test(artist)) {
-                const dedupe = `${title}|${artist}`;
-                if (!seenTitles.has(dedupe)) {
-                    seenTitles.add(dedupe);
-                    tracks.push({ title, artist });
-                }
-                i += 2;
-            }
-        }
+    const out = [];
+    const seen = new Set();
+    for (const line of lines) {
+        const m = line.match(/^(.+?)\s*[-—–|\t]\s*(.+)$/);
+        let title, artist;
+        if (m) { title = m[1].trim(); artist = m[2].trim(); }
+        else   { title = line; artist = ''; }
+        if (!title || title.length < 2) continue;
+        const key = `${title.toLowerCase()}|${artist.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ title, artist });
     }
-
-    // Pass 2: fallback — look for "Title — Artist" line format
-    if (!tracks.length) {
-        for (const line of lines) {
-            const m = line.match(/^(.+?)\s+[—–-]\s+(.+)$/);
-            if (m) {
-                const title = m[1].trim();
-                const artist = m[2].trim();
-                if (title && artist && title.length > 1 && artist.length > 1) {
-                    tracks.push({ title, artist });
-                }
-            }
-        }
-    }
-
-    return tracks;
+    return out;
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────

@@ -80,6 +80,42 @@ input, textarea { user-select: text; }
     margin-left: -4px;
 }
 
+/* One-click "Update now" pill — appears next to the version number when a
+   newer release is detected. Click → download → auto-apply (no second
+   click needed). Pulses subtly while idle to be noticeable but not
+   annoying. */
+.brand-update-pill {
+    -webkit-app-region: no-drag;
+    background: var(--text);
+    color: var(--bg);
+    border: 0;
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: background 0.15s, opacity 0.15s;
+    font-variant-numeric: tabular-nums;  /* steady width while ticking through % */
+}
+.brand-update-pill:not(:disabled) {
+    animation: brand-update-pulse 2.4s ease-in-out infinite;
+}
+.brand-update-pill:hover:not(:disabled) {
+    background: #e5e5e5;
+}
+.brand-update-pill:disabled {
+    background: var(--bg-elev);
+    color: var(--text-muted);
+    cursor: default;
+}
+.brand-update-pill[hidden] { display: none; }
+@keyframes brand-update-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+}
+
 .icon-btn {
     background: transparent;
     border: 0;
@@ -236,49 +272,13 @@ textarea {
     transition: border-color 0.2s, background 0.2s;
     position: relative;
 }
-.drop-zone.disabled {
-    cursor: default;
-}
-.drop-zone.disabled .drop-inner {
-    opacity: 0.35;
-}
-.drop-zone.disabled:hover,
-.drop-zone.disabled.dragover {
-    border-color: var(--border);
-    background: transparent;
-}
-.drop-zone.disabled:hover svg {
-    color: var(--text-dim);
-}
-.coming-soon-badge {
-    display: none;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: var(--bg-elev);
+.drop-link {
     color: var(--text);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    padding: 7px 16px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--border-strong);
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
-.drop-zone.disabled .coming-soon-badge {
-    display: block;
-}
-.coming-soon-badge {
-    cursor: pointer;
-    user-select: none;
-    transition: transform 0.08s ease-out, border-color 0.15s;
-}
-.coming-soon-badge:hover {
-    border-color: var(--text);
-}
-.coming-soon-badge:active {
-    transform: translate(-50%, -50%) scale(0.92);
+.drop-link:hover {
+    color: #fff;
 }
 .drop-inner {
     display: flex;

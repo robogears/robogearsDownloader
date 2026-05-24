@@ -764,15 +764,27 @@ ipcMain.handle('preview:get-audio', async (_e, { tidalId }) => {
     }
 });
 
-ipcMain.handle('resolve:ocr-tracks', async (_e, { tracks }) => {
-    // tracks: [{ title, artist }] from OCR — resolve each to a TIDAL match
+ipcMain.handle('resolve:tracklist', async (_e, { tracks }) => {
+    // tracks: [{ title, artist }] from a parsed CSV/text import — resolve each
+    // to a TIDAL match via fuzzy search + scoring. Emits a `tracklist:progress`
+    // event per track so the renderer can show "Matched N / M" instead of a
+    // mystery spinner during long resolves.
     try {
         const cred = lib.loadCred();
         const token = await lib.getToken(cred);
         const country = await lib.getCountryCode(cred);
 
+        const total = tracks.length;
         const out = [];
-        for (const t of tracks) {
+        const sendProgress = (done) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('tracklist:progress', { done, total });
+            }
+        };
+        sendProgress(0);
+
+        for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i];
             const query = `${t.title} ${t.artist}`;
             try {
                 const json = await lib.searchTracks(query, token, country, 10);
@@ -799,15 +811,16 @@ ipcMain.handle('resolve:ocr-tracks', async (_e, { tracks }) => {
                     artist: pick ? (pick.artists || []).map(a => a.name).join(', ') : t.artist,
                     duration: pick?.duration || 0,
                     tidalId: pick?.id || null,
-                    source: 'ocr',
+                    source: 'import',
                     matchMethod: pick ? 'search' : null,
                     notFound: !pick,
                     originalTitle: t.title,
                     originalArtist: t.artist,
                 });
             } catch {
-                out.push({ title: t.title, artist: t.artist, tidalId: null, source: 'ocr', notFound: true });
+                out.push({ title: t.title, artist: t.artist, tidalId: null, source: 'import', notFound: true });
             }
+            sendProgress(i + 1);
         }
         await lib.enrichWithLibraryStatus(out);
         return { ok: true, tracks: out };

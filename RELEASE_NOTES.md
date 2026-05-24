@@ -1,14 +1,21 @@
-# What's new in v0.1.24
+# What's new in v0.1.25
 
-## Windows now installs like a proper program
-- Switched from portable single-`.exe` to an NSIS installer. Downloading and running `robogears-downloader-setup.exe` installs the app to `%LOCALAPPDATA%\Programs\robogears Downloader\` (per-user, no admin required), adds Start Menu + Desktop shortcuts, registers in **Add or Remove Programs**, and launches the app.
-- Future updates apply themselves via the installer's silent-update mode — NSIS detects the running app, closes it, replaces files, and relaunches.
+## Playlist CSV / text import — bypass the 100-track Spotify cap
+- The drop-zone (where the "Coming soon" OCR placeholder used to live) now accepts **CSV files** and **pasted text**. Click it to pick a file, drop a file onto it, or just paste lines of `Title - Artist` anywhere in the app.
+- Works out of the box with **Exportify** CSVs (just export your Spotify playlist there, drop the file). Also reads any CSV that has columns for "title" / "track name" / "song" and "artist".
+- One-click shortcut: the drop-zone has a clickable **Exportify** link that opens [exportify.net](https://exportify.net) in your browser — log into Spotify there, pick the playlist, export, drop the CSV back here.
+- Plain text fallback handles separators: `-`, `—`, `–`, `|`, or tab.
 
-**If you're already on Windows v0.1.23 or earlier:** the in-app updater will fetch the new installer, but the portable swap-mechanism inside that older build can't run an installer correctly. **One-time manual step:** download `robogears-downloader-setup.exe` from this release and run it. The old portable `.exe` will be replaced by the properly installed version. After that, auto-updates work normally going forward.
+## One-click "Update now" pill
+- A small pulsing pill appears next to the version number in the topbar when a new release is detected. **Click once** → it downloads (with live `Downloading 42%` feedback) → auto-applies → restarts. No second click needed.
+- The existing activity-log notice flow (two-click: Download then Restart to apply) is still there for anyone who wants to review before restarting.
 
-## Library matcher — fewer false-positive duplicates
-- Tightened the "already in library" check so it requires both **title AND artist** to confidently agree before marking a track as a hard duplicate. Files with empty/missing/wrong artist metadata (common in sketchy MP3 dumps from SpotDownloader-style sites) used to pass an over-lenient artist check and get greyed out as "exact" matches based on title alone.
-- Now those uncertain matches show the yellow `⚠ similar version in library` badge and **stay included** in the queue by default — the user sees the warning and the file path, but the track downloads normally instead of being silently skipped.
+## Live progress when importing
+- The loading overlay now shows `Matching 234 / 500 tracks on TIDAL…` while a pasted/dropped tracklist is being resolved, instead of a generic spinner. No more wondering whether it's stuck.
+
+## Internal
+- Removed the Tesseract.js CDN script entirely (it was being fetched on every launch even though OCR was feature-gated off). CSP tightened — `cdn.jsdelivr.net` removed from `script-src` / `connect-src` / `worker-src`.
+- IPC rename: `resolve:ocr-tracks` → `resolve:tracklist`. Track source field `'ocr'` → `'import'`. Queue badge shows `Import` instead of `OCR`.
 
 ---
 
@@ -22,8 +29,8 @@ Config and TIDAL token are stored per-user (`%APPDATA%\Roaming\robogears Downloa
 ## Requirements
 
 - A TIDAL subscription. The app uses TIDAL's official OAuth device-code flow — sign in once via Settings; tokens cache locally and auto-refresh.
-- Spotify playlist support uses the public embed page and is capped at **100 tracks** per playlist (Spotify-side limit).
+- For playlists >100 tracks via Spotify: export to CSV via [Exportify](https://exportify.net) (or any tool with title/artist columns) and drop the file onto the import drop-zone.
 
 ---
 
-**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.23...v0.1.24
+**Full Changelog**: https://github.com/robogears/robogearsDownloader/compare/v0.1.24...v0.1.25
