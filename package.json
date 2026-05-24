@@ -1,6 +1,6 @@
 {
   "name": "robogears-downloader",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Desktop app for downloading lossless FLAC tracks from TIDAL via TIDAL/Spotify URLs, search, or screenshot OCR.",
   "main": "electron-main.js",
   "scripts": {
@@ -59,11 +59,18 @@
     "win": {
       "icon": "build/icon.png",
       "target": [
-        { "target": "portable", "arch": ["x64"] }
+        { "target": "nsis", "arch": ["x64"] }
       ]
     },
-    "portable": {
-      "artifactName": "robogears-downloader.exe"
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "robogears Downloader",
+      "artifactName": "robogears-downloader-setup.exe",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "mac": {
       "icon": "build/icon.png",

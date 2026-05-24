@@ -10,7 +10,7 @@ Please note: older versions (pre 0.1.21) are pretty buggy and broken so it's hig
 
 Grab the latest release from [the releases page](https://github.com/robogears/robogearsDownloader/releases/latest):
 
-- **Windows**: `robogears-downloader.exe`. Portable — runs from anywhere, no installer. First launch shows a SmartScreen warning (**More info → Run anyway**).
+- **Windows**: `robogears-downloader-setup.exe`. Run the installer — it places the app at `%LOCALAPPDATA%\Programs\robogears Downloader\` per-user (no admin required), adds Start Menu + Desktop shortcuts, and launches the app automatically. First launch shows a SmartScreen warning (**More info → Run anyway**).
 - **macOS** (Apple Silicon): `robogears-downloader-mac-arm64.dmg`. Drag the app onto the Applications shortcut in the installer window. Allow it in **System Settings → Privacy & Security** on first launch.
 
 Future updates apply themselves through the in-app updater — no re-downloading.

@@ -22,7 +22,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: win-build
-          path: dist/robogears-downloader.exe
+          path: dist/robogears-downloader-setup.exe
           if-no-files-found: error
 
   build-mac:
@@ -57,5 +57,5 @@ jobs:
           tag_name: ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: |
-            artifacts/win-build/robogears-downloader.exe
+            artifacts/win-build/robogears-downloader-setup.exe
             artifacts/mac-build/robogears-downloader-mac-arm64.dmg

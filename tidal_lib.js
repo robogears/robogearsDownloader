@@ -764,15 +764,26 @@ function rescanLibrary() {
 
 /**
  * Look up a track in the library. Returns one of:
- *   { kind: 'exact',   path, libraryTitle }  — same song, definitely a duplicate
- *   { kind: 'similar', path, libraryTitle }  — same core title but with a remix/edit/etc suffix
+ *   { kind: 'exact',   path, libraryTitle }  — same song, confirmed duplicate
+ *                                              (title AND artist both agree)
+ *   { kind: 'similar', path, libraryTitle }  — title matches but artist is
+ *                                              uncertain or mismatched, OR
+ *                                              core title matches a different
+ *                                              version (remix/edit/etc)
  *   null                                       — not in library
  *
+ * Why we don't trust title-only matches: sketchy MP3 dumps (SpotDownloader,
+ * old YouTube rips, etc.) often have empty or wrong artist metadata, so a
+ * file labeled "Monkey Wrench" might actually be a completely different song.
+ * Title-only matches downgrade to `similar` so they show a yellow warning
+ * badge instead of greying out the row entirely. The user can still see and
+ * download them; they just aren't auto-skipped.
+ *
  * Matching priority:
- *   1. Exact metadata-title match  (with optional artist sanity check)
- *   2. Exact filename-title match
- *   3. Core metadata-title match   → similar
- *   4. Core filename-title match   → similar
+ *   1. metadata-title + matching artist → exact
+ *   2. metadata-title alone (artist unconfirmed) → similar
+ *   3. filename-title match → similar (filename has no reliable artist signal)
+ *   4. core (remix-stripped) matches → similar
  */
 async function findInLibrary(title, artist, _duration) {
     if (!title) return null;
@@ -784,19 +795,32 @@ async function findInLibrary(title, artist, _duration) {
     if (!tCore || tCore.length < 3) return null;
     const aFull = normalizeFullForMatch(artist);
 
-    const artistOk = (e) => !aFull || !e.metaArtist
-        || e.metaArtist.includes(aFull) || aFull.includes(e.metaArtist);
+    // Strict artist match — both sides must be known AND overlap.
+    // Empty-artist-on-either-side is NOT a free pass anymore.
+    const artistsAgree = (e) => aFull && e.metaArtist
+        && (e.metaArtist.includes(aFull) || aFull.includes(e.metaArtist));
 
-    // 1+2: EXACT match
+    // 1: EXACT — title agrees AND artist explicitly agrees
     for (const e of cache.entries) {
-        if (e.metaTitleFull && e.metaTitleFull === tFull && artistOk(e)) {
+        if (e.metaTitleFull && e.metaTitleFull === tFull && artistsAgree(e)) {
             return { kind: 'exact', path: e.path, libraryTitle: e.metaTitleDisplay || path.basename(e.path) };
         }
-        if (e.fnTitleFull === tFull || e.fnFull === tFull) {
-            return { kind: 'exact', path: e.path, libraryTitle: path.basename(e.path) };
+    }
+    // 2: title-only matches (metadata title agrees but artist is unknown /
+    //    different) → similar, with the file path so the user can investigate.
+    for (const e of cache.entries) {
+        if (e.metaTitleFull && e.metaTitleFull === tFull) {
+            return { kind: 'similar', path: e.path, libraryTitle: e.metaTitleDisplay || path.basename(e.path) };
         }
     }
-    // 3+4: CORE (similar) match — same song, different version
+    // 3: filename-based title matches → similar (no reliable artist signal
+    //    from a filename, even when it parses cleanly).
+    for (const e of cache.entries) {
+        if (e.fnTitleFull === tFull || e.fnFull === tFull) {
+            return { kind: 'similar', path: e.path, libraryTitle: path.basename(e.path) };
+        }
+    }
+    // 4: CORE matches — same song different version (remix/edit/etc)
     for (const e of cache.entries) {
         if (e.metaTitleCore && e.metaTitleCore === tCore) {
             return { kind: 'similar', path: e.path, libraryTitle: e.metaTitleDisplay || path.basename(e.path) };

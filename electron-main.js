@@ -149,7 +149,7 @@ async function getUpdateStatus() {
         return { status: 'up-to-date', version: app.getVersion() };
     }
     const wantedSubstr = process.platform === 'darwin' ? 'mac-arm64.dmg'
-                       : process.platform === 'win32'  ? '.exe'
+                       : process.platform === 'win32'  ? 'setup.exe'
                        : null;
     let downloadUrl = release.html_url;
     if (wantedSubstr) {
@@ -191,7 +191,8 @@ ipcMain.handle('shell:open-external', (_e, url) => {
 // Dev / non-portable Windows / Linux: falls back to opening the release page.
 function canSelfInstall() {
     if (!app.isPackaged) return false;
-    if (process.platform === 'win32') return !!process.env.PORTABLE_EXECUTABLE_FILE;
+    // NSIS installer or macOS DMG — both packaged paths can self-install.
+    if (process.platform === 'win32') return true;
     if (process.platform === 'darwin') return true;
     return false;
 }
@@ -316,31 +317,16 @@ ipcMain.handle('update:apply', () => {
     }
 
     if (process.platform === 'win32') {
-        // ─── Windows portable ───────────────────────────────────────
-        const launcher = process.env.PORTABLE_EXECUTABLE_FILE;
-        const scriptPath = path.join(os.tmpdir(), `robogears-update-${Date.now()}.cmd`);
-        // Detached .cmd that polls until the locked .exe can be overwritten,
-        // then swaps it and relaunches. Self-deletes when done. ~30s retries.
-        const script = [
-            '@echo off',
-            'setlocal',
-            `set "LAUNCHER=${launcher}"`,
-            `set "NEW=${newPath}"`,
-            'set /a count=0',
-            ':retry',
-            'move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1',
-            'if errorlevel 1 (',
-            '    timeout /t 1 /nobreak >NUL',
-            '    set /a count+=1',
-            '    if %count% lss 30 goto retry',
-            '    exit /b 1',
-            ')',
-            'start "" "%LAUNCHER%"',
-            'del "%~f0"',
-            '',
-        ].join('\r\n');
-        fs.writeFileSync(scriptPath, script);
-        const child = spawn('cmd.exe', ['/C', scriptPath], {
+        // ─── Windows NSIS installer ─────────────────────────────────
+        // The downloaded .exe is an NSIS installer. Spawn it silently — NSIS
+        // detects our running app, closes it, replaces files in the install
+        // dir (%LOCALAPPDATA%\Programs\robogears Downloader\), and relaunches
+        // the new version (runAfterFinish=true in the build config).
+        //
+        // Much simpler than the portable .cmd polling-loop approach: NSIS
+        // handles the running-process detection and atomic file replacement
+        // internally.
+        const child = spawn(newPath, ['/S', '--updated'], {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
