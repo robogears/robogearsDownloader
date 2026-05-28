@@ -1,23 +1,22 @@
 // Quick-access popup — paste the token from the toolbar without digging into
-// chrome://extensions. Also surfaces the current extension version and
-// detects newer versions on GitHub; the "Update" button triggers the desktop
-// app to download fresh files into the managed extension folder.
+// chrome://extensions. Shows the current extension version + a status dot
+// for the localhost bridge.
+//
+// Extension updates are handled entirely by the desktop app: bundled via
+// electron-builder, written to the managed folder on app launch, and
+// auto-reloaded by background.js when it notices the on-disk version doesn't
+// match what's loaded in memory. Nothing in the popup needs to surface
+// "update available" — by the time the user opens the popup, the reload has
+// already happened (or will happen within ~1 minute via the alarm).
 
-const tokenInput     = document.getElementById('token-input');
-const saveBtn        = document.getElementById('save-btn');
-const statusEl       = document.getElementById('status');
-const statusDot      = document.getElementById('status-dot');
-const openOptions    = document.getElementById('open-options');
-const extVersionEl   = document.getElementById('ext-version');
-const updateSection  = document.getElementById('update-section');
-const updateLabelEl  = document.getElementById('update-label');
-const updateBtn      = document.getElementById('update-btn');
-const updateHintEl   = document.getElementById('update-hint');
+const tokenInput   = document.getElementById('token-input');
+const saveBtn      = document.getElementById('save-btn');
+const statusEl     = document.getElementById('status');
+const statusDot    = document.getElementById('status-dot');
+const openOptions  = document.getElementById('open-options');
+const extVersionEl = document.getElementById('ext-version');
 
 const DEFAULT_PORT = 8273;
-const REPO_PATH = 'robogears/robogearsDownloader';
-
-// ─── Token / app connection ─────────────────────────────────────────────────
 
 function setStatus(text, kind) {
     statusEl.textContent = text || '';
@@ -53,9 +52,6 @@ async function pingApp(port) {
     } catch { return false; }
 }
 
-// Verify by sending an empty-tracks POST — the server returns 400 "No tracks
-// in body" when auth passes, which proves the token is right without actually
-// queueing anything. 401 means token rejected.
 async function verifyToken(port, token) {
     if (!token) return 'no-token';
     try {
@@ -77,6 +73,11 @@ async function refresh() {
     const data = await getStored();
     const port = data.port || DEFAULT_PORT;
     tokenInput.value = data.token || '';
+    extVersionEl.textContent = `v${chrome.runtime.getManifest().version}`;
+
+    // Nudge the background worker to check — gives a faster reload if the
+    // app already wrote new ext files but the alarm hasn't fired yet.
+    try { chrome.runtime.sendMessage({ action: 'check-pending-reload' }); } catch {}
 
     setStatus('Checking…');
     setDot('idle');
@@ -143,78 +144,6 @@ async function save() {
     saveBtn.disabled = false;
 }
 
-// ─── Version + update detection ─────────────────────────────────────────────
-
-function isNewerVersion(remote, current) {
-    const r = String(remote).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-    const c = String(current).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-    const len = Math.max(r.length, c.length);
-    for (let i = 0; i < len; i++) {
-        const a = r[i] || 0, b = c[i] || 0;
-        if (a > b) return true;
-        if (a < b) return false;
-    }
-    return false;
-}
-
-async function checkForExtensionUpdate() {
-    const localVersion = chrome.runtime.getManifest().version;
-    extVersionEl.textContent = `v${localVersion}`;
-    try {
-        const r = await fetch(
-            `https://api.github.com/repos/${REPO_PATH}/contents/chrome-extension/manifest.json?ref=main`,
-            { headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store' }
-        );
-        if (!r.ok) return;
-        const j = await r.json();
-        const remoteManifest = JSON.parse(atob(j.content));
-        const remoteVersion = remoteManifest.version;
-        if (isNewerVersion(remoteVersion, localVersion)) {
-            updateLabelEl.innerHTML = `Update available: <strong>v${remoteVersion}</strong>`;
-            updateSection.hidden = false;
-        }
-    } catch {
-        // Silent — no nag if GitHub's unreachable (rate-limit, offline, etc.)
-    }
-}
-
-async function triggerExtensionUpdate() {
-    const data = await getStored();
-    const port = data.port || DEFAULT_PORT;
-    if (!data.token) {
-        updateHintEl.textContent = 'Save your token first.';
-        updateHintEl.hidden = false;
-        return;
-    }
-    updateBtn.disabled = true;
-    updateBtn.textContent = 'Updating…';
-    updateHintEl.hidden = true;
-
-    try {
-        const r = await fetch(`http://127.0.0.1:${port}/extension/update-self`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${data.token}` },
-        });
-        const json = await r.json().catch(() => ({}));
-        if (!r.ok || !json.ok) {
-            updateBtn.disabled = false;
-            updateBtn.textContent = 'Retry update';
-            updateHintEl.textContent = json.error || `HTTP ${r.status}`;
-            updateHintEl.hidden = false;
-            return;
-        }
-        updateBtn.textContent = `v${json.version} downloaded`;
-        updateBtn.classList.add('done');
-        updateHintEl.innerHTML = `Files written. <strong>Click reload at chrome://extensions</strong> to apply.`;
-        updateHintEl.hidden = false;
-    } catch (e) {
-        updateBtn.disabled = false;
-        updateBtn.textContent = 'Retry update';
-        updateHintEl.textContent = `App unreachable: ${e.message}`;
-        updateHintEl.hidden = false;
-    }
-}
-
 // ─── Wire-up ─────────────────────────────────────────────────────────────────
 
 saveBtn.addEventListener('click', save);
@@ -227,7 +156,4 @@ openOptions.addEventListener('click', (e) => {
     chrome.runtime.openOptionsPage();
 });
 
-updateBtn.addEventListener('click', triggerExtensionUpdate);
-
 refresh();
-checkForExtensionUpdate();

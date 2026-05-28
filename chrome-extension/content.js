@@ -184,4 +184,9 @@ const observer = new MutationObserver(scheduleScan);
     await loadConfig();
     scanAndInject();
     observer.observe(document.body, { childList: true, subtree: true });
+    // Nudge the background worker to check whether the desktop app has bundled
+    // a newer extension version. Gives a near-instant chrome.runtime.reload()
+    // when the user visits a Spotify page after launching/updating the app —
+    // faster than waiting for the 1-minute alarm.
+    try { chrome.runtime.sendMessage({ action: 'check-pending-reload' }); } catch {}
 })();

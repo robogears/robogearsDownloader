@@ -20,8 +20,8 @@ const HOST = '127.0.0.1';
 let _token = null;
 let _tokenPath = null;
 let _server = null;
-let _onTracksReceived = null;  // callback set by electron-main: (tracks) => Promise<void>
-let _onUpdateSelf = null;      // callback that downloads new extension files from GitHub
+let _onTracksReceived = null;       // callback set by electron-main: (tracks) => Promise<void>
+let _getManagedExtVersion = null;   // returns the on-disk version of the managed extension folder
 
 function getTokenPath() {
     return _tokenPath;
@@ -103,10 +103,10 @@ function readBody(req) {
     });
 }
 
-function startServer({ tokenPath, version, onTracksReceived, onUpdateSelf }) {
+function startServer({ tokenPath, version, onTracksReceived, getManagedExtensionVersion }) {
     loadOrCreateToken(tokenPath);
     _onTracksReceived = onTracksReceived;
-    _onUpdateSelf = onUpdateSelf;
+    _getManagedExtVersion = getManagedExtensionVersion;
 
     _server = http.createServer(async (req, res) => {
         applyCors(req, res);
@@ -117,10 +117,21 @@ function startServer({ tokenPath, version, onTracksReceived, onUpdateSelf }) {
             return;
         }
 
-        // GET /ping — unauthenticated health check
+        // GET /ping — unauthenticated health check. Includes the on-disk
+        // version of the managed extension folder so the popup can detect
+        // a pending reload (app wrote new files but the extension hasn't
+        // reloaded yet to pick them up).
         if (req.method === 'GET' && req.url === '/ping') {
+            let managedExtensionVersion = null;
+            try { managedExtensionVersion = _getManagedExtVersion ? _getManagedExtVersion() : null; }
+            catch { managedExtensionVersion = null; }
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, app: 'robogears-downloader', version }));
+            res.end(JSON.stringify({
+                ok: true,
+                app: 'robogears-downloader',
+                version,
+                managedExtensionVersion,
+            }));
             return;
         }
 
@@ -166,23 +177,6 @@ function startServer({ tokenPath, version, onTracksReceived, onUpdateSelf }) {
                 res.end(JSON.stringify({ ok: true, queued: normalized.length }));
             } catch (e) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ ok: false, error: e.message }));
-            }
-            return;
-        }
-
-        // POST /extension/update-self — popup-triggered "fetch the latest
-        // extension files from GitHub main and write them to the user-managed
-        // folder". App handles the actual download via its own HTTPS (not
-        // subject to the chrome-extension:// CORS restrictions); we just relay.
-        if (req.method === 'POST' && req.url === '/extension/update-self') {
-            try {
-                if (!_onUpdateSelf) throw new Error('Update handler not registered');
-                const result = await _onUpdateSelf();
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify(result));
-            } catch (e) {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: e.message }));
             }
             return;

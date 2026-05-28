@@ -507,7 +507,10 @@ app.whenReady().then(async () => {
         tokenPath: EXTENSION_TOKEN_PATH(),
         version: app.getVersion(),
         onTracksReceived: handleExtensionTracks,
-        onUpdateSelf: handleExtensionUpdateSelf,
+        // Lets the background worker detect a pending reload (app wrote
+        // new ext files but the loaded extension is still the old version
+        // in memory) — extension reloads itself via chrome.runtime.reload().
+        getManagedExtensionVersion: () => readManifestVersion(getManagedExtensionPath()),
     }).catch(err => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('download:line',
@@ -793,60 +796,6 @@ function ensureExtensionBundle() {
     } catch (e) {
         console.warn('[ext-bundle] sync failed:', e.message);
     }
-}
-
-// GitHub Contents API GET — returns parsed JSON. Unauthenticated (60/hr cap).
-function githubJson(urlPath) {
-    return new Promise((resolve, reject) => {
-        const req = https.request({
-            hostname: 'api.github.com',
-            path: urlPath,
-            method: 'GET',
-            headers: {
-                'User-Agent': `robogears-downloader/${app.getVersion()}`,
-                'Accept': 'application/vnd.github+json',
-            },
-            timeout: 15_000,
-        }, (res) => {
-            let data = '';
-            res.on('data', d => data += d);
-            res.on('end', () => {
-                if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
-                try { resolve(JSON.parse(data)); }
-                catch { reject(new Error('Bad JSON from GitHub')); }
-            });
-        });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('GitHub request timed out')); });
-        req.end();
-    });
-}
-
-async function handleExtensionUpdateSelf() {
-    const userDir = getManagedExtensionPath();
-    fs.mkdirSync(userDir, { recursive: true });
-
-    // List the chrome-extension/ contents on main, then fetch each file.
-    // (~10 files; ~1s per fetch unauthenticated. Plenty fast for an explicit
-    // user-initiated update click.)
-    const listing = await githubJson('/repos/robogears/robogearsDownloader/contents/chrome-extension?ref=main');
-    if (!Array.isArray(listing)) throw new Error('Unexpected GitHub listing shape');
-
-    let count = 0;
-    for (const entry of listing) {
-        if (entry.type !== 'file') continue;
-        const fileRes = await githubJson(`/repos/robogears/robogearsDownloader/contents/chrome-extension/${entry.name}?ref=main`);
-        const buf = Buffer.from(fileRes.content, 'base64');
-        fs.writeFileSync(path.join(userDir, entry.name), buf);
-        count++;
-    }
-
-    const newVersion = readManifestVersion(userDir);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('download:line',
-            `🧩 Extension updated to v${newVersion} (${count} files) — reload in chrome://extensions to apply.`);
-    }
-    return { ok: true, version: newVersion, filesWritten: count, path: userDir };
 }
 
 // IPC: settings UI needs to show the token + port + regenerate button.
