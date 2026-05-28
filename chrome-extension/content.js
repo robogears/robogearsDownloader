@@ -53,7 +53,10 @@ function extractTrackFromRow(row) {
 // Post a track (or batch) to the local app server.
 async function pushTracksToApp(tracks) {
     if (!_config.token) {
-        showToast('Set the token in the extension options first.', 'error');
+        // Ask the background worker to open the options page so the user
+        // doesn't have to hunt for it in chrome://extensions.
+        try { chrome.runtime.sendMessage({ action: 'open-options' }); } catch {}
+        showToast('Set the token in extension options — opening it now…', 'error');
         return false;
     }
     try {
