@@ -53,10 +53,10 @@ function extractTrackFromRow(row) {
 // Post a track (or batch) to the local app server.
 async function pushTracksToApp(tracks) {
     if (!_config.token) {
-        // Ask the background worker to open the options page so the user
-        // doesn't have to hunt for it in chrome://extensions.
-        try { chrome.runtime.sendMessage({ action: 'open-options' }); } catch {}
-        showToast('Set the token in extension options — opening it now…', 'error');
+        // Tell the user where the popup lives — clicking the toolbar icon
+        // opens it. (We can't programmatically open a popup from a content
+        // script in MV3, so a clear instruction is the best we can do.)
+        showToast('Click the robogears icon in the toolbar and paste your token.', 'error');
         return false;
     }
     try {

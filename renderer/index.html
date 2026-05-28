@@ -175,6 +175,14 @@
                         <button id="extension-token-regen" class="text-btn" title="Generate a new token — the extension will need it re-pasted">Regenerate</button>
                     </div>
                     <p class="hint">Auth is over <code>localhost</code> only — the server doesn't listen on any other interface. Regenerate if you ever suspect the token leaked; the old one stops working immediately.</p>
+
+                    <label class="label" style="margin-top: 18px;">Managed extension folder</label>
+                    <div class="folder-row">
+                        <input id="extension-path-input" type="text" readonly>
+                        <button id="extension-path-copy" class="text-btn">Copy</button>
+                        <button id="extension-path-open" class="text-btn">Open</button>
+                    </div>
+                    <p class="hint">In Chrome: <code>chrome://extensions</code> → <strong>Load unpacked</strong> → pick this folder. App updates land here automatically. The extension's <strong>Update</strong> button (in the toolbar popup) overwrites it with the latest from GitHub.</p>
                 </div>
 
                 <!-- Updates tab -->

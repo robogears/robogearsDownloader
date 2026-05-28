@@ -1,0 +1,166 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #0c0c0c;
+    color: #fff;
+    font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    width: 280px;
+    -webkit-font-smoothing: antialiased;
+}
+body { padding: 14px 14px 12px; }
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.header strong {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+}
+
+/* Status dot — grey by default, green when connected to the app, red when
+   the app's reachable but the token's rejected. */
+.dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #555;
+    flex-shrink: 0;
+    transition: background 0.2s, box-shadow 0.2s;
+}
+.dot.connected {
+    background: #4ade80;
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}
+.dot.unauth {
+    background: #f87171;
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+}
+
+.hint {
+    color: #aaa;
+    font-size: 12px;
+    margin: 0 0 12px;
+    line-height: 1.5;
+}
+.hint strong { color: #fff; font-weight: 600; }
+
+#token-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 5px;
+    color: #fff;
+    font: 12px 'SF Mono', Consolas, ui-monospace, monospace;
+    padding: 9px 11px;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+#token-input:focus {
+    background: #1f1f1f;
+    border-color: #444;
+}
+
+.row {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+button.primary {
+    background: #fff;
+    color: #000;
+    border: 0;
+    padding: 7px 18px;
+    border-radius: 5px;
+    font: 600 12px inherit;
+    cursor: pointer;
+    transition: background 0.12s;
+    flex-shrink: 0;
+}
+button.primary:hover { background: #e5e5e5; }
+button.primary:disabled {
+    background: #2a2a2a;
+    color: #777;
+    cursor: default;
+}
+
+.status {
+    font-size: 12px;
+    color: #888;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.status.ok { color: #88dda0; }
+.status.error { color: #ff8a8a; }
+
+.footer-link {
+    display: block;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid #1a1a1a;
+    color: #888;
+    text-decoration: none;
+    font-size: 11px;
+    text-align: center;
+    transition: color 0.12s;
+}
+.footer-link:hover { color: #fff; }
+
+/* ─── Version indicator + update detection ──────────────────────────── */
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ext-version {
+    font-size: 11px;
+    color: #888;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.update-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #1a1a1a;
+}
+.update-section[hidden] { display: none; }
+.update-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.update-label {
+    font-size: 12px;
+    color: #aaa;
+    flex: 1;
+    min-width: 0;
+}
+.update-label strong { color: #fff; font-weight: 600; }
+.update-btn {
+    padding: 5px 12px;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.update-btn.done {
+    background: #4ade80;
+    color: #000;
+}
+.update-hint {
+    margin: 8px 0 0;
+    color: #aaa;
+    font-size: 11.5px;
+    line-height: 1.45;
+}
+.update-hint[hidden] { display: none; }
+.update-hint strong { color: #fff; }

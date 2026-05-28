@@ -1594,12 +1594,16 @@ const extensionTokenInput = $('#extension-token-input');
 const extensionUrlCopy    = $('#extension-url-copy');
 const extensionTokenCopy  = $('#extension-token-copy');
 const extensionTokenRegen = $('#extension-token-regen');
+const extensionPathInput  = $('#extension-path-input');
+const extensionPathCopy   = $('#extension-path-copy');
+const extensionPathOpen   = $('#extension-path-open');
 
 async function refreshExtensionInfo() {
     try {
         const r = await api.extensionInfo();
         extensionUrlInput.value = `http://127.0.0.1:${r.port}`;
         extensionTokenInput.value = r.token || '(not generated yet — restart the app)';
+        if (extensionPathInput) extensionPathInput.value = r.managedPath || '';
     } catch {
         extensionTokenInput.value = '(extension bridge unavailable)';
     }
@@ -1623,6 +1627,14 @@ extensionTokenRegen.addEventListener('click', async () => {
     const r = await api.regenerateExtensionToken();
     if (r?.token) extensionTokenInput.value = r.token;
 });
+if (extensionPathCopy) {
+    extensionPathCopy.addEventListener('click', () => copyToClipboardField(extensionPathInput, extensionPathCopy));
+}
+if (extensionPathOpen) {
+    extensionPathOpen.addEventListener('click', () => {
+        if (extensionPathInput.value) api.openFolder(extensionPathInput.value);
+    });
+}
 
 // Tracks pushed from the Chrome extension arrive resolved (matched on TIDAL).
 // Drop them into the queue via the standard add path.

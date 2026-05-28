@@ -1,21 +1,41 @@
 {
   "manifest_version": 3,
   "name": "robogears Downloader — Spotify add-to-queue",
-  "version": "0.1.0",
+  "version": "0.1.28",
   "description": "Adds an 'add to robogears queue' button next to every track row on open.spotify.com. Companion to the robogears Downloader desktop app.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://api.github.com/*"
   ],
   "content_scripts": [
     {
-      "matches": ["https://open.spotify.com/*"],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://open.spotify.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "robogears — paste token",
+    "default_icon": {
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
   "options_page": "options.html",
   "icons": {
     "48": "icon.png",

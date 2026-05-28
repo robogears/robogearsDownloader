@@ -494,13 +494,20 @@ app.whenReady().then(async () => {
     // mid-download as a confusing "ffmpeg exited 1".
     verifyFfmpegAvailable();
 
+    // Ensure the bundled chrome-extension/ folder is unpacked to userData so
+    // the user has a stable path to point Load Unpacked at — refreshed on
+    // every app update.
+    ensureExtensionBundle();
+
     // Start the localhost HTTP server the Chrome extension talks to. Adds
     // tracks pushed by the extension into the queue via the existing
-    // tracklist resolver.
+    // tracklist resolver. onUpdateSelf is what the popup's "Update" button
+    // ultimately triggers (download fresh files from GitHub → managed path).
     extensionServer.startServer({
         tokenPath: EXTENSION_TOKEN_PATH(),
         version: app.getVersion(),
         onTracksReceived: handleExtensionTracks,
+        onUpdateSelf: handleExtensionUpdateSelf,
     }).catch(err => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('download:line',
@@ -737,10 +744,116 @@ async function handleExtensionTracks(tracks) {
     }
 }
 
+// ─── Chrome extension bundle management ─────────────────────────────────────
+// The chrome-extension/ folder ships as electron-builder extraResources, so a
+// pristine copy exists at <process.resourcesPath>/chrome-extension/ in packaged
+// builds. On boot we copy that into <userData>/chrome-extension/ (the "managed"
+// path the user points Load Unpacked at) IF the bundled version is newer than
+// what's already there. That way an app update automatically refreshes the
+// extension files — the user just clicks reload in chrome://extensions.
+//
+// The popup's "Update" button calls handleExtensionUpdateSelf which fetches
+// the latest chrome-extension/ contents from GitHub main and overwrites the
+// managed path — same destination, fresher source.
+
+function getManagedExtensionPath() {
+    return path.join(app.getPath('userData'), 'chrome-extension');
+}
+
+function readManifestVersion(dir) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).version || '0.0.0';
+    } catch { return '0.0.0'; }
+}
+
+function ensureExtensionBundle() {
+    // Dev mode: the user is loading the extension straight from the repo, no
+    // managed copy needed.
+    if (!app.isPackaged) return;
+    const bundledDir = path.join(process.resourcesPath, 'chrome-extension');
+    const userDir = getManagedExtensionPath();
+    if (!fs.existsSync(bundledDir)) return;
+
+    const bundledVersion = readManifestVersion(bundledDir);
+    const userVersion = readManifestVersion(userDir);
+    // Copy if user has no copy, or bundled is strictly newer.
+    if (userVersion !== '0.0.0' && !isNewerVersion(bundledVersion, userVersion)) return;
+
+    try {
+        fs.mkdirSync(userDir, { recursive: true });
+        for (const name of fs.readdirSync(bundledDir)) {
+            const src = path.join(bundledDir, name);
+            const dst = path.join(userDir, name);
+            if (fs.statSync(src).isFile()) fs.copyFileSync(src, dst);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download:line',
+                `🧩 Chrome extension files updated to v${bundledVersion} at ${userDir}. Reload in chrome://extensions if it's already loaded.`);
+        }
+    } catch (e) {
+        console.warn('[ext-bundle] sync failed:', e.message);
+    }
+}
+
+// GitHub Contents API GET — returns parsed JSON. Unauthenticated (60/hr cap).
+function githubJson(urlPath) {
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            hostname: 'api.github.com',
+            path: urlPath,
+            method: 'GET',
+            headers: {
+                'User-Agent': `robogears-downloader/${app.getVersion()}`,
+                'Accept': 'application/vnd.github+json',
+            },
+            timeout: 15_000,
+        }, (res) => {
+            let data = '';
+            res.on('data', d => data += d);
+            res.on('end', () => {
+                if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+                try { resolve(JSON.parse(data)); }
+                catch { reject(new Error('Bad JSON from GitHub')); }
+            });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('GitHub request timed out')); });
+        req.end();
+    });
+}
+
+async function handleExtensionUpdateSelf() {
+    const userDir = getManagedExtensionPath();
+    fs.mkdirSync(userDir, { recursive: true });
+
+    // List the chrome-extension/ contents on main, then fetch each file.
+    // (~10 files; ~1s per fetch unauthenticated. Plenty fast for an explicit
+    // user-initiated update click.)
+    const listing = await githubJson('/repos/robogears/robogearsDownloader/contents/chrome-extension?ref=main');
+    if (!Array.isArray(listing)) throw new Error('Unexpected GitHub listing shape');
+
+    let count = 0;
+    for (const entry of listing) {
+        if (entry.type !== 'file') continue;
+        const fileRes = await githubJson(`/repos/robogears/robogearsDownloader/contents/chrome-extension/${entry.name}?ref=main`);
+        const buf = Buffer.from(fileRes.content, 'base64');
+        fs.writeFileSync(path.join(userDir, entry.name), buf);
+        count++;
+    }
+
+    const newVersion = readManifestVersion(userDir);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download:line',
+            `🧩 Extension updated to v${newVersion} (${count} files) — reload in chrome://extensions to apply.`);
+    }
+    return { ok: true, version: newVersion, filesWritten: count, path: userDir };
+}
+
 // IPC: settings UI needs to show the token + port + regenerate button.
 ipcMain.handle('extension:info', () => ({
     port: extensionServer.getPort(),
     token: extensionServer.getToken(),
+    managedPath: getManagedExtensionPath(),
 }));
 ipcMain.handle('extension:regenerate-token', () => ({
     token: extensionServer.regenerateToken(),
