@@ -10,7 +10,7 @@
 // via a data attribute we stamp onto each row we've processed.
 
 const ROW_SELECTOR = '[data-testid="tracklist-row"]';
-const PROCESSED_ATTR = 'data-robogears-injected';
+const BTN_CLASS = 'robogears-add-btn';
 
 let _config = { port: 8273, token: '' };
 
@@ -98,31 +98,50 @@ function showToast(text, kind = 'ok') {
     }, 2200);
 }
 
-// Build the button we inject into each row.
+// Build the button we inject into each row. Icon-only — Spotify's actions
+// cell is too tight to fit a text label without breaking their layout.
 function makeAddButton() {
     const btn = document.createElement('button');
-    btn.className = 'robogears-add-btn';
+    btn.className = BTN_CLASS;
     btn.title = 'Add to robogears queue';
     btn.setAttribute('aria-label', 'Add to robogears queue');
+    btn.type = 'button';
     btn.innerHTML = `
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
-        <span class="robogears-add-btn-label">robogears</span>
     `;
     return btn;
 }
 
 // Inject our button into a single row, if it doesn't already have one.
+// Targets the row's LAST grid cell (the one with duration + save + more) and
+// prepends — so we sit next to Spotify's own row actions instead of becoming
+// a new auto-placed grid cell at column 1.
 function injectIntoRow(row) {
-    if (row.getAttribute(PROCESSED_ATTR)) return;
-    row.setAttribute(PROCESSED_ATTR, '1');
+    // Presence check (more robust than a data-attribute — Spotify sometimes
+    // re-renders the row's contents and would wipe our marker)
+    if (row.querySelector('.' + BTN_CLASS)) return;
+
+    const cells = row.querySelectorAll('[role="gridcell"]');
+    const lastCell = cells[cells.length - 1];
+    if (!lastCell) return;
 
     const btn = makeAddButton();
+
+    // Stop ALL pointer events from bubbling up — Spotify's row has
+    // mousedown/pointerdown handlers that play the track or open the
+    // context menu. We don't want any of that firing on our click.
+    const swallow = (e) => e.stopPropagation();
+    btn.addEventListener('mousedown',   swallow, true);
+    btn.addEventListener('pointerdown', swallow, true);
+    btn.addEventListener('mouseup',     swallow, true);
+
     btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         const track = extractTrackFromRow(row);
         if (!track) {
             showToast('Could not parse this row', 'error');
@@ -133,12 +152,10 @@ function injectIntoRow(row) {
         await pushTracksToApp([track]);
         btn.classList.remove('robogears-add-btn-busy');
         btn.disabled = false;
-    });
+    }, true);
 
-    // Append inline to the row — relies on Spotify's existing grid layout
-    // wrapping our button into the rightmost cell area. Positioning fallbacks
-    // live in content.css.
-    row.appendChild(btn);
+    // Prepend so we sit before the existing controls (heart / duration / ⋯)
+    lastCell.insertBefore(btn, lastCell.firstChild);
 }
 
 function scanAndInject() {

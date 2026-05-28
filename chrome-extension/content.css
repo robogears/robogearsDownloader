@@ -1,57 +1,50 @@
-/* robogears Downloader add-to-queue button — injected into Spotify track rows.
-   Designed to feel native to Spotify's dark theme without trying too hard to
-   blend in (the user should be able to see clearly that it's our addition). */
+/* robogears Downloader add-to-queue button — injected into Spotify's last
+   grid cell on each tracklist row (alongside the heart / duration / ⋯).
+   Sized to match Spotify's own row-action buttons (~28-32 px). */
 
 .robogears-add-btn {
-    /* Slot into Spotify's row layout. Spotify uses CSS grid for row cells;
-       we sit at the end as an extra child. The row layout flows it inline. */
-    margin: 0 8px 0 4px;
-    padding: 4px 10px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 999px;
-    font: 600 11px/1 'Spotify Mixui', 'Helvetica Neue', system-ui, sans-serif;
-    letter-spacing: 0.2px;
+    /* Position + z-index so clicks definitely reach us, not Spotify's row */
+    position: relative;
+    z-index: 2;
+    pointer-events: auto;
+
+    /* Layout: 28×28 circular button, slots next to Spotify's controls */
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin: 0 6px 0 0;
+    flex-shrink: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    transition: background 0.12s, border-color 0.12s, transform 0.05s;
-    flex-shrink: 0;
+    justify-content: center;
+    transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.05s;
     -webkit-font-smoothing: antialiased;
 }
 
 .robogears-add-btn:hover {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.36);
+    color: #fff;
+    border-color: #fff;
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .robogears-add-btn:active {
-    transform: translateY(1px);
+    transform: scale(0.92);
 }
 
 .robogears-add-btn:disabled,
 .robogears-add-btn-busy {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: default;
 }
 
 .robogears-add-btn svg {
     display: block;
     flex-shrink: 0;
-}
-
-.robogears-add-btn-label {
-    display: inline-block;
-}
-
-/* On narrower row layouts, hide the label and just show the + icon. Spotify
-   gets tight at certain widths and we don't want to push columns around. */
-@media (max-width: 1100px) {
-    .robogears-add-btn-label { display: none; }
-    .robogears-add-btn { padding: 4px 7px; }
 }
 
 /* ─── Toast ───────────────────────────────────────────────────────────────── */
