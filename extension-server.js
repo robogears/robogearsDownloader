@@ -22,6 +22,7 @@ let _tokenPath = null;
 let _server = null;
 let _onTracksReceived = null;       // callback set by electron-main: (tracks) => Promise<void>
 let _getManagedExtVersion = null;   // returns the on-disk version of the managed extension folder
+let _getManagedExtPath = null;      // returns the on-disk path of the managed extension folder
 
 function getTokenPath() {
     return _tokenPath;
@@ -103,10 +104,11 @@ function readBody(req) {
     });
 }
 
-function startServer({ tokenPath, version, onTracksReceived, getManagedExtensionVersion }) {
+function startServer({ tokenPath, version, onTracksReceived, getManagedExtensionVersion, getManagedExtensionPath }) {
     loadOrCreateToken(tokenPath);
     _onTracksReceived = onTracksReceived;
     _getManagedExtVersion = getManagedExtensionVersion;
+    _getManagedExtPath = getManagedExtensionPath;
 
     _server = http.createServer(async (req, res) => {
         applyCors(req, res);
@@ -118,19 +120,23 @@ function startServer({ tokenPath, version, onTracksReceived, getManagedExtension
         }
 
         // GET /ping — unauthenticated health check. Includes the on-disk
-        // version of the managed extension folder so the popup can detect
-        // a pending reload (app wrote new files but the extension hasn't
-        // reloaded yet to pick them up).
+        // version AND path of the managed extension folder so the popup
+        // can (a) detect a pending reload and (b) show the user where to
+        // re-point Load Unpacked if Chrome's loaded from somewhere else.
         if (req.method === 'GET' && req.url === '/ping') {
             let managedExtensionVersion = null;
+            let managedExtensionPath = null;
             try { managedExtensionVersion = _getManagedExtVersion ? _getManagedExtVersion() : null; }
             catch { managedExtensionVersion = null; }
+            try { managedExtensionPath = _getManagedExtPath ? _getManagedExtPath() : null; }
+            catch { managedExtensionPath = null; }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 ok: true,
                 app: 'robogears-downloader',
                 version,
                 managedExtensionVersion,
+                managedExtensionPath,
             }));
             return;
         }

@@ -127,3 +127,85 @@ button.primary:disabled {
     font-weight: 500;
     font-variant-numeric: tabular-nums;
 }
+
+/* ─── Reload section — version mismatch / force-reload ────────────────── */
+.reload-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #1a1a1a;
+}
+.reload-section[hidden] { display: none; }
+.reload-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.reload-info { flex: 1; min-width: 0; }
+.reload-title {
+    font-size: 12px;
+    color: #fff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.reload-sub {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 2px;
+    line-height: 1.4;
+}
+.reload-btn {
+    padding: 5px 12px;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.reload-hint {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    color: #aaa;
+    line-height: 1.5;
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 5px;
+    padding: 9px 11px;
+}
+.reload-hint[hidden] { display: none; }
+.reload-hint strong { color: #fff; font-weight: 600; }
+.reload-hint code {
+    color: #fff;
+    font-family: 'SF Mono', Consolas, ui-monospace, monospace;
+    font-size: 11px;
+    word-break: break-all;
+}
+.reload-hint ol {
+    margin: 8px 0 0;
+    padding-left: 18px;
+}
+.reload-hint li { margin-top: 4px; }
+.path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: #0a0a0a;
+    border-radius: 4px;
+}
+.path-row code {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+.path-row button {
+    background: transparent;
+    border: 1px solid #444;
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font: 600 11px inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.path-row button:hover { background: #1a1a1a; }

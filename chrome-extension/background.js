@@ -27,7 +27,7 @@ function isNewerVersion(remote, current) {
 }
 
 async function checkAndReloadIfPending() {
-    const data = await new Promise(r => chrome.storage.local.get(['port'], r));
+    const data = await new Promise(r => chrome.storage.local.get(['port', 'lastReloadAttempt'], r));
     const port = data.port || DEFAULT_PORT;
     try {
         const res = await fetch(`http://127.0.0.1:${port}/ping`, { cache: 'no-store' });
@@ -36,9 +36,20 @@ async function checkAndReloadIfPending() {
         if (json.app !== 'robogears-downloader') return;
         const diskVersion = json.managedExtensionVersion;
         const memoryVersion = chrome.runtime.getManifest().version;
-        if (diskVersion && isNewerVersion(diskVersion, memoryVersion)) {
-            chrome.runtime.reload();
-        }
+        if (!diskVersion || !isNewerVersion(diskVersion, memoryVersion)) return;
+
+        // Skip if we tried to reach this version within the last 5 minutes
+        // and the reload didn't actually advance us — Chrome's loaded folder
+        // doesn't have the new files, so reloading is pointless and would
+        // loop forever every minute. The popup surfaces this state so the
+        // user can re-point Load Unpacked at the managed folder.
+        const last = data.lastReloadAttempt;
+        if (last && last.version === diskVersion && Date.now() - last.at < 300_000) return;
+
+        await new Promise(r => chrome.storage.local.set({
+            lastReloadAttempt: { at: Date.now(), version: diskVersion }
+        }, r));
+        chrome.runtime.reload();
     } catch { /* app not running — try again next tick */ }
 }
 

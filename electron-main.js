@@ -510,7 +510,10 @@ app.whenReady().then(async () => {
         // Lets the background worker detect a pending reload (app wrote
         // new ext files but the loaded extension is still the old version
         // in memory) — extension reloads itself via chrome.runtime.reload().
+        // Path is also returned so the popup can show the user where to
+        // point Load Unpacked if Chrome's loading from somewhere else.
         getManagedExtensionVersion: () => readManifestVersion(getManagedExtensionPath()),
+        getManagedExtensionPath,
     }).catch(err => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('download:line',
