@@ -9,16 +9,16 @@ You've just inherited a personal music-downloader app. **Read this entire file b
 A desktop app that downloads lossless FLAC tracks from TIDAL, driven by:
 
 - A user's TIDAL subscription (OAuth via device-code flow, runs in-process in Electron main)
-- Inputs: paste a TIDAL URL, paste a Spotify URL (track / album / playlist), or type a song name to search (screenshot-OCR drop-zone exists but is currently feature-gated off via `OCR_FEATURE_ENABLED = false` in `renderer/app.js` — greyed with a "Coming soon" badge)
-- A "queue" UI where the user reviews tracks before downloading
+- Inputs: paste a TIDAL URL, paste a Spotify URL (track / album / playlist), type a song name to search, or drop a CSV / paste a tracklist into the import drop-zone (bypasses Spotify's 100-track embed cap)
+- A "queue" UI where the user reviews tracks before downloading, with inline waveform preview + scrub-to-skim per row
 - A read-only **music library folder** that the app scans (reads ID3/Vorbis/iTunes tags via `music-metadata`) to avoid re-downloading songs the user already has
-- An in-app updater that quietly checks GitHub releases on launch and surfaces a download notice in the activity log
+- An in-app updater that quietly checks GitHub releases on launch — both a one-click "Update now" pill next to the version label AND a download notice in the activity log
 
 Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. All audio handling done via `ffmpeg-static` (bundled FFmpeg).
 
 **Where it lives:** `Z:\robogearsDownloader\` (also published at https://github.com/robogears/robogearsDownloader)
 
-**Current version:** v0.1.16 (published). Uncommitted changes for v0.1.17 are sitting on `main` — the macOS distribution drops the `.zip` in favor of a `.dmg`-only flow, and the in-app updater now mounts the DMG via `hdiutil` + extracts via `ditto`. Ships as a portable Windows `.exe` and a macOS arm64 `.dmg` with a custom turntable-themed install window. Both are built on GitHub Actions and attached to a draft release on every `v*` tag push. **Auto-updates apply in-place on both platforms** as of v0.1.16 (Windows portable since v0.1.7, macOS since v0.1.15 after the App Translocation workaround landed).
+**Current version:** v0.1.25 (published). Ships as an **NSIS installer for Windows** (`robogears-downloader-setup.exe`, installs per-user to `%LOCALAPPDATA%\Programs\robogears Downloader\`) and a **macOS arm64 DMG** (turntable-themed install window). Both built on GitHub Actions and attached to a draft release on every `v*` tag push. **Auto-updates apply in-place on both platforms.** Windows uses NSIS oneClick silent-install (`installer.exe /S --updated` — the installer handles process detection, file replacement, and relaunch); macOS mounts the DMG (`hdiutil`), extracts the `.app` (`ditto`), and a double-fork bash relauncher installs to `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it.
 
 ---
 
@@ -27,14 +27,21 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 | Feature | State |
 |---|---|
 | TIDAL URL → track/album/playlist resolve + download | ✅ works |
-| Spotify URL (track / album / playlist) → public embed page → match each on TIDAL → download | ✅ works (**playlists capped at 100 tracks** — Spotify's embed limit) |
+| Spotify URL (track / album / playlist) → public embed page → match each on TIDAL → download | ✅ works (**playlists capped at 100 tracks** — Spotify's embed limit; workaround: CSV import via Exportify, see below) |
 | Free-text search → modal of TIDAL results → pick → add to queue | ✅ works |
-| Screenshot of tracklist → OCR → match each on TIDAL → add to queue | ⚠ feature-gated OFF (greyed drop-zone with "Coming soon" badge — flip `OCR_FEATURE_ENABLED` in `renderer/app.js` to re-enable) |
+| **CSV / text-paste import** into the drop-zone → matched on TIDAL → added to queue (with live `Matching N / M` progress) | ✅ works — accepts Exportify CSVs, any tool with title/artist columns, or pasted lines of `Title - Artist`. Bypasses the Spotify 100-track cap |
 | Queue UI with per-item remove, "+ Add" button on exact-library-matches, "Download all" | ✅ works |
-| Library deduplication via metadata + filename (exact vs similar) | ✅ works |
-| Settings: download/library folders (blank on first launch), library refresh, Reset config, Updates section | ✅ works |
+| **Inline waveform preview** per queue row — circular play button + scrubbable waveform | ✅ works — click play, hold-and-drag the waveform to scrub. Spotlight hover effect. Pre-loads in background (concurrency 2) as tracks enter the queue. Works on both BTS and DASH manifests |
+| **Volume slider** for previews (squared curve so the low end gets quiet faster than linear) | ✅ works — defaults 50%, persists to settings |
+| Settings split into **Folders / TIDAL / Updates tabs** | ✅ works |
+| **Persistent queue across restarts** — saved to `<userData>/queue.json` | ✅ works |
+| Library deduplication via metadata + filename — **requires title AND artist to confirm for "exact" matches** (otherwise demotes to similar, with warning badge) | ✅ works (tightened in v0.1.24 — false-positive title-only matches downgraded) |
+| Settings: download/library folders (blank on first launch), library refresh w/ live "Scanning N / M…" progress, Reset config, Updates section | ✅ works |
 | In-app updater (checks GitHub releases on launch + manual button in Settings) | ✅ works |
-| Self-installing updater on **both** Windows portable AND macOS | ✅ works — Win swaps the `.exe` via a `.cmd` relauncher; macOS mounts the DMG (`hdiutil`), copies the `.app` out (`ditto`), and a double-fork bash relauncher installs to `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it |
+| **Topbar "Update now" pill** next to the version label — single-click download + auto-apply + restart | ✅ works — pulses subtly when an update is available. Activity-log notice (two-click Download then Restart) still exists alongside |
+| Self-installing updater on **both** Windows and macOS | ✅ works — Windows runs the downloaded NSIS installer in silent mode (`/S --updated`), which handles process kill + file replace + relaunch; macOS mounts the DMG (`hdiutil`), copies the `.app` out (`ditto`), and a double-fork bash relauncher installs to `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it |
+| FFmpeg presence verified at startup; clear warning in activity log if missing | ✅ works |
+| Activity log capped at 2000 lines so long sessions don't bog down the DOM | ✅ works |
 | Cross-platform CI (Windows `.exe` + macOS arm64 `.dmg`) via `.github/workflows/release.yml` | ✅ works |
 | macOS DMG with custom install window (turntable scene: app icon as record, `/Applications` as platter, vertical tonearm) | ✅ works |
 | Custom monochrome app icon (vinyl + download arrow), shown in topbar and as `.exe` / `.app` icon | ✅ works |
@@ -50,7 +57,7 @@ Tech: Node.js + Electron, no framework, vanilla HTML/CSS/JS for the renderer. Al
 | Retry on 429/5xx with exponential backoff | ✅ works |
 | Library scan reads audio tags (title, artist, duration) via `music-metadata` | ✅ works |
 | Funny rotating loading text during search/resolve | ✅ works |
-| Sound effects: download chime, cancel chime, blocked-action warning honk, "Coming soon" clown horn easter egg | ✅ works (Web Audio, no asset shipping) |
+| Sound effects: download chime, cancel chime, blocked-action warning honk, batch-success ping, brand-click fart (high-pitched on version-click) | ✅ works (Web Audio, no asset shipping) |
 | Batch summary distinguishes downloaded / skipped / failed / not-found | ✅ works |
 | Skip messages clarify "in downloads folder" vs "in music library" | ✅ works |
 
@@ -76,6 +83,8 @@ Title only — no artist prefix, no track number prefix. User explicitly request
 `tidal_download.js#downloadTrack` calls `lib.findInLibrary(title, artist, duration)` before any network fetch. If the result is `kind: 'exact'`, skip silently. If `kind: 'similar'`, also skip with a warning. Only `--force` (or `--skip-library-check` from `bulk_runner`) bypasses this.
 
 The GUI surfaces library matches in the **queue itself** — no modal. Exact matches are greyed out with a "+ Add" button so the user can explicitly opt in. Similar matches show a yellow `⚠ similar version in library` badge but remain included by default.
+
+**Strict artist check (v0.1.24+):** an `exact` match now requires title AND artist to both be present and overlap. Library files with empty/missing artist ID3 metadata (common in SpotDownloader-style MP3 dumps) used to slip past the over-lenient `artistOk` check and be flagged as exact duplicates based on title alone. They now demote to `similar` (yellow badge, still downloads) so the user sees the warning but doesn't get falsely auto-skipped. Filename-based matches also demoted to `similar` — a filename's title is no proof of identity without artist confirmation.
 
 **Never** write to the library folder. It's read-only by design — the user manages it themselves.
 
@@ -174,26 +183,37 @@ See `electron-preload.js` for the full list. Grouped:
 - `api.onAuthUrl(cb)` — receives the verification URL once known, used to populate the URL input + Copy button
 
 **Resolver**
-- `api.resolveInput({ input })` — URL or search query → tracks (pre-enriched with `libraryMatch`)
-- `api.resolveOcr({ tracks })` — OCR'd {title,artist} → matched TIDAL tracks (only used if OCR is feature-flagged back on)
+- `api.resolveInput({ input })` — URL or search query → tracks (pre-enriched with `libraryMatch`). Returns `{ ok, kind: 'url'|'search', tracks, capped }`; `capped: true` when a Spotify playlist hit the 100-track embed cap. Cancellable via `cancelResolve`
+- `api.cancelResolve()` — flips a flag the in-progress resolver checks at iteration boundaries; backed by `resolverCancelled` in `electron-main.js`
+- `api.resolveTracklist({ tracks })` — `[{title, artist}]` from a parsed CSV/text import → matched TIDAL tracks. Emits `tracklist:progress` events during the resolve so the loading overlay can show `Matching N / M tracks…`
+- `api.onTracklistProgress(cb)` — receives `{ done, total }` from the resolver
+
+**Queue persistence**
+- `api.getQueue()` — reads `<userData>/queue.json` and returns the array; empty on first launch
+- `api.saveQueue(queue)` — writes the array. Renderer strips transient fields (`dlStatus`, `dlPercent`, `selected`) before calling. Debounced 400 ms via `saveQueueSoon()` to avoid hammering disk on every mutation
+
+**Preview audio (experimental waveform feature)**
+- `api.getPreviewAudio(tidalId)` — fetches the LOSSLESS audio bytes for a track and returns `{ ok, audioBytes: Buffer, mimeType }`. Supports both BTS (single direct URL) and DASH (parallel segment fetch + concat) manifests. Renderer decodes for peaks + creates a Blob URL for the `<audio>` element
 
 **Download**
 - `api.startBulk({ tracks, outDir })` — kicks off batch download (single-track downloads also go through here — there's no separate single-URL IPC)
 - `api.cancelDownload()` — kills the active bulk_runner child; called from the renderer's Cancel button
 - `api.onDownloadLine(cb)` / `api.onDownloadDone(cb)` — stdout/exit events (shared by the bulk flow)
+- `api.onTrackStart(cb)` / `api.onTrackProgress(cb)` / `api.onTrackDone(cb)` — per-track lifecycle events for the queue row state machine (`bulk_runner` emits `__TRACK_START__:<id>` / `__TRACK_PROGRESS__:<id>:<pct>` / `__TRACK_DONE__:<id>:<status>` markers that electron-main parses into typed events)
 
 **Library**
 - `api.libraryStatus()` / `api.libraryRescan()` — scanner state + manual refresh
-- `api.onLibraryScanned(cb)` — fires when an async scan completes
+- `api.onLibraryScanned(cb)` — fires when an async scan completes with a final count
+- `api.onLibraryScanProgress(cb)` — receives `{ done, total }` during scan, throttled in the scanner to one event per ~25 files
 
 **Updater**
 - `api.checkForUpdates()` — manual check, returns `{ status: 'available' | 'up-to-date' | 'error', ... }`
 - `api.getAppVersion()` — `app.getVersion()`, used by topbar + Settings
-- `api.onUpdateAvailable(cb)` — fires on launch (auto-check) AND on manual check when newer exists
-- `api.canSelfInstall()` — returns `true` only on Windows portable builds where we have `process.env.PORTABLE_EXECUTABLE_FILE`. macOS / dev / non-portable returns `false` and the renderer falls back to opening the release page externally.
-- `api.downloadUpdate(url)` — fetches the asset to a temp file, streaming progress events back. Returns `{ ok, path }` on success or `{ ok: false, error }`.
-- `api.applyUpdate()` — writes the relauncher `.cmd` script, spawns it detached, calls `app.quit()` 200 ms later. Returns immediately so the renderer can update its state.
-- `api.onUpdateDownloadProgress(cb)` — receives `{ downloaded, total }` byte counts during a self-install download. Renderer uses this to render `Downloading XX%` in the button.
+- `api.onUpdateAvailable(cb)` — fires on launch (auto-check) AND on manual check when newer exists. Both the activity-log notice and the topbar `Update now` pill subscribe
+- `api.canSelfInstall()` — returns `true` when packaged on Windows (NSIS installer) or macOS (DMG). Returns `false` in dev mode and on Linux, where the renderer falls back to opening the release page externally
+- `api.downloadUpdate(url)` — fetches the asset to a temp file, streaming progress events back. Returns `{ ok, path }` on success or `{ ok: false, error }`
+- `api.applyUpdate()` — on Windows, spawns the downloaded NSIS installer with `/S --updated`; on macOS, writes the double-fork bash relauncher and spawns it. Either way calls `app.quit()` 200 ms later. Returns immediately so the renderer can flip its button state
+- `api.onUpdateDownloadProgress(cb)` — receives `{ downloaded, total }` byte counts during a self-install download. Both update UIs (activity-log button and topbar pill) listen and render `Downloading XX%`
 
 ---
 
@@ -273,7 +293,9 @@ The journey here was painful — knowing what was tried saves the next session f
 
 **Hard limitation**: the playlist embed caps at 100 tracks with no pagination. Track 101+ simply isn't in the response. The user has accepted this for now ("just to get the ball rolling").
 
-For larger playlists, the user's workaround is splitting them in Spotify or using Soundiiz/Exportify to export tracks then pasting one at a time (or via the OCR queue).
+**Current workaround for >100-track playlists:** the CSV/text-paste drop-zone. The user opens [Exportify](https://exportify.net) (linked directly from the drop-zone subtitle), logs into Spotify there, exports the playlist as CSV, drops the file onto our drop-zone. The resolver parses the title/artist columns and matches each on TIDAL the same way Spotify-URL resolves do (just via search rather than ISRC, since CSVs don't carry ISRCs). The drop-zone also accepts pasted text (lines of `Title - Artist`) and plain `.txt` files for any other source.
+
+If we ever want to skip the manual Exportify step entirely, the path is "Spotify Pathfinder GraphQL with logged-in token harvest" — hidden BrowserWindow + cookies persist via `partition: 'persist:spotify'` + scrape JWT from `/get_access_token` + paginate the internal GraphQL API. Documented in updater.md's patterns section as a possible future direction. Not built yet.
 
 ### If you want to revive the headless scraper
 
@@ -364,13 +386,14 @@ The integrity check (`verifyFlac`) only runs on `.flac` outputs (it's a FLAC-spe
 ## Packaging / distribution
 
 Two artifacts:
-- **Windows**: portable `.exe` (~90 MB) — one self-contained binary, no installer
-- **macOS arm64**: `.app` zip — drag to `/Applications`, right-click → Open to bypass Gatekeeper
+- **Windows**: NSIS installer `robogears-downloader-setup.exe` (~90 MB). Per-user install (no admin) to `%LOCALAPPDATA%\Programs\robogears Downloader\`. Adds Start Menu + Desktop shortcuts. Listed in Add/Remove Programs. Launches automatically on install.
+- **macOS arm64**: `.dmg` with a custom turntable-themed install window — drag the app icon onto the Applications shortcut. First launch needs the Privacy & Security allow-step on Ventura+.
 
 Build config lives in the `build` field of `package.json`. Key choices baked in:
 
-- **`win.target: portable`** — single .exe (artifactName `robogears-downloader.exe`, no version suffix per user preference)
-- **`mac.target: zip`** — arm64 only for now (artifactName `robogears-downloader-mac-${arch}.${ext}`)
+- **`win.target: nsis`** — oneClick installer (artifactName `robogears-downloader-setup.exe`)
+- **`nsis: { oneClick: true, perMachine: false, runAfterFinish: true, deleteAppDataOnUninstall: false }`** — silent install, per-user, runs the app after install, preserves user data on uninstall
+- **`mac.target: dmg`** — arm64 only (artifactName `robogears-downloader-mac-${arch}.${ext}`)
 - **`mac.identity: null`** — skip electron-builder's signing phase. The afterPack hook ad-hoc signs the .app instead (see below).
 - **`afterPack: ./build/after-pack.js`** — runs `codesign --force --deep --sign -` on the .app on darwin builds. Without ANY signature, arm64 Gatekeeper shows "damaged and can't be opened"; the ad-hoc signature satisfies the must-be-signed check.
 - **`asarUnpack: node_modules/ffmpeg-static/**/*`** — FFmpeg is a real binary; if it stays in the asar, `spawn()` can't invoke it and every download breaks. ⚠ This is necessary but *not sufficient*: see "Binary paths inside asar" below.
@@ -380,12 +403,13 @@ Build config lives in the `build` field of `package.json`. Key choices baked in:
 ### Build commands
 
 ```sh
-npm run build:win       # Windows portable .exe
-npm run build:portable  # equivalent
-npm run build:mac       # macOS arm64 .zip (only works on macOS — electron-builder refuses cross-build by default)
+npm run build:win       # Windows NSIS installer → dist/robogears-downloader-setup.exe
+npm run build:mac       # macOS arm64 .dmg (only works on macOS — electron-builder refuses cross-build by default)
 ```
 
-Outputs: `Z:\robogearsDownloader\dist\robogears-downloader.exe` and `dist/robogears-downloader-mac-arm64.zip`. Mac builds are produced by CI on a `macos-latest` runner; local Windows machines can't cross-build mac without Docker + the `electronuserland/builder` image.
+⚠ Don't add a `build:portable` script back. It would pass `--win portable` to electron-builder, which silently **overrides** the `nsis` target declared in `package.json#build.win.target` (CLI flag wins). The build would succeed but produce a portable .exe with the wrong name; CI's `upload-artifact` step would then fail. The old `build:portable` script was removed in v0.1.24's fix-up commit for exactly this reason. If you need to build a one-off portable for testing, do it directly: `npx electron-builder --win portable`.
+
+Outputs: `Z:\robogearsDownloader\dist\robogears-downloader-setup.exe` and `dist/robogears-downloader-mac-arm64.dmg`. Mac builds are produced by CI on a `macos-latest` runner; local Windows machines can't cross-build mac without Docker + the `electronuserland/builder` image.
 
 ### userData path — consistent across dev and packaged
 
@@ -434,8 +458,8 @@ If any future feature spawns another binary from a package (sharp, a transcoder,
 
 Releases are automated by `.github/workflows/release.yml`. Trigger: pushing any tag matching `v*`. Three jobs:
 
-1. **build-win** (windows-latest): `npm ci`, `npm run build:portable`, upload `dist/robogears-downloader.exe` as an artifact
-2. **build-mac** (macos-latest): `npm ci`, `npm run build:mac`, upload `dist/robogears-downloader-mac-arm64.zip`
+1. **build-win** (windows-latest): `npm ci`, `npm run build:win`, upload `dist/robogears-downloader-setup.exe` as an artifact
+2. **build-mac** (macos-latest): `npm ci`, `npm run build:mac`, upload `dist/robogears-downloader-mac-arm64.dmg`
 3. **release** (ubuntu-latest, needs both): downloads both artifacts, uses `softprops/action-gh-release@v2` to create a **draft** release with both attached. Body comes from `RELEASE_NOTES.md` via `body_path`.
 
 ### Ship process
@@ -457,60 +481,53 @@ When the user explicitly asks to ship (and not before — see "no auto-releases"
 
 ## In-app updater
 
-On launch, `electron-main.js#checkForUpdatesAndNotify` fetches `https://api.github.com/repos/robogears/robogearsDownloader/releases/latest` (unauthenticated, 60/hr rate limit). If `release.tag_name` is strictly newer than `app.getVersion()`, it picks the platform-matching asset (`.exe` on win32, `mac-arm64.zip` on darwin, release page URL as fallback) and sends an `update:available` IPC event to the renderer. Errors / no-update are silent.
+On launch, `electron-main.js#checkForUpdatesAndNotify` fetches `https://api.github.com/repos/robogears/robogearsDownloader/releases/latest` (unauthenticated, 60/hr rate limit). If `release.tag_name` is strictly newer than `app.getVersion()`, it picks the platform-matching asset (`setup.exe` on win32, `mac-arm64.dmg` on darwin, release page URL as fallback) and sends an `update:available` IPC event to the renderer. Errors / no-update are silent.
 
-The renderer (`renderer/app.js`) listens for this event and inserts a styled notice — `🚀 New version available: vX.Y.Z` + a **Download update** button — immediately after the boot welcome line in the activity log. If the event arrives before the welcome line exists, the payload is queued and replayed once the welcome lands.
+The renderer has **two parallel update UIs** that share the same backend IPCs:
+1. **Activity-log notice** (`insertUpdateNotice` in `renderer/app.js`) — styled `🚀 New version available: vX.Y.Z` row with a Download button. Two-click flow: Download → "Restart to apply" → Restart. For users who want to review before restarting. Inserted after the boot welcome line; if the event arrives before the welcome exists, payload is queued and replayed.
+2. **Topbar pulsing pill** (`#brand-update-pill`) — appears next to the version label. Single-click flow: download with live `Downloading N%` → auto-apply + restart, no second click. For impatient users. Both UIs run in independent state machines; both call the same `api.downloadUpdate(url)` / `api.applyUpdate()` IPCs.
 
-Settings → Updates surfaces `app.getVersion()` and a manual **Check for updates** button. The button uses the same `getUpdateStatus()` helper as the launch check; result reflects in the button label (*Checking…* → *vX.Y.Z available!* / *Up to date ✓* / *Check failed*, auto-reverts after 2.5s). When an update is available via the manual check, the activity-log notice also fires.
+Settings → Updates surfaces `app.getVersion()` and a manual **Check for updates** button. The button uses the same `getUpdateStatus()` helper as the launch check; result reflects in the button label (*Checking…* → *vX.Y.Z available!* / *Up to date ✓* / *Check failed*, auto-reverts after 2.5s). When an update is available via the manual check, both the activity-log notice and the topbar pill fire.
 
-Note: GitHub's `/releases/latest` endpoint only returns the highest **published** release. Drafts and pre-releases are invisible to it. So users on the latest published version (e.g., v0.1.2) won't see notices for unpublished drafts (v0.1.3+) — only for releases the user has actually clicked Publish on.
+Note: GitHub's `/releases/latest` endpoint only returns the highest **published** release. Drafts and pre-releases are invisible to it. So users on the latest published version won't see notices for unpublished drafts — only for releases the user has actually clicked Publish on.
 
-### Self-installer (Windows portable only)
+### Self-installer
 
-When the updater fires and the user clicks **Download update**, on a Windows portable build the renderer drives a small state machine:
+**Windows (NSIS, as of v0.1.24):** the downloaded asset is `robogears-downloader-setup.exe` — an NSIS installer. `apply:update` spawns it with `/S --updated` (silent install + "this is an auto-update" hint), then `app.quit()` 200 ms later. NSIS detects the running app via its semaphore, closes it, replaces files in `%LOCALAPPDATA%\Programs\robogears Downloader\`, and relaunches the new version (via `runAfterFinish: true` in `package.json#build.nsis`). Much simpler than the old portable-era `.cmd` polling-retry swap — NSIS handles all the file-lock / process-detection / atomic-replace concerns internally.
 
-1. **idle** → `api.downloadUpdate(url)` → button label changes to `Starting…`
-2. **downloading** → `update:download-progress` events stream in, button shows `Downloading 42%`. Main process saves the .exe to `%TEMP%\robogears-downloader-<timestamp>.exe`. Path is remembered as `global._pendingUpdatePath`.
-3. **ready** → button changes to `Restart to apply` (white-filled style via `.ready` class)
-4. **restarting** → `api.applyUpdate()` → button shows `Restarting…`
-
-`applyUpdate()` writes a small relauncher `.cmd` to `%TEMP%\robogears-update-<timestamp>.cmd`:
-
-```cmd
-@echo off
-setlocal
-set "LAUNCHER=<process.env.PORTABLE_EXECUTABLE_FILE>"
-set "NEW=<global._pendingUpdatePath>"
-set /a count=0
-:retry
-move /Y "%NEW%" "%LAUNCHER%" >NUL 2>&1
-if errorlevel 1 (
-    timeout /t 1 /nobreak >NUL
-    set /a count+=1
-    if %count% lss 30 goto retry
-    exit /b 1
-)
-start "" "%LAUNCHER%"
-del "%~f0"
+```js
+// electron-main.js, update:apply Windows branch
+const child = spawn(newPath, ['/S', '--updated'], {
+    detached: true, stdio: 'ignore', windowsHide: true,
+});
+child.unref();
+setTimeout(() => app.quit(), 200);
 ```
 
-Spawned detached (`detached: true, stdio: 'ignore', windowsHide: true`) so it survives the parent process death. Polls `move /Y` for up to 30 seconds — the launcher .exe is locked while the Electron app is running; once the app quits (200 ms later, via `app.quit()`), the launcher releases the lock and the move succeeds. Then relaunches the new .exe and self-deletes.
+**macOS:** download the `.dmg`, mount via `hdiutil attach -nobrowse -mountpoint <tmp>`, find the `.app` inside, copy it out via `ditto <src>.app <staging>` (preserves extended attributes that plain `cp` mangles), detach. A double-fork bash relauncher script (re-exec'd with `--daemonized` so it survives `app.quit()` via `nohup ... & disown`) waits for the parent PID, detects App Translocation (installs to `/Applications/` if running from a read-only shadow), backs up the existing `.app` to `.bak`, moves the new in, strips quarantine (`xattr -dr com.apple.quarantine`), re-signs ad-hoc (`codesign --force --deep --sign -`), and `open`s it. Diagnostic logs in `~/Library/Logs/robogears Downloader/`.
 
-**Why `process.env.PORTABLE_EXECUTABLE_FILE` and not `process.execPath`:** in a portable build, `process.execPath` points at the temp-extracted copy of the Electron binary (inside `%LOCALAPPDATA%\Temp\<random>\`), not the file the user double-clicked. `PORTABLE_EXECUTABLE_FILE` is set by electron-builder's portable launcher specifically to give us the on-disk path of the user-visible .exe.
+**Bootstrap pain when changing asset formats:** every asset-format migration leaves the version just before the change unable to auto-update (its substring match was for the old name). We've paid this cost twice — `.zip` → `.dmg` on macOS (v0.1.16 → v0.1.17), and portable `.exe` → NSIS `setup.exe` on Windows (v0.1.23 → v0.1.24). Documented in each release's notes as a one-time manual install. See `updater.md` for the three strategies (manual / dual-ship / pre-patch).
 
-**Why not electron-updater:** electron-updater wants a fixed install location (NSIS / DMG) and a `latest.yml` published alongside releases. The portable target doesn't fit its model. We also avoid the macOS code-signing/notarization requirements electron-updater would push us into.
-
-**macOS:** `api.canSelfInstall()` returns `false`; the renderer's update notice falls back to the old `api.openExternal(downloadUrl)` flow. Building a working in-place updater on macOS requires a Developer ID + notarized binary so Gatekeeper accepts the relaunched .app — not worth the $99/yr until we have more users.
+**Why not electron-updater:** electron-updater wants a `latest.yml` manifest, publishes via its own flow, and on macOS requires a Developer ID + notarized binary so Gatekeeper trusts the relaunched .app. The custom approach above works without paying $99/yr for Apple Developer.
 
 ---
 
-## Settings UI sections (top to bottom)
+## Settings UI (tabs, as of v0.1.20)
 
-1. **Download folder** — `folder-input` + `Browse…`. Blank on first launch.
-2. **Music library folder** — `library-input` + `Browse…` + `Clear`. Below that: scan status + Refresh button.
-3. **TIDAL account** — auth status + `Sign in to TIDAL` (or `Re-authenticate` if already signed in).
-4. **Updates** — current version label + `Check for updates` button.
-5. **Reset config** — text button. Clears download + library folders only; keeps TIDAL sign-in.
+The Settings modal is split into three tabs in `renderer/index.html` (`.modal-tab` + `.modal-pane` pattern; switching handled in `renderer/app.js` near the end). Each tab fills the modal body; the tab bar lives at the top.
+
+**Folders tab**
+1. **Download folder** — `folder-input` + `Browse…` + `Open` (the Open button calls `api.openFolder(settings.downloadFolder)`). Blank on first launch — `Download all` errors out with "Pick a download folder in Settings first" until set
+2. **Music library folder** — `library-input` + `Browse…` + `Open` + `Clear`. Below that: scan status (`library-status`) with live `Scanning N / M…` progress + Refresh button
+3. **Reset config** — text button at bottom of pane. Clears download + library folders only; keeps TIDAL sign-in
+
+**TIDAL tab**
+- Auth status + `Sign in to TIDAL` (or `Re-authenticate` if already signed in). The button opens the auth modal which runs `tidal_auth_node.authenticate()` in-process
+
+**Updates tab**
+- Current version label (`update-status`)
+- `Check for updates` button — runs `getUpdateStatus()`, reflects result in its own label briefly
+- `made with love by robogears :)` signature — anchored to bottom-left via `margin: auto 0 -8px 0` on a flex-column pane
 
 The auth modal (separate from settings, opened by the Sign-in button) has a URL row showing the verification URL with a Copy button, plus the live terminal output of the auth flow.
 
@@ -523,7 +540,9 @@ The auth modal (separate from settings, opened by the Sign-in button) has a URL 
 | Function | Trigger | Sound |
 |---|---|---|
 | `playDownloadChime` | "Download all" click, after all validation passes | Ascending C5 → G5 (sine pair, slight detune for warmth) |
-| `playClownHorn` | Click on the "Coming soon" badge over the drop-zone | Two-tone descending honk, 420 → 310 Hz (sawtooth + 1800 Hz lowpass) — easter egg |
+| `playSuccessPing` | Batch finishes cleanly (`onDownloadDone` with code 0) | 3-bell major-triad arpeggio G5 → C6 → E6, bell-like decay (~400ms total) |
+| `playFart({ pitchScale })` | Click on the brand logo, name, or version label in the topbar (easter egg) | Sawtooth + 17 Hz LFO wobble + 480 Hz lowpass + ~420ms envelope. Version-click uses `pitchScale: 7` for the "tiny fart" variant |
+| `playClownHorn` | Unused — leftover from the v0.1.0–v0.1.24 "Coming soon" badge that the v0.1.25 CSV drop-zone replaced. Still defined in `app.js` in case we want to repurpose | Two-tone descending honk, 420 → 310 Hz (sawtooth + 1800 Hz lowpass) |
 | `playWarningHonk` | "Download all" click when blocked (no folder / no auth / nothing downloadable) | Same shape as clown horn, lower octave (220 → 165 Hz, 1100 Hz lowpass) — a "wronnng" |
 
 Internally these share a `_honkPair(highHz, lowHz, opts)` helper; tweak the args to add variants.
@@ -532,7 +551,7 @@ Internally these share a `_honkPair(highHz, lowHz, opts)` helper; tweak the args
 
 ## Funny loading text
 
-`renderer/app.js` defines `FUNNY_LOADING` — 10 music-themed loading messages ("Searching the seven seas for your music…", "Digging through the record crates…", etc.). `showLoading()` with no arg picks one at random and cycles to a fresh random message every 2.5s if the operation lasts longer. `showLoading(text)` with a specific string uses that instead (still used by the OCR step which has a clear "Running OCR on screenshot…" label).
+`renderer/app.js` defines `FUNNY_LOADING` — 10 music-themed loading messages ("Searching the seven seas for your music…", "Digging through the record crates…", etc.). `showLoading()` with no arg picks one at random and cycles to a fresh random message every 2.5s if the operation lasts longer. `showLoading(text)` with a specific string uses that instead (e.g., `Matching 234 / 500 tracks on TIDAL…` during a tracklist import resolve).
 
 Add more entries to the `FUNNY_LOADING` array if the user requests it. They should stay short, on-theme (music/audio/discovery vibes), and not promise specific behavior.
 
@@ -540,17 +559,54 @@ Add more entries to the `FUNNY_LOADING` array if the user requests it. They shou
 
 ## Where the last session left off
 
-Latest released version is **v0.1.16**. Uncommitted on `main`: the macOS distribution drops the `.zip` in favor of a `.dmg`-only flow, and the in-app updater now downloads `.dmg`, mounts via `hdiutil`, copies the `.app` out via `ditto`, and unmounts. To be shipped as v0.1.17 on the next explicit ship instruction.
+Latest released version is **v0.1.25** (published). Working tree is clean as of the last ship. Most recent additions in v0.1.25: CSV/text-paste playlist import (replaces the feature-gated OCR drop-zone), one-click "Update now" pill in the topbar next to the version label, live `Matching N / M tracks` progress on the loading overlay during tracklist resolve, and CSP tightened (Tesseract.js CDN script removed).
 
-The macOS auto-update flow is **finally working end-to-end** as of v0.1.15 — App Translocation was the bug that had been making "Restart to apply" silently fail. The user's diagnostic logs from v0.1.13 caught the root cause: when a quarantined `.app` is launched from outside `/Applications/`, macOS shadow-copies it to a read-only path under `/var/folders/.../AppTranslocation/...`, which is where our `mv OLD → BACKUP` was failing. v0.1.15 detects the translocated path and installs to `/Applications/<App>.app` directly. v0.1.16 added the DMG installer, which naturally avoids translocation (Finder trusts apps installed via DMG-drag-to-Applications). Together they close the chapter.
+The Windows distribution flipped to **NSIS oneClick installer** in v0.1.24 — installs to `%LOCALAPPDATA%\Programs\robogears Downloader\`, adds Start Menu + Desktop shortcuts, registers in Add/Remove Programs. Auto-update flow simplified: just spawn the installer with `/S --updated` and let NSIS handle process detection + file replace + relaunch. Replaces the portable-era `.cmd` polling-retry pattern entirely. Bootstrap pain: anyone still on v0.1.23 portable needs a one-time manual install of `robogears-downloader-setup.exe`. Documented in v0.1.24 release notes.
+
+Library matcher tightened in v0.1.24 — `exact` matches now require BOTH title and artist to confidently agree. Files with empty/missing artist ID3 metadata (common in SpotDownloader-style MP3 dumps) used to false-positive based on title alone and get auto-skipped. Now they show the yellow `⚠ similar version in library` badge with the file path, and stay in the queue by default.
 
 ### Just landed (latest first)
 
-**v0.1.17 (uncommitted) — DMG-only on macOS:**
-- `package.json`: dropped the `zip` entry from `mac.target`. Build now produces only `.dmg`.
-- `.github/workflows/release.yml`: stops uploading + attaching the `.zip`.
-- `electron-main.js`: `getUpdateStatus` looks for `mac-arm64.dmg` instead of `mac-arm64.zip`. `update:download` now uses a new `mountAndExtractMacDmg` helper: `hdiutil attach -nobrowse -mountpoint <staging>`, find the `.app` inside, `ditto` copy it out to a writable staging dir, `hdiutil detach`. The existing relauncher script then moves the staged `.app` into `/Applications/`, strips quarantine, re-signs ad-hoc, and `open`s it.
-- Users on v0.1.16 or earlier (which look for `.zip`) will get a 404 on the next update; one manual `.dmg` install fixes that and they're back on auto-update from v0.1.17 onward.
+**v0.1.25 — CSV/text playlist import + topbar update pill + import progress:**
+- Drop-zone repurposed from the (feature-gated-off) OCR placeholder into a CSV/text-paste importer. Accepts Exportify CSVs out of the box (detects `Track Name` / `title` / `name` and `artist` columns), plain `.txt` files, and clipboard paste anywhere in the app. Plain-text fallback handles `-`, `—`, `–`, `|`, tab separators.
+- Drop-zone has a clickable `Exportify` link in the subtitle — opens [exportify.net](https://exportify.net) in the user's browser for the one-click handoff. Killed the Tesseract.js CDN script (was loading 67 KB on every launch even with OCR off); CSP no longer needs `cdn.jsdelivr.net` exceptions.
+- New topbar pulsing pill `Update now` next to the version label. Single-click: download → auto-apply → restart, no second click. Activity-log notice (two-click Download then Restart) stays alongside for users who prefer to review.
+- Loading overlay during tracklist resolve now ticks: `Matching 234 / 500 tracks on TIDAL…` instead of a generic spinner. Backed by `tracklist:progress` IPC events from `resolve:tracklist`.
+- IPC rename `resolve:ocr-tracks` → `resolve:tracklist`. Track source field `'ocr'` → `'import'`. Queue badge shows `Import` instead of `OCR`.
+
+**v0.1.24 — Windows NSIS installer + stricter library dedup:**
+- Windows distribution switched from portable single-`.exe` to NSIS oneClick installer. `robogears-downloader-setup.exe` installs to `%LOCALAPPDATA%\Programs\robogears Downloader\` per-user, adds Start Menu + Desktop shortcuts, registers in Add/Remove Programs. Auto-update spawns the installer with `/S --updated` — NSIS handles process kill + file replace + relaunch. Replaces the `.cmd` polling-retry swap that the portable target needed.
+- Bootstrap pain for v0.1.23 portable users: their updater code finds `setup.exe` (since `.exe` substring matches), but their swap mechanism doesn't know what to do with an installer. One-time manual install of the setup.exe.
+- Library matcher (`tidal_lib.js#findInLibrary`) tightened: `exact` now requires title AND artist to confidently agree. Title-only matches (where the library file has empty/missing artist metadata) demote to `similar` so the file shows the yellow warning badge but stays in the queue.
+- CI workflow gotcha discovered: `npm run build:portable` was passing `--win portable` to electron-builder, which silently overrode `package.json#build.win.target`. Fix: dropped that script entirely, workflow now calls `npm run build:win` which uses whatever's in the config.
+
+**v0.1.23 — restore full-screen loading overlay + README refresh:**
+- Brought back the v0.1.19-and-earlier full-screen blur overlay for URL resolution. The v0.1.20 topbar pill experiment read as too understated.
+- README rewritten: pre-built binary install instructions first (Windows + macOS), OCR dropped from the feature list (was being advertised even though it was feature-gated off), in-app updater + waveform preview + volume slider added, stale ONBOARDING.md link removed. Links out to `waveformplayback.md` and `updater.md` for the portable docs.
+
+**v0.1.22 — queue title takes priority over waveform width:**
+- Song titles in the queue now always render in full; the waveform shrinks (down to 0 if needed) when row width is tight. `flex: 0 0 auto` on the title (with `overflow: visible` overriding the default ellipsis) and `min-width: 0` on the waveform (down from 80px).
+
+**v0.1.21 — preview polish (volume slider, scrub-any-waveform, pre-load, ping):**
+- Volume slider in the queue header — squared curve (slider 50% → audio 25%), persists to `settings.volume`, defaults 50%.
+- Clicking any waveform (not just the playing one) starts that track at the clicked position. Hold-to-scrub stays scoped to the currently-playing track.
+- Background pre-loader fires when tracks land in the queue or are restored — concurrency 2, peaks-only (audio bytes discarded after decode). By the time you click play, the waveform is already painted.
+- Three-bell major-triad arpeggio "success ping" on batch completion (G5 → C6 → E6 with bell-like decay).
+- Cache split into `peaksCache` (unlimited, ~800 bytes per entry) and `audioCache` (LRU 3) so pre-loaded entries don't pin audio bytes in memory.
+- Fixed "Preview playback failed (code 4)" log noise on rapid track switches — was a stale `error` event from a torn-down `<audio>` element. All audio listeners now guard against firing on a no-longer-current element via `isCurrent()`.
+- Easter eggs: click the topbar logo/name for a fart noise (sawtooth + 17 Hz LFO wobble + 480 Hz lowpass), click the version number for the same fart at 7× pitch (mouse-fart edition). "made with love by robogears :)" anchored to bottom-left of Settings → Updates.
+
+**v0.1.20 — experimental inline waveform preview + topbar loading:**
+- Each queue row gets a circular play button + dynamic waveform filling the space between the title and the action buttons. Click-and-hold to scrub the playing track; audio keeps playing through the drag for the "skim" effect. Spotlight hover (bars near cursor swell, vertical cursor line). Works on both DASH (parallel segment fetch + concat) and BTS (single direct URL) manifests.
+- Implementation: Web Audio `decodeAudioData` extracts peaks via downsample-by-max, blob URL feeds `<audio>` element for playback. 200 bars, peaks normalized to [0..1]. Documented end-to-end in `waveformplayback.md` for portability.
+- Loading indicator was briefly moved to a topbar pill in this version (replaced the full-screen overlay). Reverted in v0.1.23 — the overlay reads better.
+- Play/pause/loading icons swapped from unicode to inline SVG so they center precisely in the button.
+
+**v0.1.17–v0.1.19 — DMG-only macOS distribution + validation bumps:**
+- v0.1.17 dropped the `.zip` from `mac.target`. Updater fetches `.dmg`, mounts via `hdiutil`, extracts via `ditto`. Bootstrap pain: v0.1.16 portable-zip-era macOS users need a one-time manual `.dmg` install.
+- v0.1.17 also fixed the Rekordbox cover-art bug: FLAC PICTURE block was being written with picture type 0 (`Other`) which strict DJ players silently skip. Now `-metadata:s:v comment="Cover (front)"` sets it to type 3, which Rekordbox/Mixxx/Serato actually render. Existing files on disk need a one-time re-tag (FFmpeg `-c copy` rewrite).
+- v0.1.17 also bundled the queue-persistence-across-restarts + Settings tabs + Hi-Res badge in queue + Spotify-100-cap warning + library scan progress + FFmpeg startup check + activity-log cap quality-of-life batch.
+- v0.1.18 and v0.1.19 were back-to-back validation bumps with no code changes — shipped to test the v0.1.16 → v0.1.17+ DMG auto-update path end-to-end now that the format-transition bootstrap was paid.
 
 **v0.1.16 — DMG install-window polish:**
 - DMG background canvas extended from 540×400 to 1920×1200 so resizing the Finder window no longer reveals the default white area beyond the original image.
@@ -636,31 +692,43 @@ The macOS auto-update flow is **finally working end-to-end** as of v0.1.15 — A
 
 ### Known things still rough
 
-1. **Spotify playlists > 100 tracks** — hard limit, see "Spotify situation" above. User accepted this. Headless scraper approach is documented if anyone wants to revive it.
-2. **Library scan takes ~18 sec for ~500 files** on first launch. No on-disk cache yet. The user explicitly said "refresh on every launch" so this is intentional, but a faster scan would still be nice.
-3. **Bulk runner progress reporting** is line-based, parsed from child stdout. No per-track row spinners in the queue.
-4. **No global cancel button** during a bulk download. `api.cancelDownload()` exists in the preload but no UI calls it.
-5. **No app icon.** Windows uses the default Electron icon for the .exe and taskbar; macOS uses the default Electron icon. Drop a 256×256 PNG/ICO in `build/icon.png` and add `"icon": "build/icon.png"` under `win`/`mac` in `package.json` to fix.
-6. **macOS x64 not built.** Only arm64 (Apple Silicon). Intel Mac users would need a separate target. Mostly fine in 2026.
-7. **No macOS self-install.** The Download update button on macOS still opens the browser; user re-downloads + replaces the .app manually. Proper auto-update would need a paid Apple Developer Program membership + notarization so Gatekeeper accepts the relaunched .app.
-8. **softprops empty-body quirk on re-tagged releases**: if a tag is deleted + re-created and the previous release on GitHub still exists, softprops/action-gh-release sometimes preserves the old (empty) body instead of using the new `body_path`. Fix: `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` after CI completes. Always verify body length after a release. (We've hit this on EVERY release so far including v0.1.7 — investigate if there's a softprops option that forces body overwrite.)
-9. **Node 20 deprecation warnings in CI.** GitHub deprecated Node 20 actions; will be forced to Node 24 on June 2, 2026 and Node 20 removed Sept 16, 2026. We use `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4`, `actions/download-artifact@v4`, `softprops/action-gh-release@v2` — all currently on Node 20. Bump to whatever Node 24-compatible versions exist before June 2026.
+1. **Spotify playlists > 100 tracks** — the public embed is hard-capped. Current workaround: the CSV/text-paste drop-zone + Exportify (one-click link from the drop-zone). Fully-automated path would be the Pathfinder GraphQL approach (hidden BrowserWindow → token harvest → paginate). Not built.
+2. **Library scan takes ~18 sec for ~500 files** on first launch. No on-disk cache yet. Live "Scanning N / M…" progress was added in v0.1.20 so the user knows it's not stuck, but a faster scan would still be nicer.
+3. **macOS x64 not built.** Only arm64 (Apple Silicon). Intel Mac users would need a separate target. Mostly fine in 2026.
+4. **softprops empty-body on every release**: `softprops/action-gh-release@v2` produces a release with `body: ""` despite `body_path: RELEASE_NOTES.md` being set. Treat as guaranteed, fix unconditionally post-CI with `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md`. Documented as a baked-in step. Hits every single release.
+5. **Node 20 deprecation in CI.** GitHub deprecates Node 20 on June 2, 2026; removed Sept 16, 2026. We use `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4`, `actions/download-artifact@v4`, `softprops/action-gh-release@v2` — all currently Node-20-based. Bump before June.
+6. **`ffmpeg-static` postinstall download is a network-flake risk in CI.** `npm ci` on the Windows runner sometimes hits a 502 from GitHub's release-asset CDN trying to download the bundled FFmpeg binary. Workaround: `gh run rerun <id> --failed` — transient. Could be mitigated by pre-bundling the binary or caching `node_modules` more aggressively.
 
 ### Possible next steps (in rough priority order)
 
-1. **Per-track progress in the queue UI** during bulk download. Map child stdout lines back to queue items, show a state per row + small progress bar.
-2. **Disk-cached library scan** — JSON file keyed by file mtime/size; rebuild only when stale.
-3. **Cancel button** for in-flight downloads.
-4. **Revive the headless Spotify scraper** to remove the 100-track limit (see Spotify section).
-5. **Better OCR** (currently feature-flagged off entirely): tune Tesseract config or accept plain text paste alongside images. Then flip `OCR_FEATURE_ENABLED` back on.
-6. **Persist queue across app restarts.**
-7. **History / "recent downloads" pane.**
-8. **App icon** — see "Known rough" #5.
-9. **macOS x64 build** — add `{ arch: ['x64', 'arm64'] }` to the mac target (or `universal`) once we have a use case.
-10. **macOS self-install** — requires Apple Developer Program ($99/yr) + notarization. Pre-condition: code-signing the .app and notarizing it via `notarytool` in CI. Then we can mirror the Windows self-installer pattern on macOS (download .dmg or new .app, replace, relaunch).
-11. **Bump GitHub Actions to Node-24-compatible versions** before June 2026 (see "Known rough" #9).
-12. **Investigate why softprops always leaves the body empty** — maybe a flag, maybe we need to add a `gh release edit` step inside the workflow itself as a safety net.
-13. **Add screenshots to `docs/` and reference in README.**
+1. **Disk-cached library scan** — JSON file keyed by file mtime/size at `<userData>/library-cache.json`; rebuild only when stale. Cuts the 18s cold-start scan to <100ms.
+2. **Spotify Pathfinder GraphQL with logged-in token harvest** — hidden BrowserWindow + cookies persist via `partition: 'persist:spotify'` + scrape JWT from `/get_access_token` + paginate the internal GraphQL API. Removes the >100-track Exportify-detour for users willing to log in. Documented in `updater.md`'s patterns section.
+3. **History / "recent downloads" pane.**
+4. **macOS x64 / universal build** — add `{ arch: ['x64', 'arm64'] }` (or `universal`) to the mac target once there's a use case.
+5. **macOS self-install via electron-updater** — would require Apple Developer Program ($99/yr) + notarization, which would also unlock block-level differential updates. The current `hdiutil`-mount + bash-relauncher works fine without it.
+6. **Bump GitHub Actions to Node-24-compatible versions** before June 2026.
+7. **Investigate the softprops empty-body root cause** — maybe a `body_path` quoting issue, maybe softprops needs an explicit flag, maybe we need a workflow step that calls `gh release edit` as belt-and-suspenders. Currently fixed manually post-CI on every ship.
+8. **Add screenshots to `docs/` and reference in README.**
+
+### Done since the last big CLAUDE.md refresh (so we don't accidentally re-do)
+
+- ✓ Per-track progress in queue UI (v0.1.10)
+- ✓ Cancel button for in-flight downloads (v0.1.11)
+- ✓ App icon — custom monochrome vinyl + download arrow (v0.1.9)
+- ✓ macOS self-install via DMG + bash relauncher (v0.1.10–v0.1.15) — works without Apple Developer cost
+- ✓ Persist queue across restarts (v0.1.20)
+- ✓ Inline waveform preview with hold-to-scrub (v0.1.20)
+- ✓ Volume slider for previews (v0.1.21)
+- ✓ Pre-load waveforms in background (v0.1.21)
+- ✓ Settings tabs (v0.1.20)
+- ✓ Live library scan progress (v0.1.20)
+- ✓ FFmpeg startup verification (v0.1.20)
+- ✓ Activity log cap (v0.1.20)
+- ✓ Rekordbox cover-art picture-type fix (v0.1.17)
+- ✓ Tightened library matcher (v0.1.24)
+- ✓ Windows NSIS installer (v0.1.24) — replaced portable
+- ✓ One-click topbar update pill (v0.1.25)
+- ✓ CSV/text playlist import — replaces the OCR placeholder (v0.1.25)
 
 ---
 
@@ -755,8 +823,10 @@ $gh = "C:\Users\william\AppData\Local\Microsoft\WinGet\Links\gh.exe"; & $gh auth
 - Don't remove the afterPack hook (`build/after-pack.js`). Without ad-hoc signing on macOS arm64, Gatekeeper blocks the .app as "damaged".
 - Don't reintroduce `cwd: __dirname` in any `spawn()` or `child_process.exec()` call. In packaged builds it resolves to an asar virtual path; the OS can't `chdir()` into it; `posix_spawn`/`CreateProcess` fails with ENOENT before exec. Default (inherited) cwd is fine.
 - Don't spawn a binary using a path returned by an npm package without rewriting `app.asar` → `app.asar.unpacked`. ffmpeg-static is the obvious one — `tidal_download.js` does this rewrite — but the same rule applies to any future binary dependency (sharp, ytdl-binaries, etc.). Add it to the asarUnpack list AND rewrite the path string before passing to spawn.
-- Don't enable the self-installer (`canSelfInstall()` returning true) on macOS or Linux without first investing in code-signing/notarization. The relauncher script we use is Windows-specific (`cmd.exe`, `move /Y`, `start ""`), and on macOS Gatekeeper would block a relaunched ad-hoc-signed .app from running unattended.
-- Don't break the relauncher script logic in `electron-main.js#update:apply`. The 30-retry polling loop is the critical bit — it waits out the launcher's file lock. Tweak the timeout if needed; don't drop the retry.
+- Don't change the Windows updater to do anything other than spawning the downloaded NSIS installer with `/S --updated`. The installer handles process detection, file replacement, and relaunch internally — much simpler than the portable-era `.cmd` polling-retry loop. Don't add manual file-swap logic. The old `.cmd` script approach is gone; don't bring it back.
+- Don't pass `--win <target>` flags in `npm` scripts that go through CI. CLI flags silently override `package.json#build.win.target` — the `nsis` declaration gets ignored, electron-builder produces a portable .exe with the wrong name, and `upload-artifact` fails. Use plain `electron-builder --win` so the config wins. v0.1.24's first CI run failed for exactly this reason.
+- Don't reintroduce the `build:portable` npm script. If you need a one-off portable build for testing, run `npx electron-builder --win portable` directly so it can't get picked up by the workflow by accident.
+- Don't change the macOS bash relauncher's double-fork pattern (`nohup "$0" --daemonized "$@" </dev/null >/dev/null 2>&1 & disown`). It's what makes the script survive `app.quit()`. Plain `detached: true` + `unref()` isn't enough — SIGHUP propagation killed earlier attempts.
 - Don't change `draft: true` to `false` in `.github/workflows/release.yml`. The user wants every release to land as a draft for manual review + publish.
 - Don't force-move a published tag. Unpublished drafts can be re-done; published releases are immutable. Bump to a new version instead.
 - Don't auto-release. See the `feedback-no-auto-releases` memory entry — make code changes only; wait for an explicit ship instruction.

@@ -124,10 +124,15 @@ Tell the user:
 
 ## Common failure modes
 
-- **Empty release body after CI completes.** `softprops` re-running on an existing release. Fix with `gh release edit`. Step 5 catches this.
+- **Empty release body after CI completes.** `softprops` re-running on an existing release. Fix with `gh release edit`. Step 5 catches this. In this repo it happens *every* release; treat the body-fix step as guaranteed, not contingent.
 - **CI fails with "GH_TOKEN is not set"** in an electron-builder project. Add `publish: null` to the build config so electron-builder doesn't try to auto-publish on tag push.
+- **CI fails on `actions/upload-artifact` with "No files were found".** electron-builder produced a file with a different name than the workflow expected — almost always because an `npm run build:*` script passes a `--win <target>` / `--mac <target>` CLI flag that **overrides** the targets you declared in `package.json#build`. The CLI flag wins. Fix: either align the script to call `electron-builder` without an explicit target (so it uses the config), or align the workflow + config + filename to match. Verify with the build log line `building target=... file=...`.
+- **CI fails with `Failed to download ffmpeg b6.1.1` / HTTP 502 during `npm ci`.** Transient GitHub release-asset CDN flake — `ffmpeg-static`'s postinstall download chokes. Just rerun the failed job: `gh run rerun <run-id> --failed`. Don't re-tag.
+- **`softprops/action-gh-release` fails with "Bad credentials" on first run.** Same flake. Rerun the failed release job. Builds stay cached so it's seconds.
+- **CI failed and no release was created at all (release job skipped because a build job failed).** You can re-tag at the same version *without* burning a number — no release means no force-move concern. Sequence: `git tag -d vX.Y.Z; git push origin :refs/tags/vX.Y.Z; git tag -a vX.Y.Z -m vX.Y.Z; git push origin vX.Y.Z`. Worth a short note to the user but no permission needed.
 - **Tag pushed but no workflow runs.** Confirm the workflow has a `tags` trigger pattern matching your tag name (commonly `v*`).
 - **`gh` not on PATH after install.** Use the absolute path to the binary. On Windows with winget: `C:\Users\<user>\AppData\Local\Microsoft\WinGet\Links\gh.exe`.
+- **Push rejected after the commit succeeds.** Someone (often the user editing on GitHub.com) pushed in between. `git pull --rebase origin main` is usually clean; the commit replays on top of the new tip. Then push main, *then* create + push the tag (the tag wasn't created yet because the `&&` chain stopped at the rejected push).
 
 ## Tone
 

@@ -356,6 +356,61 @@ if (process.platform === 'win32') {
 
 The 30-second retry loop is the magic. It tries `move /Y` once per second until the file is no longer locked (the app has quit), then runs `start ""` to launch the new binary and `del "%~f0"` to remove itself.
 
+### Alternative: Windows NSIS installer (much simpler)
+
+If you don't actually need portability (the app can install to disk like a normal Windows program), drop the portable target entirely and use electron-builder's `nsis` target with `oneClick: true`. The installer:
+- Drops the app at `%LOCALAPPDATA%\Programs\<productName>\` per-user (no admin)
+- Adds Start Menu + Desktop shortcuts
+- Registers in Add or Remove Programs (clean uninstall)
+- On re-run, detects the running app, closes it, replaces files, relaunches the new version
+
+The auto-update flow becomes trivial — no `.cmd` polling-loop, no `PORTABLE_EXECUTABLE_FILE` magic:
+
+```json
+{
+  "build": {
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "your-app-setup.exe",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
+```
+
+```js
+function canSelfInstall() {
+    if (!app.isPackaged) return false;
+    return process.platform === 'win32' || process.platform === 'darwin';
+}
+
+if (process.platform === 'win32') {
+    // newPath = downloaded installer .exe
+    const child = spawn(newPath, ['/S', '--updated'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+    });
+    child.unref();
+    setTimeout(() => app.quit(), 200);
+}
+```
+
+That's it. NSIS in silent mode (`/S`) handles the process-detection (sees the running app via its semaphore), kills it, replaces files in `%LOCALAPPDATA%\Programs\...`, and relaunches via `runAfterFinish`.
+
+**Trade-off vs portable:** users get a "real install" experience instead of a runs-from-anywhere `.exe`. For most consumer apps that's actually preferable — Start Menu shortcut, clean uninstall, no "where did I save that .exe" issue. For tools that need to run from USB sticks or shared drives, keep portable.
+
+**Asset substring change:** if you migrate portable → NSIS, the asset name changes from `your-app.exe` to `your-app-setup.exe`. Update the substring match in `getUpdateStatus()` accordingly. Bootstrap pain applies to anyone on the last portable version — they need a one-time manual install of the setup.exe. See the format-transition pattern below.
+
+**Workflow gotcha:** make sure your `npm run build:win` script doesn't pass `--win portable`. The CLI flag overrides `package.json#build.win.target` silently, your NSIS config gets ignored, and the build produces a portable .exe with a name like `your-app 0.1.0.exe` — at which point `upload-artifact` fails because it's looking for `your-app-setup.exe`. Use plain `electron-builder --win` (no target) so the config takes effect.
+
 ---
 
 ## Component 6: macOS self-install
@@ -640,6 +695,7 @@ async function checkForUpdatesAndNotify() {
 | `/releases/latest` doesn't return your draft | By design — drafts and pre-releases are invisible to `/latest`. | Users on the current published version won't see notices for drafts you've cut but haven't clicked Publish on. This is usually what you want. |
 | Update available appears but Download opens browser instead | The renderer fell through `canSelfInstall() === false` to the `openExternal` path. | Check that the user is on a version that *had* the self-install code at the time of build. Bootstrap problem: the auto-update code itself has to be installed via the OLD manual flow before it can take over. |
 | Update fails for users on the version *just before* an asset rename | Old installed version's updater hardcodes a substring match for the OLD asset name (e.g., `mac-arm64.zip`); the new release ships only the new name (e.g., `mac-arm64.dmg`). No match → updater falls back to `release.html_url` → downloader streams HTML and the extractor chokes on the "archive". | Ship BOTH formats for ONE transition release, then drop the old in the next. Or accept that one cohort does a one-time manual install — document the workaround in that version's release notes. Note this is distinct from the "introducing the updater" bootstrap problem above. |
+| `actions/upload-artifact` fails with "No files were found" after a successful build | The electron-builder npm script passes a CLI target flag (`--win portable`, `--mac dmg`, etc.) that overrides the targets in `package.json#build.<platform>.target`. The build succeeds with the CLI-specified target and produces a differently-named file than your workflow expects. | Don't use `--win <target>` in npm scripts. Call `electron-builder --win` (no target) so it uses the config. Verify with the build log: look for `building target=... file=...`. |
 | `softprops/action-gh-release@v2` fails with "Bad credentials" on first run | Possibly transient — observed even with `permissions: contents: write` set on the release job. The default `GITHUB_TOKEN` is what gets rejected. | `gh run rerun <run-id> --failed` — re-run just the release job (builds stay cached, so it's seconds). If the second attempt also fails, fall back to creating the release manually with `gh release create` against the artifacts the build jobs uploaded. |
 
 ---
@@ -653,6 +709,19 @@ async function checkForUpdatesAndNotify() {
 **Verify the release body every single time.** softprops leaves the body empty on every release we've shipped, full stop. Either bake `gh release edit vX.Y.Z --notes-file RELEASE_NOTES.md` into the workflow as a post-publish step (with `${{ steps.softprops.outputs.id != '' }}` or similar guard), or make body-verification + manual fix step 5 of your ship checklist and never skip it. The empty-body failure mode is silent — users see a blank GitHub release page and panic.
 
 **Separate "create draft" from "publish".** Let CI always produce a *draft* (`draft: true` in softprops). Then publish manually via `gh release edit vX.Y.Z --draft=false` once you've eyeballed the artifacts and notes. This catches release-notes typos, missing artifacts, and CI-side body-empty regressions before they hit users. It also lets you abandon a botched release without burning a version number (delete the draft + tag, fix, re-tag the same version).
+
+**Re-tag safely when a CI build failed.** If the release job was skipped because a build job failed, no release exists yet — re-tagging at the same version is safe and doesn't violate the "never force-move a published tag" rule. Delete the local + remote tag, fix the underlying issue with a new commit, retag at the fix commit, push. The next CI run uses the fixed workflow / code path.
+
+**Two update entry-points: pulse pill + activity-log notice.** Some users want one-click "just update already"; others want to review the notes before restarting. You can satisfy both with two independent surfaces of the same update event:
+- A pulsing pill in the topbar (next to the version label) → single click runs download → auto-apply → restart, no second click
+- A row in your activity log / notification surface → two-click: Download then Restart to apply
+
+Both subscribe to the same `update:available` and progress events. Have them read the same backend IPCs (`canSelfInstall`, `downloadUpdate`, `applyUpdate`). Each maintains its own local state machine; they don't need to coordinate as long as both call the same idempotent-ish backend.
+
+**Format-transition bootstrap cost is a real budget item.** Every time you change the asset distribution format (`.zip` → `.dmg` on macOS, `.exe` portable → `.exe` NSIS installer on Windows, etc.), the version *just before* the change can't auto-update to the new format — its substring-match for the old name doesn't fire on the new one, and its update mechanism (e.g., portable's `move /Y` swap) doesn't know how to handle an installer. Plan for one of:
+- **Manual install once.** Document in release notes. Cheapest, fine for personal apps.
+- **Ship both formats for one transition release.** Old asset name plus new. Old code finds the old, new code finds the new. Drop the old in N+1.
+- **Patch the OLD version first.** Ship a tiny "just fixes the auto-update lookup" release before the format change. Now everyone's on a version that knows how to find the new format.
 
 ---
 
