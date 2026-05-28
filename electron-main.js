@@ -21,9 +21,11 @@ if (app.isPackaged) {
 }
 
 const lib = require('./tidal_lib');
+const extensionServer = require('./extension-server');
 
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
 const QUEUE_PATH = () => path.join(app.getPath('userData'), 'queue.json');
+const EXTENSION_TOKEN_PATH = () => path.join(app.getPath('userData'), 'extension-token.txt');
 
 // Forward library-scan progress events to the renderer, throttled inside
 // scanLibrary itself (one tick per ~25 files).
@@ -492,6 +494,20 @@ app.whenReady().then(async () => {
     // mid-download as a confusing "ffmpeg exited 1".
     verifyFfmpegAvailable();
 
+    // Start the localhost HTTP server the Chrome extension talks to. Adds
+    // tracks pushed by the extension into the queue via the existing
+    // tracklist resolver.
+    extensionServer.startServer({
+        tokenPath: EXTENSION_TOKEN_PATH(),
+        version: app.getVersion(),
+        onTracksReceived: handleExtensionTracks,
+    }).catch(err => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download:line',
+                `⚠ Chrome-extension bridge couldn't start: ${err.message} (tracks won't push from Spotify)`);
+        }
+    });
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -658,6 +674,77 @@ ipcMain.handle('resolve:input', async (_e, { input }) => {
 });
 
 ipcMain.handle('resolve:cancel', () => { resolverCancelled = true; return { ok: true }; });
+
+// ─── Chrome extension bridge ────────────────────────────────────────────────
+// Tracks arrive from the local HTTP server (extension-server.js) — push them
+// through the same resolver the CSV import uses, then let the renderer add
+// the matched tracks to its queue via an IPC event.
+
+async function handleExtensionTracks(tracks) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // Show that something happened in the activity log
+    mainWindow.webContents.send('download:line',
+        `🎵 ${tracks.length} track${tracks.length === 1 ? '' : 's'} from Spotify extension — matching on TIDAL…`);
+    try {
+        const cred = lib.loadCred();
+        const token = await lib.getToken(cred);
+        const country = await lib.getCountryCode(cred);
+
+        const out = [];
+        for (const t of tracks) {
+            const query = `${t.title} ${t.artist}`;
+            try {
+                const json = await lib.searchTracks(query, token, country, 10);
+                const items = json.items || [];
+                const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+                const wantT = normalize(t.title);
+                const wantA = normalize(t.artist);
+                const scored = items.map(it => {
+                    const itT = normalize(it.title);
+                    const itA = (it.artists || []).map(a => normalize(a.name)).join(' ');
+                    let titleScore = 0;
+                    if (itT === wantT) titleScore = 100;
+                    else if (itT.startsWith(wantT) || wantT.startsWith(itT)) titleScore = 50;
+                    else if (itT.includes(wantT) || wantT.includes(itT)) titleScore = 25;
+                    const aTokens = wantA.split(' ').filter(x => x.length > 2);
+                    const matched = aTokens.filter(x => itA.includes(x)).length;
+                    const artistScore = aTokens.length ? Math.round((matched / aTokens.length) * 100) : 0;
+                    return { it, titleScore, artistScore, total: titleScore + artistScore };
+                }).filter(s => s.titleScore === 100 || (s.titleScore >= 25 && s.artistScore >= 50))
+                  .sort((a, b) => b.total - a.total);
+                const pick = scored[0]?.it;
+                out.push({
+                    title: pick?.title || t.title,
+                    artist: pick ? (pick.artists || []).map(a => a.name).join(', ') : t.artist,
+                    duration: pick?.duration || 0,
+                    tidalId: pick?.id || null,
+                    source: 'extension',
+                    matchMethod: pick ? 'search' : null,
+                    notFound: !pick,
+                    hiRes: pick?.mediaMetadata?.tags?.includes('HIRES_LOSSLESS') || false,
+                    originalTitle: t.title,
+                    originalArtist: t.artist,
+                });
+            } catch {
+                out.push({ title: t.title, artist: t.artist, tidalId: null, source: 'extension', notFound: true });
+            }
+        }
+        await lib.enrichWithLibraryStatus(out);
+        mainWindow.webContents.send('extension:tracks-resolved', { tracks: out });
+    } catch (e) {
+        mainWindow.webContents.send('download:line',
+            `⚠ Extension match failed: ${e.message}`);
+    }
+}
+
+// IPC: settings UI needs to show the token + port + regenerate button.
+ipcMain.handle('extension:info', () => ({
+    port: extensionServer.getPort(),
+    token: extensionServer.getToken(),
+}));
+ipcMain.handle('extension:regenerate-token', () => ({
+    token: extensionServer.regenerateToken(),
+}));
 
 // ─── IPC: preview audio (experimental waveform feature) ─────────────────────
 // Fetches the raw audio bytes for a TIDAL track so the renderer can decode

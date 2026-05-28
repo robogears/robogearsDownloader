@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('api', {
     // Preview audio (experimental — waveform feature)
     getPreviewAudio: (tidalId) => ipcRenderer.invoke('preview:get-audio', { tidalId }),
 
+    // Chrome extension bridge — Settings → Extension tab uses these.
+    extensionInfo:          ()  => ipcRenderer.invoke('extension:info'),
+    regenerateExtensionToken: () => ipcRenderer.invoke('extension:regenerate-token'),
+    onExtensionTracks:      (cb) => ipcRenderer.on('extension:tracks-resolved', (_e, p) => cb(p)),
+
     // Queue persistence (across app restarts)
     getQueue:       ()    => ipcRenderer.invoke('queue:get'),
     saveQueue:      (q)   => ipcRenderer.invoke('queue:save', q),

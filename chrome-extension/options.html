@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>robogears Downloader — Extension options</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <div class="page">
+        <h1>robogears Downloader</h1>
+        <p class="sub">Chrome extension options</p>
+
+        <p class="hint">
+            Open the desktop app, go to <strong>Settings → Extension</strong>, and copy the URL + token shown there into the fields below. Then visit any
+            <a href="https://open.spotify.com" target="_blank" rel="noopener">open.spotify.com</a> page — a <code>+ robogears</code> button will appear on every track row.
+        </p>
+
+        <label class="field">
+            <span>App URL</span>
+            <input id="port-input" type="text" value="http://127.0.0.1:8273" />
+        </label>
+        <p class="hint inline">Just the port has to match. If you didn't change anything in the desktop app, leave this alone.</p>
+
+        <label class="field">
+            <span>Token</span>
+            <input id="token-input" type="text" placeholder="paste the 32-character hex token from the app" />
+        </label>
+
+        <div class="row">
+            <button id="save-btn" class="primary">Save</button>
+            <button id="test-btn">Test connection</button>
+            <span id="status" class="status"></span>
+        </div>
+    </div>
+    <script src="options.js"></script>
+</body>
+</html>

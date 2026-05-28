@@ -116,6 +116,7 @@
                 <div class="modal-tabs" role="tablist">
                     <button class="modal-tab active" data-tab="folders" role="tab">Folders</button>
                     <button class="modal-tab" data-tab="tidal" role="tab">TIDAL</button>
+                    <button class="modal-tab" data-tab="extension" role="tab">Extension</button>
                     <button class="modal-tab" data-tab="updates" role="tab">Updates</button>
                 </div>
 
@@ -156,6 +157,24 @@
                         <button id="auth-btn" class="secondary-btn">Sign in to TIDAL</button>
                     </div>
                     <p class="hint">Required once per device. Opens a browser tab where you log in to TIDAL and click <em>Allow</em>.</p>
+                </div>
+
+                <!-- Extension tab -->
+                <div class="modal-pane" data-pane="extension" hidden>
+                    <label class="label">Chrome extension bridge</label>
+                    <p class="hint" style="margin-top: 0;">The companion Chrome extension lets you add tracks straight from <strong>open.spotify.com</strong> into the queue. Paste this token into the extension's options page once and it's wired up.</p>
+                    <label class="label" style="margin-top: 20px;">Local URL</label>
+                    <div class="folder-row">
+                        <input id="extension-url-input" type="text" readonly>
+                        <button id="extension-url-copy" class="text-btn">Copy</button>
+                    </div>
+                    <label class="label" style="margin-top: 18px;">Token</label>
+                    <div class="folder-row">
+                        <input id="extension-token-input" type="text" readonly>
+                        <button id="extension-token-copy" class="text-btn">Copy</button>
+                        <button id="extension-token-regen" class="text-btn" title="Generate a new token — the extension will need it re-pasted">Regenerate</button>
+                    </div>
+                    <p class="hint">Auth is over <code>localhost</code> only — the server doesn't listen on any other interface. Regenerate if you ever suspect the token leaked; the old one stops working immediately.</p>
                 </div>
 
                 <!-- Updates tab -->

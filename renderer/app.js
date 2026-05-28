@@ -919,6 +919,7 @@ function renderQueue() {
         else if (isSimilar) status = `<span class="badge similar" title="${escapeHtml(lm.path)}">⚠ similar version in library</span>`;
         else if (t.source === 'spotify') status = '<span class="badge">Spotify</span>';
         else if (t.source === 'import') status = '<span class="badge">Import</span>';
+        else if (t.source === 'extension') status = '<span class="badge">Spotify ext</span>';
 
         // Hi-Res badge — kept independent of status so the indication survives
         // alongside download progress / library badges.
@@ -1583,7 +1584,54 @@ document.querySelectorAll('.modal-tab').forEach(tab => {
             t.classList.toggle('active', t === tab));
         document.querySelectorAll('.modal-pane').forEach(p =>
             p.hidden = p.dataset.pane !== which);
+        if (which === 'extension') refreshExtensionInfo();
     });
+});
+
+// ─── Extension tab ──────────────────────────────────────────────────────────
+const extensionUrlInput   = $('#extension-url-input');
+const extensionTokenInput = $('#extension-token-input');
+const extensionUrlCopy    = $('#extension-url-copy');
+const extensionTokenCopy  = $('#extension-token-copy');
+const extensionTokenRegen = $('#extension-token-regen');
+
+async function refreshExtensionInfo() {
+    try {
+        const r = await api.extensionInfo();
+        extensionUrlInput.value = `http://127.0.0.1:${r.port}`;
+        extensionTokenInput.value = r.token || '(not generated yet — restart the app)';
+    } catch {
+        extensionTokenInput.value = '(extension bridge unavailable)';
+    }
+}
+
+function copyToClipboardField(inputEl, btnEl) {
+    if (!inputEl.value) return;
+    navigator.clipboard.writeText(inputEl.value).catch(() => {
+        inputEl.select();
+        try { document.execCommand('copy'); } catch {}
+    });
+    const orig = btnEl.textContent;
+    btnEl.textContent = 'Copied ✓';
+    setTimeout(() => { btnEl.textContent = orig; }, 1200);
+}
+
+extensionUrlCopy.addEventListener('click',   () => copyToClipboardField(extensionUrlInput, extensionUrlCopy));
+extensionTokenCopy.addEventListener('click', () => copyToClipboardField(extensionTokenInput, extensionTokenCopy));
+extensionTokenRegen.addEventListener('click', async () => {
+    if (!confirm('Regenerate the extension token?\n\nThe Chrome extension will need the new token pasted in before it can talk to the app again.')) return;
+    const r = await api.regenerateExtensionToken();
+    if (r?.token) extensionTokenInput.value = r.token;
+});
+
+// Tracks pushed from the Chrome extension arrive resolved (matched on TIDAL).
+// Drop them into the queue via the standard add path.
+api.onExtensionTracks(({ tracks }) => {
+    if (!Array.isArray(tracks) || !tracks.length) return;
+    const added = addTracksToQueue(tracks);
+    const matched = tracks.filter(t => !t.notFound).length;
+    const missing = tracks.length - matched;
+    appendLine(`🎵 Spotify ext: added ${added} track${added === 1 ? '' : 's'} (${matched} matched on TIDAL${missing ? `, ${missing} not found` : ''}).`);
 });
 
 checkUpdatesBtn.addEventListener('click', async () => {
