@@ -72,13 +72,54 @@ struct TidalLinkParsingTests {
     }
 
     @Test func tidalArtistMixAndVideoPagesAreNamedNotSearched() {
-        for (link, page) in [
-            ("https://tidal.com/browse/artist/1", "artist"),
-            ("https://tidal.com/browse/mix/0123abc", "mix"),
-            ("https://tidal.com/browse/video/1", "video"),
-        ] {
+        let cases: [(String, ParsedInput.Page)] = [
+            ("https://tidal.com/browse/artist/1", .artist),
+            ("https://tidal.com/browse/mix/0123abc", .mix),
+            ("https://tidal.com/browse/video/1", .video),
+        ]
+        for (link, page) in cases {
             #expect(InputParser.parse(link) == .unsupported(.init(service: .tidal, reason: .unsupportedPage(page), link: link)))
         }
+    }
+
+    @Test func myCollectionTracksIsACollectionPageNotABrokenTrackLink() {
+        // "tracks" ends the address, which used to read as a track link with
+        // its ID missing (G4-2 wants the specific reason).
+        let link = "https://listen.tidal.com/my-collection/tracks"
+        #expect(InputParser.parse(link) == .unsupported(.init(service: .tidal, reason: .unsupportedPage(.collection), link: link)))
+    }
+
+    @Test func artistAlbumsPageIsAnArtistPageNotABrokenAlbumLink() {
+        let link = "https://tidal.com/browse/artist/123/albums"
+        #expect(InputParser.parse(link) == .unsupported(.init(service: .tidal, reason: .unsupportedPage(.artist), link: link)))
+    }
+
+    @Test func pageWordBeforeAKindWithABadIDNamesThePage() {
+        // "created" isn't a playlist UUID, and the page is My Collection.
+        guard case .unsupported(let info) = InputParser.parse("https://listen.tidal.com/my-collection/playlists/created") else {
+            Issue.record("expected a refusal"); return
+        }
+        #expect(info.reason == .unsupportedPage(.collection))
+    }
+
+    @Test func linkStuckToAnEmojiIsStillFound() {
+        #expect(InputParser.parse("\u{1F449}https://tidal.com/browse/track/123") == .tidal(.track(id: 123)))
+    }
+
+    @Test func cjkPunctuationAfterATidalLinkIsLeftOut() {
+        #expect(InputParser.parse("https://tidal.com/browse/track/123\u{3001}") == .tidal(.track(id: 123)))
+        #expect(InputParser.parse("\u{300C}https://tidal.com/browse/album/42\u{300D}") == .tidal(.album(id: 42)))
+        #expect(InputParser.parse("https://tidal.com/browse/track/123\u{2026}") == .tidal(.track(id: 123)))
+    }
+
+    @Test func tidalLinkInsideAnotherSitesRedirectIsAdded() {
+        // The Electron pattern matched anywhere, so this worked there.
+        #expect(InputParser.parse("https://example.org/out?u=https://tidal.com/browse/track/77") == .tidal(.track(id: 77)))
+    }
+
+    @Test func refusalForTheOuterLinkWinsWhenNothingInsideIsSupported() {
+        let link = "https://example.org/out?u=https://youtu.be/abc"
+        #expect(InputParser.parse(link) == .unsupported(.init(service: .website(host: "example.org"), reason: .otherService, link: link)))
     }
 
     @Test func otherTidalPagesAreUnrecognisedNotSearched() {
@@ -148,19 +189,63 @@ struct SpotifyLinkParsingTests {
         #expect(info.service == .spotify)
     }
 
-    @Test func artistEpisodeAndShowPagesAreNamedNotSearched() {
-        for page in ["artist", "episode", "show"] {
-            let link = "https://open.spotify.com/\(page)/\(id)"
-            #expect(InputParser.parse(link) == .unsupported(.init(service: .spotify, reason: .unsupportedPage(page), link: link)))
+    @Test func artistEpisodeShowAndOtherPagesAreNamedNotSearched() {
+        let cases: [(String, ParsedInput.Page)] = [
+            ("artist", .artist), ("episode", .podcast), ("show", .podcast), ("user", .profile),
+            ("collection", .collection), ("audiobook", .audiobook), ("genre", .other("genre")),
+        ]
+        for (word, page) in cases {
+            let link = "https://open.spotify.com/\(word)/\(id)"
+            #expect(InputParser.parse(link) == .unsupported(.init(service: .spotify, reason: .unsupportedPage(page), link: link)), "\(word)")
         }
-        #expect(InputParser.parse("spotify:artist:\(id)") == .unsupported(.init(service: .spotify, reason: .unsupportedPage("artist"), link: "spotify:artist:\(id)")))
+        #expect(InputParser.parse("spotify:artist:\(id)") == .unsupported(.init(service: .spotify, reason: .unsupportedPage(.artist), link: "spotify:artist:\(id)")))
     }
 
-    @Test func idWithStrayCharactersIsRefused() {
-        guard case .unsupported(let info) = InputParser.parse("https://open.spotify.com/track/abc-def") else {
+    @Test func artistDiscographyAlbumsPageIsAnArtistPageNotABrokenAlbumLink() {
+        let link = "https://open.spotify.com/artist/\(id)/discography/album"
+        #expect(InputParser.parse(link) == .unsupported(.init(service: .spotify, reason: .unsupportedPage(.artist), link: link)))
+    }
+
+    @Test func legacyUserPlaylistLinkWithoutAnIDIsABrokenPlaylistLink() {
+        // "user" before "playlist" is the old link form, not a profile page.
+        guard case .unsupported(let info) = InputParser.parse("https://open.spotify.com/user/someone/playlist") else {
+            Issue.record("expected a refusal"); return
+        }
+        #expect(info.reason == .malformedID(.playlist))
+    }
+
+    @Test func idWithNoBase62CharactersIsRefused() {
+        guard case .unsupported(let info) = InputParser.parse("https://open.spotify.com/track/-abc") else {
             Issue.record("expected a refusal"); return
         }
         #expect(info.reason == .malformedID(.track))
+    }
+
+    @Test func idStopsAtTheFirstCharacterThatCantBeInAnID() {
+        // As the Electron pattern `[a-zA-Z0-9]+` did.
+        #expect(InputParser.parse("https://open.spotify.com/track/\(id)\u{2019}s") == .spotify(.init(content: .track, id: id)))
+        #expect(InputParser.parse("https://open.spotify.com/track/\(id)%E3%80%82") == .spotify(.init(content: .track, id: id)))
+    }
+
+    @Test func cjkFullStopAfterASpotifyLinkIsLeftOut() {
+        #expect(InputParser.parse("https://open.spotify.com/track/\(id)\u{3002}") == .spotify(.init(content: .track, id: id)))
+    }
+
+    @Test func linkStuckToTheWordBeforeItIsStillFound() {
+        // Was searched as text: "Listen:https" isn't a scheme.
+        #expect(InputParser.parse("Listen:https://open.spotify.com/track/\(id)") == .spotify(.init(content: .track, id: id)))
+    }
+
+    @Test func markdownLinkIsFound() {
+        #expect(InputParser.parse("[Blue Lantern](https://open.spotify.com/track/\(id))") == .spotify(.init(content: .track, id: id)))
+    }
+
+    @Test func spotifyURIStuckToALabelIsFound() {
+        #expect(InputParser.parse("URI:spotify:track:\(id)") == .spotify(.init(content: .track, id: id)))
+    }
+
+    @Test func spotifyInsideAWordIsNotAURI() {
+        #expect(InputParser.parse("notspotify:track:\(id)") == .search(query: "notspotify:track:\(id)", looksLikeID: false))
     }
 
     @Test func linkWrappedInAngleBracketsOrFollowedByPunctuationIsFound() {

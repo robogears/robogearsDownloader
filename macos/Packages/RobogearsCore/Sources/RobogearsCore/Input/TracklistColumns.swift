@@ -24,6 +24,9 @@ enum TracklistColumns {
         "artist name", "artist names", "artists", "artist", "track artist", "album artist",
     ]
 
+    /// Exact title names that can also mean a track number.
+    private static let ambiguousTitleNames: Set<String> = ["track"]
+
     private static let looseTitleWords: Set<String> = ["title", "song", "name", "track"]
     private static let looseArtistWords: Set<String> = ["artist", "artists"]
 
@@ -50,13 +53,35 @@ enum TracklistColumns {
         Set(normalized.split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init))
     }
 
-    /// Whether a header row names a title or artist column exactly. Only then
-    /// is the first line treated as a header, so a pasted song list whose
-    /// first line happens to contain "name" isn't swallowed (G4-5).
+    /// Words column headers are made of. A header field made only of these
+    /// ("Album", "Track Duration (ms)", "Date Added") reads as a column
+    /// name; a field such as "Meghan Trainor" reads as data.
+    private static let headerVocabulary: Set<String> = looseTitleWords
+        .union(looseArtistWords)
+        .union(notTitleWords)
+        .union([
+            "names", "titles", "songs", "tracks", "albums", "release", "released", "added", "explicit",
+            "popularity", "preview", "image", "position", "pos", "bpm", "key", "rating", "plays", "kind",
+            "size", "location", "comment", "comments", "note", "notes", "grouping", "work", "movement",
+            "s", "sec", "secs", "second", "seconds", "millisecond", "milliseconds", "upc", "link", "links",
+            "spotify", "tidal", "record", "type", "format", "bit", "rate", "sample",
+        ])
+
+    /// Whether the first line is a header row. It needs a title or artist
+    /// column named exactly, and at least two fields that read as column
+    /// names, so a header-less "Title, Meghan Trainor" list (a song called
+    /// "Title") isn't swallowed and every artist kept (G4-5: a file counts
+    /// as a CSV only when its first line looks like a header).
     static func looksLikeHeader(_ fields: [String]) -> Bool {
         guard fields.count >= 2 else { return false }
-        let names = Set(fields.map(normalizeHeader))
-        return exactTitleNames.contains(where: names.contains) || exactArtistNames.contains(where: names.contains)
+        let names = fields.map(normalizeHeader)
+        let exact = Set(exactTitleNames).union(exactArtistNames)
+        guard names.contains(where: exact.contains) else { return false }
+        let recognised = names.filter { name in
+            let nameWords = words(name)
+            return exact.contains(name) || (!nameWords.isEmpty && nameWords.isSubset(of: headerVocabulary))
+        }
+        return recognised.count >= 2
     }
 
     struct Choice {
@@ -73,19 +98,26 @@ enum TracklistColumns {
         let normalized = header.map(normalizeHeader)
         let headerWords = normalized.map(words)
 
-        var titleCandidates: [Int] = []
+        // Each candidate says whether a column of plain numbers rules it out.
+        // "Track" can mean the track number, and a loose match is only a
+        // guess, so those are skipped when every value is a number. "Title"
+        // or "Name" is meant, so a list of songs called "1999" and "22" keeps
+        // its titles.
+        var titleCandidates: [(index: Int, skipIfNumeric: Bool)] = []
         for name in exactTitleNames {
-            for (index, header) in normalized.enumerated() where header == name && !titleCandidates.contains(index) {
-                titleCandidates.append(index)
+            for (index, header) in normalized.enumerated()
+            where header == name && !titleCandidates.contains(where: { $0.index == index }) {
+                titleCandidates.append((index, ambiguousTitleNames.contains(name)))
             }
         }
         for (index, words) in headerWords.enumerated()
-        where !titleCandidates.contains(index) && !words.isDisjoint(with: looseTitleWords) && words.isDisjoint(with: notTitleWords) {
-            titleCandidates.append(index)
+        where !titleCandidates.contains(where: { $0.index == index })
+            && !words.isDisjoint(with: looseTitleWords) && words.isDisjoint(with: notTitleWords) {
+            titleCandidates.append((index, true))
         }
-        // "Track" can mean the track number; skip a column whose values are
-        // all numbers.
-        guard let title = titleCandidates.first(where: { !columnIsNumeric($0, rows: rows) }) else { return nil }
+        guard let title = titleCandidates.first(where: { !($0.skipIfNumeric && columnIsNumeric($0.index, rows: rows)) })?.index else {
+            return nil
+        }
 
         var artistCandidates: [Int] = []
         for name in exactArtistNames {

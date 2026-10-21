@@ -66,8 +66,10 @@ extension ParsedTracklist {
         /// rank candidates (G4-5).
         public let duration: TimeInterval?
 
-        public init(readings: [Reading], searchText: String, isrc: String? = nil, duration: TimeInterval? = nil) {
-            precondition(!readings.isEmpty, "an entry needs at least one reading")
+        /// Nil when `readings` is empty: an entry always has a best guess, and
+        /// app code building one gets a nil to handle rather than a crash.
+        public init?(readings: [Reading], searchText: String, isrc: String? = nil, duration: TimeInterval? = nil) {
+            guard !readings.isEmpty else { return nil }
             self.readings = readings
             self.searchText = searchText
             self.isrc = isrc

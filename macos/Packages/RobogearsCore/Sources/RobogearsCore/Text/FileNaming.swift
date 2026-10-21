@@ -8,8 +8,8 @@
 // Sanitising keeps the Electron mapping exactly (`tidal_lib.js:616-618`;
 // text-unicode-and-filenames.md §1) so files it saved are still found, then
 // fixes its edge cases (card G2-X6): no leading dots (hidden files), no
-// control characters, composed Unicode (NFC), and a byte cap that leaves room
-// for the longest suffix the app adds.
+// control characters or zero-width spaces, composed Unicode (NFC), and a byte
+// cap that leaves room for the longest suffix the app adds.
 
 import Foundation
 
@@ -88,6 +88,15 @@ public enum FileNaming {
             + Array(0x2000...0x200A)
     )
 
+    /// Format characters that only make a name look like another one:
+    /// zero-width space, word joiner and the Mongolian vowel separator. Card
+    /// G2-X6 lists zero-width spaces among the defects, since
+    /// "Blue\u{200B}Lantern.flac" looks identical to "BlueLantern.flac" in
+    /// Finder. Joiners (U+200C, U+200D) and variation selectors stay: emoji
+    /// and several scripts need them. Old files are still found through
+    /// `legacyFileName`.
+    private static let invisibleSpacers: Set<UInt32> = [0x200B, 0x2060, 0x180E]
+
     static func sanitizedStem(_ source: String) -> String {
         let composed = source.precomposedStringWithCanonicalMapping
         var scalars = String.UnicodeScalarView()
@@ -97,7 +106,7 @@ public enum FileNaming {
                 pendingSpace = true
                 continue
             }
-            if scalar.properties.generalCategory == .control {
+            if scalar.properties.generalCategory == .control || invisibleSpacers.contains(scalar.value) {
                 continue
             }
             if pendingSpace, !scalars.isEmpty { scalars.append(" ") }

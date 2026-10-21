@@ -84,8 +84,8 @@ extension ParsedInput {
             /// A service other than TIDAL or Spotify, or an unknown website.
             case otherService
             /// A TIDAL or Spotify page that isn't a track, album or playlist,
-            /// named by the word in its address ("artist", "mix", "episode"…).
-            case unsupportedPage(String)
+            /// read from the word in its address ("artist", "mix", "episode"…).
+            case unsupportedPage(Page)
             /// A TIDAL or Spotify address that doesn't name any page we know.
             case unrecognisedPage
             /// A track, album or playlist link whose ID isn't valid (for example
@@ -103,6 +103,29 @@ extension ParsedInput {
             self.reason = reason
             self.link = link
         }
+    }
+
+    /// The kinds of TIDAL and Spotify pages that can't be added. A closed
+    /// list, so the UI's table of refusal messages ("TIDAL artist pages can't
+    /// be added. Open an album or playlist and copy its link.", G4-2) is
+    /// checked by the compiler; rarer pages share `other`.
+    public enum Page: Sendable, Hashable {
+        case artist
+        /// A TIDAL mix (an endless, personalised list).
+        case mix
+        case video
+        /// A person's profile page (TIDAL user or profile, Spotify user).
+        case profile
+        /// A Spotify podcast show or episode.
+        case podcast
+        /// A Spotify audiobook or one of its chapters.
+        case audiobook
+        /// Someone's own library: TIDAL's My Collection, Spotify's Your
+        /// Library.
+        case collection
+        /// Any other page the address names (Spotify genre, concert, search
+        /// pages…), by the word in its address.
+        case other(String)
     }
 
     /// Music services recognised by their web address, so a refusal can name

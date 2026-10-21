@@ -73,10 +73,22 @@ struct FileNamingTests {
         #expect(FileNaming.legacyStem(title: "Blue\u{0001}Lantern") == "Blue\u{0001}Lantern")
     }
 
-    @Test func formatCharactersSuchAsZeroWidthJoinersStay() {
-        // Only control characters go; joiners hold emoji and scripts together.
+    @Test func zeroWidthJoinersAndVariationSelectorsStay() {
+        // Joiners and variation selectors hold emoji and scripts together.
         let family = "\u{1F469}\u{200D}\u{1F467}"
         #expect(bytes(FileNaming.stem(title: "Song \(family)")) == bytes("Song \(family)"))
+        #expect(bytes(FileNaming.stem(title: "\u{0646}\u{200C}\u{0627} \u{2764}\u{FE0F}")) == bytes("\u{0646}\u{200C}\u{0627} \u{2764}\u{FE0F}"))
+    }
+
+    @Test func zeroWidthSpacesAreRemovedSoNamesDontLookAlike() {
+        // G2-X6: "Blue\u{200B}Lantern.flac" looked identical to "BlueLantern.flac".
+        #expect(FileNaming.stem(title: "Blue\u{200B}Lantern") == "BlueLantern")
+        #expect(FileNaming.stem(title: "Blue\u{2060}Lan\u{180E}tern") == "BlueLantern")
+        #expect(FileNaming.stem(title: "Blue \u{200B} Lantern") == "Blue Lantern")
+        // The old app's file is still looked for.
+        #expect(FileNaming.existingFileCandidates(title: "Blue\u{200B}Lantern") == [
+            "BlueLantern.flac", "BlueLantern.m4a", "Blue\u{200B}Lantern.flac", "Blue\u{200B}Lantern.m4a",
+        ])
     }
 
     @Test func namesAreComposedNFC() {

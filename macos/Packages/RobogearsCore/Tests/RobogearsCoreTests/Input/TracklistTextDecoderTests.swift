@@ -75,6 +75,26 @@ struct TracklistTextDecoderTests {
         #expect(TracklistTextDecoder.decode(Data(bytes)).looksBinary)
     }
 
+    @Test func manyControlCharactersWithoutANULLookBinary() {
+        // 0x01-0x08 and 0x0E-0x1F are valid UTF-8, so only the share of
+        // control characters can tell this from text.
+        var bytes: [UInt8] = []
+        for i in 0..<512 { bytes += [UInt8(0x01 + i % 8), UInt8(0x0E + i % 18), 0x41, 0x42] }
+        let decoded = TracklistTextDecoder.decode(Data(bytes))
+        #expect(!decoded.text.unicodeScalars.contains("\u{0}"))
+        #expect(decoded.looksBinary)
+    }
+
+    @Test func textWithUpToOnePercentControlCharactersIsText() {
+        // 10 stray controls in 1000 characters is text; 11 is not.
+        let text = String(repeating: "a", count: 990) + String(repeating: "\u{1}", count: 10)
+        #expect(!TracklistTextDecoder.looksBinary(text))
+        let over = String(repeating: "a", count: 989) + String(repeating: "\u{1}", count: 11)
+        #expect(TracklistTextDecoder.looksBinary(over))
+        // Tabs, line breaks, vertical tabs and form feeds never count.
+        #expect(!TracklistTextDecoder.looksBinary(String(repeating: "a\t\n\r\u{B}\u{C}", count: 200)))
+    }
+
     @Test func ordinaryListsDontLookBinary() throws {
         for name in ["exportify-classic.csv", "exportify-current.csv", "excel-semicolon-windows1252.csv", "pasted-list.txt", "web-table-rows.txt"] {
             #expect(!TracklistTextDecoder.decode(try InputLaneFixtures.data(name)).looksBinary, "\(name)")

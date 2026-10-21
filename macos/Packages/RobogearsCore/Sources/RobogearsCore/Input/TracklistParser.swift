@@ -65,13 +65,13 @@ public enum TracklistParser {
             let artist = cell(row, choice.artist)
             let reading = ParsedTracklist.Reading(title: title, artist: artist)
             guard PlainTextLine.isUsable(reading) else { continue }
-            guard seen.insert(dedupeKey(reading)).inserted else { continue }
-            let entry = ParsedTracklist.Entry(
-                readings: [reading],
-                searchText: [title, artist].filter { !$0.isEmpty }.joined(separator: " "),
-                isrc: choice.isrc.flatMap { TracklistColumns.parseISRC(cell(row, $0)) },
-                duration: choice.duration.flatMap { TracklistColumns.parseDuration(cell(row, $0), unit: choice.durationUnit) }
-            )
+            guard seen.insert(dedupeKey(reading)).inserted,
+                  let entry = ParsedTracklist.Entry(
+                      readings: [reading],
+                      searchText: [title, artist].filter { !$0.isEmpty }.joined(separator: " "),
+                      isrc: choice.isrc.flatMap { TracklistColumns.parseISRC(cell(row, $0)) },
+                      duration: choice.duration.flatMap { TracklistColumns.parseDuration(cell(row, $0), unit: choice.durationUnit) }
+                  ) else { continue }
             items.append(.track(entry))
         }
 
@@ -97,6 +97,10 @@ public enum TracklistParser {
         }
         let textLines = classified.filter { $0.link == nil }.map(\.line)
         let layout = HeaderlessLayout.detect(textLines)
+        // A video-description list starts (nearly) every line with a
+        // timestamp; a lone "4:44 - Jay-Z" is a title.
+        let timestamped = textLines.filter(PlainTextLine.startsWithTimestamp).count
+        let stripsTimestamps = timestamped >= 2 && timestamped * 2 > textLines.count
 
         var items: [ParsedTracklist.Item] = []
         var seenSongs = Set<String>()
@@ -110,7 +114,7 @@ public enum TracklistParser {
             if let layout, let fields = layout.fields(of: line) {
                 entry = layout.entry(fields: fields, line: line)
             } else {
-                entry = PlainTextLine.entry(line)
+                entry = PlainTextLine.entry(line, stripsTimestamp: stripsTimestamps)
             }
             guard let entry, seenSongs.insert(dedupeKey(entry.readings[0])).inserted else { continue }
             items.append(.track(entry))

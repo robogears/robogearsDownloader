@@ -21,7 +21,7 @@ public enum InputParser {
         for token in trimmed.split(whereSeparator: { $0.isWhitespace }) {
             let candidate = stripWrapping(token)
             if candidate.isEmpty { continue }
-            if let link = classifyLink(candidate) { return link }
+            if let link = findLink(in: candidate) { return link }
         }
         return .search(query: trimmed, looksLikeID: looksLikeTidalID(trimmed))
     }
@@ -41,16 +41,82 @@ public enum InputParser {
     /// set doesn't include (text-unicode-and-filenames.md §6).
     static let trimSet = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))
 
-    private static let openers: Set<Character> = ["<", "(", "[", "{", "\"", "'", "\u{201C}", "\u{2018}", "\u{00AB}"]
-    private static let closers: Set<Character> = [">", ")", "]", "}", "\"", "'", "\u{201D}", "\u{2019}", "\u{00BB}", ",", ".", ";", ":", "!", "?"]
+    private static let openers: Set<Character> = [
+        "<", "(", "[", "{", "\"", "'", "\u{201C}", "\u{2018}", "\u{00AB}", "\u{2039}",
+        // Full-width and CJK brackets: （ 「 『 【 《 〈
+        "\u{FF08}", "\u{300C}", "\u{300E}", "\u{3010}", "\u{300A}", "\u{3008}",
+    ]
+    private static let closers: Set<Character> = [
+        ">", ")", "]", "}", "\"", "'", "\u{201D}", "\u{2019}", "\u{00BB}", "\u{203A}",
+        ",", ".", ";", ":", "!", "?",
+        // Typographic punctuation: … — –
+        "\u{2026}", "\u{2014}", "\u{2013}",
+        // CJK and full-width punctuation: 。 、 ， ． ！ ？ ： ； ） 」 』 】 》 〉
+        "\u{3002}", "\u{3001}", "\u{FF0C}", "\u{FF0E}", "\u{FF01}", "\u{FF1F}", "\u{FF1A}", "\u{FF1B}",
+        "\u{FF09}", "\u{300D}", "\u{300F}", "\u{3011}", "\u{300B}", "\u{3009}",
+    ]
 
     /// Links pasted from chats and Markdown arrive wrapped in brackets or
-    /// quotes, or followed by punctuation.
+    /// quotes, or followed by punctuation, including the CJK full stop the
+    /// Electron pattern simply stopped at.
     private static func stripWrapping(_ token: Substring) -> Substring {
         var t = token
         while let first = t.first, openers.contains(first) { t = t.dropFirst() }
         while let last = t.last, closers.contains(last) { t = t.dropLast() }
         return t
+    }
+
+    // MARK: - Finding a link inside a token
+
+    /// The link in one whitespace-free token, which may have text stuck to
+    /// its front: "Listen:https://…", "[Blue Lantern](https://…)" or an emoji
+    /// before the address. The Electron patterns matched anywhere in the
+    /// text, so these worked there (G4-3 TODAY); without this they would be
+    /// searched as song names, which G4-2 forbids.
+    ///
+    /// Every place a link could start is tried, earliest first. A TIDAL or
+    /// Spotify link found further in beats a refusal for the outer address,
+    /// so a redirect such as "https://example.org/out?u=https://tidal.com/…"
+    /// still adds the TIDAL link.
+    static func findLink(in token: Substring) -> ParsedInput? {
+        var refusal: ParsedInput?
+        for start in linkStarts(in: token) {
+            guard let result = classifyLink(token[start...]) else { continue }
+            if case .unsupported = result {
+                refusal = refusal ?? result
+                continue
+            }
+            return result
+        }
+        return refusal
+    }
+
+    /// The token's start, then the start of every "<letters>://" scheme and
+    /// every "spotify:" that begins a word, in order.
+    private static func linkStarts(in token: Substring) -> [Substring.Index] {
+        var starts: [Substring.Index] = [token.startIndex]
+        var searchFrom = token.startIndex
+        while let separator = token.range(of: "://", range: searchFrom..<token.endIndex) {
+            var schemeStart = separator.lowerBound
+            while schemeStart > token.startIndex {
+                let previous = token.index(before: schemeStart)
+                guard token[previous].isASCII, token[previous].isLetter else { break }
+                schemeStart = previous
+            }
+            if schemeStart < separator.lowerBound { starts.append(schemeStart) }
+            searchFrom = separator.upperBound
+        }
+        searchFrom = token.startIndex
+        while let uri = token.range(of: "spotify:", options: .caseInsensitive, range: searchFrom..<token.endIndex) {
+            // "notspotify:track:…" isn't a URI; "URI:spotify:track:…" is.
+            if uri.lowerBound > token.startIndex {
+                let previous = token[token.index(before: uri.lowerBound)]
+                if !(previous.isASCII && (previous.isLetter || previous.isNumber)) { starts.append(uri.lowerBound) }
+            }
+            searchFrom = uri.upperBound
+        }
+        var seen = Set<Substring.Index>()
+        return starts.sorted().filter { seen.insert($0).inserted }
     }
 
     // MARK: - Link classification
@@ -97,34 +163,38 @@ public enum InputParser {
         "playlist": .playlist, "playlists": .playlist,
     ]
 
-    private static let tidalPages: [String: String] = [
-        "artist": "artist", "artists": "artist",
-        "mix": "mix", "mixes": "mix",
-        "video": "video", "videos": "video",
-        "user": "user", "profile": "profile",
+    private static let tidalPages: [String: ParsedInput.Page] = [
+        "artist": .artist, "artists": .artist,
+        "mix": .mix, "mixes": .mix,
+        "video": .video, "videos": .video,
+        "user": .profile, "profile": .profile,
+        "my-collection": .collection,
     ]
 
     /// Any tidal.com host, with or without `/browse`. The last kind/ID pair
     /// wins, so `…/album/A/track/T` adds only track T (G4-3).
     private static func tidal(segments: [String], link: String) -> ParsedInput {
+        func refuse(_ reason: ParsedInput.Unsupported.Reason) -> ParsedInput {
+            .unsupported(.init(service: .tidal, reason: reason, link: link))
+        }
         switch lastPair(in: segments, kinds: tidalContent) {
-        case .pair(let content, let id):
+        case .pair(let content, let id, let kindIndex):
             switch content {
             case .track, .album:
-                guard let number = digitsValue(id) else { break }
-                return .tidal(content == .track ? .track(id: number) : .album(id: number))
+                if let number = digitsValue(id) {
+                    return .tidal(content == .track ? .track(id: number) : .album(id: number))
+                }
             case .playlist:
-                guard isUUID(id) else { break }
-                return .tidal(.playlist(uuid: id))
+                if isUUID(id) { return .tidal(.playlist(uuid: id)) }
             }
-            return .unsupported(.init(service: .tidal, reason: .malformedID(content), link: link))
-        case .missingID(let content):
-            return .unsupported(.init(service: .tidal, reason: .malformedID(content), link: link))
+            if let page = firstPage(in: segments[..<kindIndex], pages: tidalPages) { return refuse(.unsupportedPage(page)) }
+            return refuse(.malformedID(content))
+        case .missingID(let content, let kindIndex):
+            if let page = firstPage(in: segments[..<kindIndex], pages: tidalPages) { return refuse(.unsupportedPage(page)) }
+            return refuse(.malformedID(content))
         case .none:
-            if let page = segments.lazy.compactMap({ tidalPages[$0.lowercased()] }).first {
-                return .unsupported(.init(service: .tidal, reason: .unsupportedPage(page), link: link))
-            }
-            return .unsupported(.init(service: .tidal, reason: .unrecognisedPage, link: link))
+            if let page = firstPage(in: segments[...], pages: tidalPages) { return refuse(.unsupportedPage(page)) }
+            return refuse(.unrecognisedPage)
         }
     }
 
@@ -134,9 +204,14 @@ public enum InputParser {
         "track": .track, "album": .album, "playlist": .playlist,
     ]
 
-    private static let spotifyPages: Set<String> = [
-        "artist", "episode", "show", "user", "genre", "collection",
-        "audiobook", "chapter", "concert", "search", "local", "prerelease",
+    private static let spotifyPages: [String: ParsedInput.Page] = [
+        "artist": .artist,
+        "episode": .podcast, "show": .podcast,
+        "user": .profile,
+        "collection": .collection,
+        "audiobook": .audiobook, "chapter": .audiobook,
+        "genre": .other("genre"), "concert": .other("concert"), "search": .other("search"),
+        "local": .other("local"), "prerelease": .other("prerelease"),
     ]
 
     static let spotifyShortLinkHosts: Set<String> = ["spotify.link", "spoti.fi", "spotify.app.link"]
@@ -144,23 +219,29 @@ public enum InputParser {
     /// `open.spotify.com` links, including `/intl-xx/`, `/embed/` and the old
     /// `/user/<name>/playlist/<id>` forms (G4-3).
     private static func spotify(segments: [String], link: String) -> ParsedInput {
+        func refuse(_ reason: ParsedInput.Unsupported.Reason) -> ParsedInput {
+            .unsupported(.init(service: .spotify, reason: reason, link: link))
+        }
         let meaningful = segments.filter { segment in
             let lower = segment.lowercased()
             return !(lower.hasPrefix("intl-") || lower == "embed" || lower == "embed-legacy")
         }
+        // Before a track, album or playlist word, "user" is the old
+        // `/user/<name>/playlist/<id>` form, not a profile page.
+        let pagesBeforeKind = spotifyPages.filter { $0.key != "user" }
         switch lastPair(in: meaningful, kinds: spotifyContent) {
-        case .pair(let content, let id):
-            guard isSpotifyID(id) else {
-                return .unsupported(.init(service: .spotify, reason: .malformedID(content), link: link))
-            }
-            return .spotify(.init(content: content, id: id))
-        case .missingID(let content):
-            return .unsupported(.init(service: .spotify, reason: .malformedID(content), link: link))
+        case .pair(let content, let id, let kindIndex):
+            if let id = spotifyIDPrefix(id) { return .spotify(.init(content: content, id: id)) }
+            if let page = firstPage(in: meaningful[..<kindIndex], pages: pagesBeforeKind) { return refuse(.unsupportedPage(page)) }
+            return refuse(.malformedID(content))
+        case .missingID(let content, let kindIndex):
+            if let page = firstPage(in: meaningful[..<kindIndex], pages: pagesBeforeKind) { return refuse(.unsupportedPage(page)) }
+            return refuse(.malformedID(content))
         case .none:
-            if let first = meaningful.first?.lowercased(), spotifyPages.contains(first) {
-                return .unsupported(.init(service: .spotify, reason: .unsupportedPage(first), link: link))
+            if let first = meaningful.first, let page = spotifyPages[first.lowercased()] {
+                return refuse(.unsupportedPage(page))
             }
-            return .unsupported(.init(service: .spotify, reason: .unrecognisedPage, link: link))
+            return refuse(.unrecognisedPage)
         }
     }
 
@@ -177,21 +258,32 @@ public enum InputParser {
     // MARK: Shared helpers
 
     private enum PairResult {
-        case pair(ParsedInput.Content, String)
-        case missingID(ParsedInput.Content)
+        /// A kind word at `kindIndex`, followed by the segment that should be
+        /// its ID.
+        case pair(ParsedInput.Content, id: String, kindIndex: Int)
+        /// A kind word that ends the path, with nothing after it.
+        case missingID(ParsedInput.Content, kindIndex: Int)
         case none
     }
 
     /// Finds the last `<kind>/<id>` pair in a path.
     private static func lastPair(in segments: [String], kinds: [String: ParsedInput.Content]) -> PairResult {
-        var trailingKind: ParsedInput.Content?
+        var trailing: (content: ParsedInput.Content, index: Int)?
         for index in segments.indices.reversed() {
             guard let content = kinds[segments[index].lowercased()] else { continue }
-            if index + 1 < segments.count { return .pair(content, segments[index + 1]) }
-            trailingKind = trailingKind ?? content
+            if index + 1 < segments.count { return .pair(content, id: segments[index + 1], kindIndex: index) }
+            trailing = trailing ?? (content, index)
         }
-        if let trailingKind { return .missingID(trailingKind) }
+        if let trailing { return .missingID(trailing.content, kindIndex: trailing.index) }
         return .none
+    }
+
+    /// The first page word in `segments`. When an address names a page the
+    /// app can't add before its track, album or playlist word
+    /// ("…/artist/<id>/discography/album", "…/my-collection/tracks"), the
+    /// refusal names that page rather than calling the link broken (G4-2).
+    private static func firstPage(in segments: ArraySlice<String>, pages: [String: ParsedInput.Page]) -> ParsedInput.Page? {
+        segments.lazy.compactMap { pages[$0.lowercased()] }.first
     }
 
     static func service(forHost host: String) -> ParsedInput.Service {
@@ -238,11 +330,16 @@ public enum InputParser {
         (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66)
     }
 
-    /// Spotify IDs are base-62; the Electron pattern was `[a-zA-Z0-9]+`.
-    private static func isSpotifyID(_ s: String) -> Bool {
-        !s.isEmpty && s.utf8.allSatisfy { b in
+    /// The leading base-62 run of a Spotify ID segment, or nil when it has
+    /// none. Spotify IDs are base-62, and the Electron pattern
+    /// `[a-zA-Z0-9]+` stopped at the first other character, so punctuation
+    /// stuck to the end of a link ("…/track/<id>’s") is left behind rather
+    /// than refusing the link. Nothing else ever reaches a request.
+    private static func spotifyIDPrefix(_ s: String) -> String? {
+        let run = s.utf8.prefix { b in
             (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A)
         }
+        return run.isEmpty ? nil : String(decoding: run, as: UTF8.self)
     }
 }
 

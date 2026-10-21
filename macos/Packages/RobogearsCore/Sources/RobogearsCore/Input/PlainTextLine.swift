@@ -7,7 +7,7 @@
 // change: split only at spaced separators (" - ", " — ", " – ", " | ") or a
 // tab; offer every separator position in both orders, Title - Artist first;
 // remove leading list numbers; keep one-character titles when an artist is
-// given.
+// given. Leading timestamps in video-description lists are removed too.
 
 import Foundation
 
@@ -17,8 +17,12 @@ enum PlainTextLine {
     private static let spacedSeparators: Set<Character> = ["-", "\u{2014}", "\u{2013}", "|"]
 
     /// The entry for one line, or nil when nothing usable is left.
-    static func entry(_ rawLine: Substring) -> ParsedTracklist.Entry? {
-        let line = stripListNumber(String(rawLine).trimmingCharacters(in: InputParser.trimSet))
+    /// `stripsTimestamp` removes a leading "0:00 " first; the caller decides
+    /// from the whole list (see `stripTimestamp`).
+    static func entry(_ rawLine: Substring, stripsTimestamp: Bool = false) -> ParsedTracklist.Entry? {
+        var line = String(rawLine).trimmingCharacters(in: InputParser.trimSet)
+        if stripsTimestamp { line = stripTimestamp(line) }
+        line = stripListNumber(line)
         guard !line.isEmpty else { return nil }
         let chars = Array(line)
 
@@ -126,6 +130,62 @@ enum PlainTextLine {
         }
         while let first = rest.first, first == " " || first == "\t" { rest = rest.dropFirst() }
         return rest.isEmpty ? line : String(rest)
+    }
+
+    /// Whether the line starts with a timestamp such as "0:00", "1:02:03",
+    /// "[03:41]" or "(03:41)" followed by a space, tab or dash.
+    static func startsWithTimestamp(_ line: Substring) -> Bool {
+        timestampEnd(in: String(line).trimmingCharacters(in: InputParser.trimSet)) != nil
+    }
+
+    /// Removes a leading timestamp and any dash or pipe after it: tracklists
+    /// copied from video descriptions start every line with one ("0:00
+    /// Placeholder Artist - Blue Lantern"), and G4-6 names those lists as a
+    /// main source of Artist - Title lines. Only used when most lines of a
+    /// list start with one, because a single line may be a title that starts
+    /// with a time ("4:44 - Jay-Z", "10:15 Saturday Night - The Cure").
+    static func stripTimestamp(_ line: String) -> String {
+        guard let end = timestampEnd(in: line) else { return line }
+        var rest = line[end...]
+        func dropSpaces() { while let first = rest.first, isSpace(first) { rest = rest.dropFirst() } }
+        dropSpaces()
+        if let first = rest.first, spacedSeparators.contains(first) {
+            rest = rest.dropFirst()
+            dropSpaces()
+        }
+        return rest.isEmpty ? line : String(rest)
+    }
+
+    /// Where a leading timestamp ends: one or two digits, a colon and two
+    /// digits, optionally ":ss", optionally in brackets, then a space, tab or
+    /// dash. Nil when the line doesn't start with one.
+    private static func timestampEnd(in line: String) -> String.Index? {
+        let chars = Array(line)
+        var i = 0
+        var closer: Character?
+        if let first = chars.first, first == "[" || first == "(" {
+            closer = first == "[" ? "]" : ")"
+            i = 1
+        }
+        func digits(max: Int) -> Int {
+            var count = 0
+            while i < chars.count, count < max, chars[i].isASCII, chars[i].isNumber { i += 1; count += 1 }
+            return count
+        }
+        guard (1...2).contains(digits(max: 2)) else { return nil }
+        guard i < chars.count, chars[i] == ":" else { return nil }
+        i += 1
+        guard digits(max: 2) == 2 else { return nil }
+        if i < chars.count, chars[i] == ":" {
+            i += 1
+            guard digits(max: 2) == 2 else { return nil }
+        }
+        if let closer {
+            guard i < chars.count, chars[i] == closer else { return nil }
+            i += 1
+        }
+        guard i < chars.count, isSpace(chars[i]) || spacedSeparators.contains(chars[i]) else { return nil }
+        return line.index(line.startIndex, offsetBy: i)
     }
 
     private static func lastBySplit(_ line: String) -> (left: String, right: String)? {

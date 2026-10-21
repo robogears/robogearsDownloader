@@ -131,6 +131,28 @@ struct TracklistTableTests {
         #expect(columns?.duration == "Track Duration (ms)")
     }
 
+    /// Each header holds a loose title word ("track") and one excluded word,
+    /// with values that aren't plain numbers, so the exclusion is the only
+    /// thing keeping the column from being the title (G4-5 skeptic).
+    @Test(arguments: zip(
+        ["Track Number", "Track Count", "Track Duration", "Track Added Date", "Track Disc", "Track Year"],
+        ["A1", "1/12", "3:35", "2024-01-01", "1/2", "\u{2019}99"]
+    ))
+    func looseRuleNeverPicksANumberCountDurationDateDiscOrYearColumnAsTheTitle(header: String, value: String) {
+        let (columns, entries) = table("\(header),Song Title (Original),Artist\n\(value),Blue Lantern,Placeholder Artist\n")
+        #expect(columns?.title == "Song Title (Original)")
+        #expect(entries.first?.title == "Blue Lantern")
+    }
+
+    @Test func titleColumnOfNumbersKeepsItsSongs() {
+        // Only the ambiguous "Track" is skipped for holding numbers; this
+        // used to fall back to the header-less reader and add a song
+        // called "Title" by "Artist".
+        let (columns, entries) = table("Title,Artist\n1999,Prince\n22,Taylor Swift\n")
+        #expect(columns?.title == "Title")
+        #expect(entries.map(\.readings) == [[Reading("1999", "Prince")], [Reading("22", "Taylor Swift")]])
+    }
+
     @Test func looseRuleNeverPicksATimeOrURIColumnAsTheTitle() {
         // Values that aren't plain numbers, so only the header words rule
         // these columns out.
@@ -150,6 +172,27 @@ struct TracklistTableTests {
         let parsed = TracklistParser.parse("The Name of the Game, Placeholder Artist\nBlue Lantern - Placeholder Artist\n")
         #expect(parsed.entries.count == 2)
         #expect(parsed.format == .plainText)
+    }
+
+    @Test func firstSongTitledTitleIsNotTakenForAHeader() {
+        // "Title, Meghan Trainor" names one column; the other is data.
+        let parsed = TracklistParser.parse("Title, Meghan Trainor\nAll About That Bass, Meghan Trainor\n")
+        #expect(parsed.format == .headerlessColumns(.comma))
+        #expect(parsed.entries.map(\.title) == ["Title", "All About That Bass"])
+        #expect(parsed.entries.map(\.artist) == ["Meghan Trainor", "Meghan Trainor"])
+    }
+
+    @Test(arguments: ["Name, Goo Goo Dolls\nIris, Goo Goo Dolls\n", "Song\tGoo Goo Dolls\nIris\tGoo Goo Dolls\n", "Track;Goo Goo Dolls\nIris;Goo Goo Dolls\n"])
+    func firstSongNamedLikeAHeaderKeepsItsArtistWithAnyDelimiter(text: String) {
+        let parsed = TracklistParser.parse(text)
+        #expect(parsed.entries.count == 2)
+        #expect(parsed.entries.allSatisfy { $0.artist == "Goo Goo Dolls" })
+    }
+
+    @Test func headerOfColumnNamesIsStillAHeader() {
+        // An exact name plus a field made of column words.
+        let (columns, _) = table("Song,Album Release Date\nBlue Lantern,2011-04-02\n")
+        #expect(columns?.title == "Song")
     }
 
     @Test func rowsWithEmptyTitlesAreSkippedAndDuplicatesRemovedCaseInsensitively() {
@@ -416,9 +459,62 @@ struct PlainTextTracklistTests {
         #expect(parsed.entries.count == 5)
     }
 
+    @Test func pastedListOfMarkdownLinksStaysAListOfLinks() {
+        // G4-14: each line used to become a song-name search.
+        let parsed = TracklistParser.parse("""
+        - [Blue Lantern](https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC)
+        - [Copper Sky](https://open.spotify.com/track/7ouMYWpwJ422jRcDASZB7P)
+        - [Glass Orchard](https://tidal.com/browse/album/42)
+        """)
+        #expect(parsed.entries.isEmpty)
+        #expect(parsed.links == [
+            .spotify(.init(content: .track, id: "4uLU6hMCjMI75M1A2tKUQC")),
+            .spotify(.init(content: .track, id: "7ouMYWpwJ422jRcDASZB7P")),
+            .tidal(.album(id: 42)),
+        ])
+    }
+
+    @Test func videoDescriptionTimestampsAreRemoved() {
+        let parsed = TracklistParser.parse("""
+        0:00 Placeholder Artist - Blue Lantern
+        3:41 - Northbound Choir - Copper Sky
+        [1:02:03] Second Example \u{2013} Glass Orchard
+        """)
+        #expect(parsed.entries.map(\.searchText) == [
+            "Placeholder Artist Blue Lantern",
+            "Northbound Choir Copper Sky",
+            "Second Example Glass Orchard",
+        ])
+        #expect(parsed.entries[0].readings.contains(Reading("Blue Lantern", "Placeholder Artist")))
+        #expect(parsed.entries[1].readings.contains(Reading("Copper Sky", "Northbound Choir")))
+    }
+
+    @Test func aTitleThatStartsWithATimeStaysWhole() {
+        // One line isn't a timestamped list: "4:44" is the song.
+        #expect(readings("4:44 - Jay-Z").first == Reading("4:44", "Jay-Z"))
+        #expect(readings("10:15 Saturday Night - The Cure").first == Reading("10:15 Saturday Night", "The Cure"))
+    }
+
+    @Test func timestampsInAFewLinesOfALongerListStay() {
+        let parsed = TracklistParser.parse("""
+        4:44 - Jay-Z
+        Blue Lantern - Placeholder Artist
+        Copper Sky - Second Example
+        """)
+        #expect(parsed.entries.first?.title == "4:44")
+    }
+
     @Test func emptyOrBlankTextHasNoItems() {
         #expect(TracklistParser.parse("").isEmpty)
         #expect(TracklistParser.parse("\n \r\n\t\n").isEmpty)
         #expect(TracklistParser.parse("\u{FEFF}").isEmpty)
+    }
+}
+
+@Suite("Tracklists: entries")
+struct TracklistEntryTests {
+    @Test func entryWithNoReadingsIsNilNotACrash() {
+        #expect(ParsedTracklist.Entry(readings: [], searchText: "Blue Lantern") == nil)
+        #expect(ParsedTracklist.Entry(readings: [Reading("Blue Lantern", "")], searchText: "Blue Lantern")?.title == "Blue Lantern")
     }
 }
