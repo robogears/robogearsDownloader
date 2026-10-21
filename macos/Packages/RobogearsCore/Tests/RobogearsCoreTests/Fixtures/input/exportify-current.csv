@@ -1,0 +1,3 @@
+﻿"Track URI","Track Name","Album Name","Artist Name(s)","Release Date","Duration (ms)","Popularity","Explicit","Added By","Added At","Genres","Record Label"
+"spotify:track:1","Blue Lantern","Glass Orchard","Placeholder Artist","2011-04-02","221000","40","false","","2024-01-01T00:00:00Z","indie","Example Records"
+"spotify:track:2","Café Lumière","Late Ferry","Northbound Choir","2019","185500","12","false","","2024-01-01T00:00:00Z","","Example Records"
