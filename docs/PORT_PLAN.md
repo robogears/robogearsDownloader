@@ -1,6 +1,6 @@
 # Swift port: plan
 
-**State:** research done, waiting for the owner's direction · **Phase:** 1 of 4 (understand → decide → spike → build) · **Last checkpoint:** 21 Oct 2026, full reference written to [`electron-reference/`](electron-reference/README.md).
+**State:** overnight build running (branch overnight-loop/2026-10-21-2235); D4 waiting for the owner · **Phase:** 1 of 4 (understand → decide → spike → build) · **Last checkpoint:** 21 Oct 2026, full reference written to [`electron-reference/`](electron-reference/README.md).
 
 **Standing rules:**
 - The owner's global `~/.claude/CLAUDE.md` and the Agent Operating Manual apply.
@@ -25,7 +25,7 @@ Owner's answer, 21 Oct 2026: "yes macos only, same githubrepo, 3 lets start from
 | D1 | **macOS only** (owner, 21 Oct 2026) | The Windows build ends. Target is Apple Silicon, macOS 15 or later (recommended default, not separately confirmed). |
 | D2 | **Same GitHub repo**, `robogears/robogearsDownloader` (owner, 21 Oct 2026) | The Swift app continues the version series. GitHub has v0.1.30, so the next version is **0.1.31**; it will be set in the Xcode project when that exists. The Electron `package.json` stays as the untouched reference. The first Swift release must keep the old updater's contract: a tag above 0.1.30, an asset containing `mac-arm64.dmg`, and the `.app` at the DMG root. |
 | D3 | **Start from scratch** (owner, 21 Oct 2026) | No import of the Electron app's `settings.json`, `queue.json` or `token.json`; the user signs in and picks folders again. Files already in the download folder are still there and still count for skip-if-exists. |
-| D4 | Owner asked to "go in detail" | See [D4_BEHAVIOUR_DECISIONS.md](D4_BEHAVIOUR_DECISIONS.md) (in progress). |
+| D4 | Owner asked to "go in detail" | [D4_BEHAVIOUR_DECISIONS.md](D4_BEHAVIOUR_DECISIONS.md): 68 decisions with a recommended option each, plus 23 plain fixes. Waiting for the owner; the overnight build uses the recommended options except 2.6 and 2.7, which stay on the literal title-only rule. |
 
 ## Decisions waiting on the owner (they change what gets built)
 

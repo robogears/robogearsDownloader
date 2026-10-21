@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
 PROJECT_PATH: ~/Pictures/GitHub Projects/swiftRobotDownloader
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792607752
-LAST_TURN_EPOCH: 1792608143
+LAST_TURN_EPOCH: 1792609039
 CEILING_EPOCH: none         # or <int> if the user set a stop time
 BASE_BRANCH: main
 BRANCH: overnight-loop/2026-10-21-2235
@@ -21,7 +21,7 @@ STOP: the user runs /overnightprotocol stop (or presses the Stop button)
 Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it completely into swift" · "i'm going to sleep build as much as you can". Decisions D1–D3 and the kickoff defaults are in docs/PORT_PLAN.md and the report's Decisions section. The Swift app lives in `macos/`; the Electron code stays at the repo root untouched as the reference (docs/electron-reference/ cites it by path).
 
 ## Mission (official items — do these first)
-- [~] 1. Decision-4 document — done when: docs/D4_BEHAVIOUR_DECISIONS.md holds a one-screen summary table of every item with the recommended answer, then the five checked area sections, with the consistency checker's contradictions resolved — STARTED 1792607752 · attempt 1 · approach: five writer agents + one checker (workflow), lead assembles · active: 0m · wip: none · delegated: workflow wuxkk3e13 · writes to the session scratchpad only
+- [x] 1. Decision-4 document — done when: docs/D4_BEHAVIOUR_DECISIONS.md holds a one-screen summary table of every item with the recommended answer, then the five checked area sections, with the consistency checker's contradictions resolved — 20m (lead time; writing delegated)
 - [x] 2. Design brief — done when: docs/DESIGN.md states the product, the person, each screen's single job, real facts (data shapes, limits), the identity to keep (pure-black monochrome, sounds, funny lines), Light+Dark mapping, macOS conventions (menu bar, Settings window, sheets, keyboard, VoiceOver) and what must never happen — 13m
 - [x] 3. Swift project scaffold — done when: `macos/` holds an XcodeGen `project.yml` for the app "robogears Downloader" (bundle id com.robogears.downloader, version 0.1.31, macOS 15+) plus a local Swift package `RobogearsCore` with a test target; `swift test` passes and `xcodebuild build` succeeds; .gitignore covers Xcode output — 6m
 - [~] 4. Core: input and import parsing — done when: link parsing (TIDAL/Spotify forms per D4 4.1–4.3), CSV/plain-text tracklist parsing (4.5, 4.6, 4.17), filename sanitising (2.14), version compare and the TIDAL-compatible percent-encoder exist in RobogearsCore with unit tests built from the reference's worked examples — STARTED 1792608143 · attempt 1 · approach: parallel lane, implement → review → fix · active: 0m · wip: none · delegated: workflow wbgcdb3gj · worktree ../swiftRobotDownloader-lane-input|matching|tidal-models|tidal-client|audio-spikes (items 4–8 in that order), branch loop/core-<slug>

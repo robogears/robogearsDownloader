@@ -1,12 +1,13 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN · last: app state
+STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 document
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
 - Commits: `git log --oneline --grep='^loop' main..overnight-loop/2026-10-21-2235`
 
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
+- ❓ Decision 4: read docs/D4_BEHAVIOUR_DECISIONS.md and reply "all recommended" or "all recommended except …" — the build uses the recommended options meanwhile (2.6 and 2.7 stay literal).
 - ❓ Live TIDAL check: can you sign in once in the morning so the TIDAL calls can be verified? — options: yes | later — parked item: Live TIDAL check
 - ❓ Same-title songs (D4 2.6) and version text in file names (D4 2.7): bend the title-only rule as recommended, or keep it literal? — options: recommended | literal — parked item: D4 2.6 / 2.7 (built on the literal rule until you answer)
 - ❓ Signing: create a free self-signed code-signing certificate (recommended), stay ad-hoc, or pay for a Developer ID? — parked item: Signing certificate
@@ -16,6 +17,7 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN · last: app state
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 00:00 Decision-4 document (docs/D4_BEHAVIOUR_DECISIONS.md): 68 decisions and 23 plain fixes across five areas, each drafted from the code, checked by a second agent, made consistent by a third (23 contradictions, 9 duplicates and 8 factual doubts resolved); one-screen summary at the top so you can answer "all recommended except …".
 - 23:55 App state: atomic JSON store that keeps a damaged file aside; settings (blank folders, volume stored as the slider position, Reset Folders keeps the volume); folder bookmarks that follow a rename and detect unplugged / missing / in-the-Trash / not writable, with plain messages; download folder inside the library refused by folder identity; queue rows (failed keeps its reason, in-flight rows come back waiting, exact library matches start left out) with a debounced, flushable store. 18 new tests (62 total); restore rule proven to fail when broken.
 - 23:40 Release packaging script (macos/scripts/package-release.sh): Release build, ad-hoc signed, robogears-downloader-mac-arm64.dmg (app at the root for the v0.1.30 updater) + .zip for the new updater + .sha256 for each; ran it, mounted the DMG read-only and verified layout and signature.
 - 23:35 Design brief (docs/DESIGN.md): product and person, identity carried into native Light/Dark, every window and sheet with its one job, all 13 queue-row states, real facts, the full menu-bar and shortcut map, copy rules, the never-list, 8 questions for the design lead.
@@ -27,7 +29,7 @@ STATUS: LOOPING · cycle 0 · 6 done · build+tests GREEN · last: app state
 ## Cycle log
 
 ## Completed
-- Total: 6 · recent: ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
+- Total: 7 · recent: ✅ Decision-4 document — 20m · ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
 
 ## Blocked (environment)
 
@@ -63,6 +65,6 @@ git checkout main && git merge --no-ff overnight-loop/2026-10-21-2235
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "overnight-loop/2026-10-21-2235", "base": "main",
- "cycles": 0, "done": 6, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 7, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```
