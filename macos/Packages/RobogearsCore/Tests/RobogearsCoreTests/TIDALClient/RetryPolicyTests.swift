@@ -64,5 +64,32 @@ struct RetryPolicyTests {
 
     @Test func unreadableRetryAfterIsIgnored() {
         #expect(RetryPolicy.parseRetryAfter("soon", now: TIDALClientFixtures.start) == nil)
+        #expect(RetryPolicy.parseRetryAfter("nan", now: TIDALClientFixtures.start) == nil)
+        #expect(RetryPolicy.parseRetryAfter("inf", now: TIDALClientFixtures.start) == nil)
+    }
+
+    @Test func hugeRetryAfterReadsAsOneDayInsteadOfCrashing() {
+        // Each of these overflowed the conversion to whole milliseconds.
+        for value in ["1e20", "10000000000000000", "9999999999999999999999"] {
+            #expect(RetryPolicy.parseRetryAfter(value, now: TIDALClientFixtures.start) == .seconds(86_400), "\(value)")
+        }
+    }
+
+    @Test func retryAfterDateFarInTheFutureReadsAsOneDay() {
+        #expect(RetryPolicy.parseRetryAfter("Fri, 31 Dec 9999 23:59:59 GMT", now: TIDALClientFixtures.start) == .seconds(86_400))
+    }
+
+    @Test func hugeRetryAfterGivesUpAsBusy() {
+        let wait = RetryPolicy.parseRetryAfter("1e20", now: TIDALClientFixtures.start)
+        #expect(policy.decision(after: .status(429, retryAfter: wait), retriesSoFar: 0) == .giveUp)
+    }
+
+    @Test func serverNumbersAreClampedBetweenZeroAndTheLimit() {
+        #expect(Duration.clamped(seconds: 1.5) == .milliseconds(1500))
+        #expect(Duration.clamped(seconds: -3) == .zero)
+        #expect(Duration.clamped(seconds: .nan) == .zero)
+        #expect(Duration.clamped(seconds: .infinity) == .zero)
+        #expect(Duration.clamped(seconds: 1e300) == .seconds(86_400))
+        #expect(Duration.clamped(seconds: 90, to: .seconds(60)) == .seconds(60))
     }
 }

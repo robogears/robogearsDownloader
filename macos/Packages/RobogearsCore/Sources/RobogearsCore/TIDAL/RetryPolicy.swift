@@ -32,6 +32,22 @@ extension Duration {
         let parts = components
         return TimeInterval(parts.seconds) + TimeInterval(parts.attoseconds) / 1e18
     }
+
+    /// The longest wait any number from a server is read as: one day.
+    /// Retry-After, `expiresIn` and `interval` all arrive as text a server,
+    /// proxy or captive portal controls.
+    static let longestServerWait: Duration = .seconds(86_400)
+
+    /// `seconds` from a server as a duration between zero and `limit`.
+    /// Converting the number straight to whole milliseconds stops the
+    /// program once it passes about 9.2e15 s, so a single header such as
+    /// `Retry-After: 1e20` could end the app mid-batch (review finding on
+    /// the TIDAL client). Not-a-number and negative values read as zero.
+    static func clamped(seconds: Double, to limit: Duration = .longestServerWait) -> Duration {
+        guard seconds.isFinite, seconds > 0 else { return .zero }
+        guard seconds < limit.timeInterval else { return limit }
+        return .milliseconds(Int64((seconds * 1000).rounded()))
+    }
 }
 
 // MARK: - Retry policy
@@ -125,17 +141,18 @@ public struct RetryPolicy: Sendable, Equatable {
     /// Parses a `Retry-After` header: either whole seconds ("30") or an
     /// HTTP date ("Wed, 21 Oct 2026 22:00:00 GMT"), measured from `now`.
     /// Returns nil for anything unreadable, so the normal backoff applies.
+    /// Anything over a day reads as a day, which is past `retryAfterLimit`
+    /// and so fails as busy instead of crashing on the conversion.
     public static func parseRetryAfter(_ value: String, now: Date) -> Duration? {
         let trimmed = value.trimmingCharacters(in: .whitespaces)
         if let seconds = Double(trimmed), seconds.isFinite {
-            return .milliseconds(Int64((max(seconds, 0) * 1000).rounded()))
+            return .clamped(seconds: seconds)
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "GMT")
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
         guard let date = formatter.date(from: trimmed) else { return nil }
-        let seconds = max(date.timeIntervalSince(now), 0)
-        return .milliseconds(Int64((seconds * 1000).rounded()))
+        return .clamped(seconds: date.timeIntervalSince(now))
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The account's country, which every TIDAL call carries.
 public struct TIDALCountry: Sendable, Equatable {
@@ -22,6 +23,12 @@ public struct TIDALAccount: Sendable, Equatable {
     public let userID: Int?
     /// Nil until it is known or assumed.
     public let country: TIDALCountry?
+
+    /// Public so the app can build one for previews and view-model tests.
+    public init(userID: Int?, country: TIDALCountry?) {
+        self.userID = userID
+        self.country = country
+    }
 }
 
 /// Why no token could be handed out. Network trouble is never one of these:
@@ -90,6 +97,9 @@ public actor TokenKeeper {
     private var renewalTask: Task<TIDALCredential, any Error>?
     private var countryTask: Task<TIDALCountry, any Error>?
     private var assumedCountry: TIDALCountry?
+    private var stateListeners: [Int: AsyncStream<State>.Continuation] = [:]
+    private var nextListenerID = 0
+    private var lastPublishedState: State?
 
     /// Set when the latest save failed (for example the Keychain refused).
     /// The sign-in still works for this session; Settings can say it won't
@@ -121,9 +131,42 @@ public actor TokenKeeper {
         return .signedIn(TIDALAccount(userID: credential.userID, country: country))
     }
 
-    /// Reads the stored sign-in (again, if the last read failed: a keychain
-    /// that was locked may be unlocked now). Signed in or not is a local
-    /// check, with no network round trip (G1-1 skeptic note 1).
+    /// Every change to `state`, starting with the current one, so Settings
+    /// can follow it instead of asking after each operation: "Sign-in
+    /// expired" the moment a renewal mid-batch is refused (G1-8), "Country:
+    /// US (assumed)" once that is settled (G1-5 skeptic note 3). Each call
+    /// returns its own stream; only the newest state is kept for a slow
+    /// reader, and ending the iteration stops the updates.
+    public func stateChanges() -> AsyncStream<State> {
+        let (stream, continuation) = AsyncStream.makeStream(of: State.self, bufferingPolicy: .bufferingNewest(1))
+        let id = nextListenerID
+        nextListenerID += 1
+        stateListeners[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeStateListener(id) }
+        }
+        continuation.yield(state)
+        return stream
+    }
+
+    private func removeStateListener(_ id: Int) {
+        stateListeners[id] = nil
+    }
+
+    /// Tells every listener about the current state if it changed. Called at
+    /// the end of each step that can change it, never halfway through.
+    private func publishState() {
+        let current = state
+        guard current != lastPublishedState else { return }
+        lastPublishedState = current
+        for listener in stateListeners.values { listener.yield(current) }
+    }
+
+    /// Reads the stored sign-in, and reads it again if the last read
+    /// failed: a keychain that was locked may be unlocked now. This is the
+    /// only place that retries a failed read; the app calls it when Settings
+    /// opens or from Try Again. Signed in or not is a local check, with no
+    /// network round trip (G1-1 skeptic note 1).
     @discardableResult
     public func load() -> State {
         if !loaded || loadError != nil { reload() }
@@ -139,10 +182,17 @@ public actor TokenKeeper {
             loadError = error
         }
         loaded = true
+        publishState()
     }
 
+    /// The stored sign-in, read once if nothing has read it yet. A failed
+    /// read is remembered, not tried again here: with the Keychain each read
+    /// can bring up the macOS password prompt, so an import would show it
+    /// once or twice per TIDAL call, each time holding up the keeper while
+    /// it waits. Only `load()` reads again (G1-6 skeptic note 2 asks only
+    /// that this state never reads as signed out).
     private func requireCredential() throws -> TIDALCredential {
-        if !loaded || loadError != nil { reload() }
+        if !loaded { reload() }
         if let loadError { throw TokenError.storeUnreadable(loadError) }
         guard let credential else { throw TokenError.notSignedIn }
         guard !credential.isRefused else { throw TokenError.signInInvalid }
@@ -181,7 +231,7 @@ public actor TokenKeeper {
         if current.accessToken != staleToken && client.clock.now() < current.expiresAt {
             return current
         }
-        if let renewalTask { return try await renewalTask.value }
+        if let renewalTask { return try await Self.sharedValue(of: renewalTask) }
 
         let generation = self.generation
         let client = self.client, keys = self.keys, retry = self.retry
@@ -196,7 +246,7 @@ public actor TokenKeeper {
             }
         }
         renewalTask = task
-        return try await task.value
+        return try await Self.sharedValue(of: task)
     }
 
     private func finishRenewal(generation: Int) {
@@ -215,6 +265,7 @@ public actor TokenKeeper {
         updated = renewal.applied(to: updated)
         credential = updated
         save(updated)
+        publishState()
         return updated
     }
 
@@ -223,6 +274,7 @@ public actor TokenKeeper {
         refused.isRefused = true
         credential = refused
         save(refused)
+        publishState()
     }
 
     private func save(_ credential: TIDALCredential) {
@@ -247,9 +299,10 @@ public actor TokenKeeper {
             // No user number means the lookup can't work (today it asked for
             // /v1/users/undefined on every call: reference bug 13).
             assumedCountry = .assumedUS
+            publishState()
             return .assumedUS
         }
-        if let countryTask { return try await countryTask.value }
+        if let countryTask { return try await Self.sharedValue(of: countryTask) }
 
         let generation = self.generation
         let task = Task<TIDALCountry, any Error> {
@@ -257,7 +310,25 @@ public actor TokenKeeper {
             return try await lookUpCountry(userID: userID, generation: generation)
         }
         countryTask = task
-        return try await task.value
+        return try await Self.sharedValue(of: task)
+    }
+
+    /// Waits for a renewal or country lookup that several callers share,
+    /// but lets this caller leave the moment its own task is cancelled, so
+    /// Cancel on an import or link stops "within a moment" (G1 missing card)
+    /// even while a renewal is stuck on a stalled network. The shared work
+    /// carries on for the others: its result is what the next caller needs.
+    /// (Awaiting `Task.value` directly ignores the waiter's cancellation.)
+    private static func sharedValue<T: Sendable>(of task: Task<T, any Error>) async throws -> T {
+        let waiter = SharedResultWaiter<T>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard waiter.install(continuation) else { return }
+                Task { waiter.finish(with: await task.result) }
+            }
+        } onCancel: {
+            waiter.finish(with: .failure(CancellationError()))
+        }
     }
 
     private func finishCountryLookup(generation: Int) {
@@ -286,13 +357,17 @@ public actor TokenKeeper {
                     updated.countryCode = code
                     credential = updated
                     save(updated)
+                    publishState()
                 }
                 return TIDALCountry(code: code, isAssumed: false)
             }
         } else if !(400...499).contains(response.status) {
             _ = try response.requireOK()
         }
-        if self.generation == generation { assumedCountry = .assumedUS }
+        if self.generation == generation {
+            assumedCountry = .assumedUS
+            publishState()
+        }
         return .assumedUS
     }
 
@@ -312,6 +387,7 @@ public actor TokenKeeper {
         renewalTask = nil
         countryTask = nil
         assumedCountry = nil
+        publishState()
         do {
             try store.write(fresh)
             saveProblem = nil
@@ -332,6 +408,7 @@ public actor TokenKeeper {
         countryTask = nil
         assumedCountry = nil
         saveProblem = nil
+        publishState()
         try store.delete()
     }
 
@@ -368,7 +445,7 @@ public actor TokenKeeper {
         let response = try await client.send(refreshRequest(pair: pair, refreshToken: credential.refreshToken), retry: retry)
         // A portal page must never count as TIDAL refusing: that mark is
         // remembered and would send the person to sign in again for nothing.
-        if let interference = response.networkInterference { throw interference }
+        if let interference = response.networkInterference() { throw interference }
         switch response.status {
         case 200:
             let body = try response.requireJSONBody()
@@ -415,4 +492,50 @@ private struct RenewalRefused: Error {}
 
 private struct UserCountryBody: Decodable {
     let countryCode: String?
+}
+
+/// One caller's wait on a shared task: resumed once, by whichever comes
+/// first, the shared result or this caller's cancellation.
+private final class SharedResultWaiter<T: Sendable>: Sendable {
+    private enum Slot {
+        case empty
+        case waiting(CheckedContinuation<T, any Error>)
+        case settled(Result<T, any Error>)
+        case resumed
+    }
+
+    private let slot = Mutex<Slot>(.empty)
+
+    /// Stores the continuation, or resumes it at once if the outcome is
+    /// already known (the caller was cancelled before it began waiting).
+    /// Returns false in that case, so no watcher task is started.
+    func install(_ continuation: CheckedContinuation<T, any Error>) -> Bool {
+        let early = slot.withLock { slot -> Result<T, any Error>? in
+            guard case let .settled(result) = slot else {
+                slot = .waiting(continuation)
+                return nil
+            }
+            slot = .resumed
+            return result
+        }
+        guard let early else { return true }
+        continuation.resume(with: early)
+        return false
+    }
+
+    func finish(with result: Result<T, any Error>) {
+        let continuation = slot.withLock { slot -> CheckedContinuation<T, any Error>? in
+            switch slot {
+            case .empty:
+                slot = .settled(result)
+                return nil
+            case let .waiting(continuation):
+                slot = .resumed
+                return continuation
+            case .settled, .resumed:
+                return nil
+            }
+        }
+        continuation?.resume(with: result)
+    }
 }

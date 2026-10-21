@@ -142,7 +142,7 @@ struct TIDALAPITests {
         let server = TIDALMockServer(replies: [
             .response(status: 200, headers: ["Content-Type": "text/html"], body: TIDALClientFixtures.data("captive-portal.html"), chunks: 1),
         ])
-        await #expect(throws: RequestError.offline(detail: "a web page came back instead of TIDAL data (a network sign-in page may be in the way)")) {
+        await #expect(throws: RequestError.offline(detail: "a web page came back instead of the expected answer (a network sign-in page may be in the way)")) {
             try await api(server).searchTracks(query: "Blue Lantern")
         }
     }

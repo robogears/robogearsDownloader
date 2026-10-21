@@ -2,7 +2,7 @@ import Foundation
 
 /// What the sign-in sheet shows while TIDAL waits for the person to approve
 /// in the browser.
-public struct DeviceAuthorization: Sendable, Equatable, CustomStringConvertible {
+public struct DeviceAuthorization: Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     /// The link to open: always `https://` and always a tidal.com host.
     public let verificationURL: URL
     /// TIDAL's short code, shown on its own when TIDAL sends one (G1-3).
@@ -14,8 +14,24 @@ public struct DeviceAuthorization: Sendable, Equatable, CustomStringConvertible 
     /// Secret to this sign-in; never shown or logged.
     let deviceCode: String
 
+    /// Public so the app can build one for previews of the sign-in sheet
+    /// and for view-model tests. The device code is taken but never shown:
+    /// `description` and the reflection mirror leave it out.
+    public init(verificationURL: URL, userCode: String?, interval: Duration, expiresAt: Date, deviceCode: String) {
+        self.verificationURL = verificationURL
+        self.userCode = userCode
+        self.interval = interval
+        self.expiresAt = expiresAt
+        self.deviceCode = deviceCode
+    }
+
     public var description: String {
         "DeviceAuthorization(\(verificationURL.host ?? ""), expires \(expiresAt))"
+    }
+
+    /// Host and expiry only, so `dump` can't show the device code either.
+    public var customMirror: Mirror {
+        Mirror(self, children: ["host": verificationURL.host ?? "", "expiresAt": expiresAt])
     }
 }
 
@@ -52,7 +68,10 @@ public enum DeviceSignInError: Error, Sendable, Equatable, CustomStringConvertib
         case .expired: return "The sign-in code expired."
         case .denied: return "Access was declined in the browser."
         case let .rejected(error): return "TIDAL ended the sign-in (\(error))."
-        case let .unreachable(error): return "Can't reach TIDAL: \(error)."
+        case let .unreachable(error):
+            // The shared error names no service; this one knows it was TIDAL.
+            if case let .offline(detail) = error { return "Can't reach TIDAL: \(detail)." }
+            return "Can't reach TIDAL: \(error)."
         }
     }
 }
@@ -108,7 +127,7 @@ public struct DeviceSignIn: Sendable {
         } catch let error as RequestError {
             throw DeviceSignInError.unreachable(error)
         }
-        if let interference = response.networkInterference {
+        if let interference = response.networkInterference() {
             throw DeviceSignInError.unreachable(interference)
         }
         guard response.status == 200 else {
@@ -171,7 +190,7 @@ public struct DeviceSignIn: Sendable {
                 lastNetworkFailure = error
                 continue
             }
-            if let interference = response.networkInterference {
+            if let interference = response.networkInterference() {
                 lastNetworkFailure = interference
                 continue
             }
@@ -299,9 +318,12 @@ public struct DeviceSignIn: Sendable {
         return .unreachable(error)
     }
 
+    /// A positive number of seconds from TIDAL, capped at a day so a huge
+    /// `expiresIn` or `interval` (also sent as a numeric string) can't crash
+    /// the conversion. Zero, negative and unreadable values mean "not said".
     private static func positiveSeconds(_ value: Double) -> Duration? {
         guard value.isFinite, value > 0 else { return nil }
-        return .milliseconds(Int64((value * 1000).rounded()))
+        return .clamped(seconds: value)
     }
 }
 

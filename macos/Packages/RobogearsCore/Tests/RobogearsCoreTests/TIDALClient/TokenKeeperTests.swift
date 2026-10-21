@@ -31,7 +31,7 @@ struct TokenKeeperTests {
         #expect(server.requests.isEmpty)
     }
 
-    @Test func unreadableStoreIsReportedAndReadAgainLater() async throws {
+    @Test func unreadableStoreIsReportedAndReadAgainWhenTheAppAsks() async throws {
         let store = TIDALMemoryStore(TIDALClientFixtures.credential(), readError: .unreadable(detail: "keychain locked"))
         let keeper = keeper(TIDALMockServer(replies: []), store: store)
         await #expect(throws: TokenError.storeUnreadable(.unreadable(detail: "keychain locked"))) {
@@ -39,7 +39,28 @@ struct TokenKeeperTests {
         }
         #expect(await keeper.state == .unreadable(.unreadable(detail: "keychain locked")))
         store.setReadError(nil)
+        // Remembered until the app asks again (Settings opening, Try Again).
+        await #expect(throws: TokenError.storeUnreadable(.unreadable(detail: "keychain locked"))) {
+            try await keeper.currentToken()
+        }
+        #expect(await keeper.load() == .signedIn(TIDALAccount(userID: 123456789, country: TIDALCountry(code: "GB", isAssumed: false))))
         #expect(try await keeper.currentToken() == "fake-access-1")
+    }
+
+    @Test func unreadableStoreIsNotReadAgainOnEveryRequest() async throws {
+        // With the Keychain, every read can bring up the macOS prompt again.
+        let store = TIDALMemoryStore(readError: .unreadable(detail: "access denied"))
+        let keeper = keeper(TIDALMockServer(replies: []), store: store)
+        for _ in 0..<3 {
+            await #expect(throws: TokenError.self) { try await keeper.currentToken() }
+        }
+        await #expect(throws: TokenError.self) { try await keeper.country() }
+        await #expect(throws: TokenError.self) {
+            try await keeper.withAuthorizedRequest { _ in "never sent" }
+        }
+        #expect(store.reads == 1)
+        _ = await keeper.load()
+        #expect(store.reads == 2)
     }
 
     @Test func stateIsNotLoadedUntilLoadedThenShowsTheAccount() async throws {
@@ -103,6 +124,54 @@ struct TokenKeeperTests {
         let tokens = try await [first, second, third]
         #expect(tokens == ["fake-access-2", "fake-access-2", "fake-access-2"])
         #expect(server.requests.count == 1)
+    }
+
+    @Test func cancelledCallerLeavesAPendingRenewalAtOnceWhileOthersStillGetIt() async throws {
+        let gate = TIDALGate()
+        let server = TIDALMockServer { _, _ in
+            await gate.wait()
+            return .fixture(200, "refresh-renewed.json")
+        }
+        let store = TIDALMemoryStore(expired())
+        let keeper = keeper(server, store: store)
+        let finished = TIDALFlag()
+        // The caller that starts the renewal is the one that leaves.
+        let leaving = Task {
+            defer { finished.set() }
+            return try await keeper.currentToken()
+        }
+        while server.requests.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        let staying = Task { try await keeper.currentToken() }
+        leaving.cancel()
+        let leftWhileTheRenewalWasPending = try await finished.wait(upTo: .seconds(5))
+        await gate.open()
+        #expect(leftWhileTheRenewalWasPending)
+        await #expect(throws: CancellationError.self) { try await leaving.value }
+        #expect(try await staying.value == "fake-access-2")
+        #expect(server.requests.count == 1)
+        #expect(store.stored?.accessToken == "fake-access-2")
+    }
+
+    @Test func callerAlreadyCancelledWhenJoiningARenewalLeavesAtOnce() async throws {
+        let gate = TIDALGate()
+        let server = TIDALMockServer { _, _ in
+            await gate.wait()
+            return .fixture(200, "refresh-renewed.json")
+        }
+        let keeper = keeper(server, store: TIDALMemoryStore(expired()))
+        let first = Task { try await keeper.currentToken() }
+        while server.requests.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        let finished = TIDALFlag()
+        let late = Task {
+            defer { finished.set() }
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await keeper.currentToken()
+        }
+        let leftAtOnce = try await finished.wait(upTo: .seconds(5))
+        await gate.open()
+        #expect(leftAtOnce)
+        await #expect(throws: CancellationError.self) { try await late.value }
+        #expect(try await first.value == "fake-access-2")
     }
 
     @Test func rotatedRefreshTokenIsSaved() async throws {
@@ -297,6 +366,29 @@ struct TokenKeeperTests {
         #expect(try await keeper.country() == TIDALCountry(code: "NL", isAssumed: false))
     }
 
+    @Test func cancelledCallerLeavesAPendingCountryLookupAtOnce() async throws {
+        let gate = TIDALGate()
+        let server = TIDALMockServer { _, _ in
+            await gate.wait()
+            return .fixture(200, "user-country.json")
+        }
+        let keeper = keeper(server, store: TIDALMemoryStore(TIDALClientFixtures.credential(country: nil)))
+        let finished = TIDALFlag()
+        let leaving = Task {
+            defer { finished.set() }
+            return try await keeper.country()
+        }
+        while server.requests.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        leaving.cancel()
+        let leftWhileTheLookupWasPending = try await finished.wait(upTo: .seconds(5))
+        await gate.open()
+        #expect(leftWhileTheLookupWasPending)
+        await #expect(throws: CancellationError.self) { try await leaving.value }
+        // The lookup carried on, so the next caller gets its answer.
+        #expect(try await keeper.country() == TIDALCountry(code: "NL", isAssumed: false))
+        #expect(server.requests.count == 1)
+    }
+
     // MARK: Sign-in and sign-out
 
     @Test func signingInAgainReplacesTheBrokenSignIn() async throws {
@@ -366,4 +458,56 @@ struct TokenKeeperTests {
         _ = try await keeper.currentToken()
         #expect(await keeper.saveProblem == nil)
     }
+
+    // MARK: State changes
+
+    @Test func stateChangesFollowTheSignInAsItChanges() async throws {
+        let server = TIDALMockServer(replies: [.fixture(400, "refresh-invalid-grant.json")])
+        let keeper = keeper(server, store: TIDALMemoryStore(expired()))
+        let log = TIDALStateLog(listeningTo: keeper)
+        defer { log.stop() }
+        let gb = TIDALState.signedIn(TIDALAccount(userID: 123456789, country: TIDALCountry(code: "GB", isAssumed: false)))
+        let se = TIDALState.signedIn(TIDALAccount(userID: 42, country: TIDALCountry(code: "SE", isAssumed: false)))
+        #expect(try await log.states(count: 1) == [.notLoaded])
+
+        _ = await keeper.load()
+        #expect(try await log.states(count: 2) == [.notLoaded, gb])
+
+        // G1-8: a renewal refused mid-batch shows "Sign-in expired" at once.
+        await #expect(throws: TokenError.signInInvalid) { try await keeper.currentToken() }
+        #expect(try await log.states(count: 3) == [.notLoaded, gb, .invalid])
+
+        try await keeper.replaceSignIn(with: TIDALClientFixtures.credential(userID: 42, country: "SE"))
+        #expect(try await log.states(count: 4) == [.notLoaded, gb, .invalid, se])
+
+        try await keeper.signOut()
+        #expect(try await log.states(count: 5) == [.notLoaded, gb, .invalid, se, .signedOut])
+    }
+
+    @Test func stateChangesShowTheAssumedCountryOnceItIsSettled() async throws {
+        let server = TIDALMockServer(replies: [.fixture(200, "user-without-country.json")])
+        let keeper = keeper(server, store: TIDALMemoryStore(TIDALClientFixtures.credential(country: nil)))
+        _ = await keeper.load()
+        let log = TIDALStateLog(listeningTo: keeper)
+        defer { log.stop() }
+        let unknown = TIDALState.signedIn(TIDALAccount(userID: 123456789, country: nil))
+        #expect(try await log.states(count: 1) == [unknown])
+        _ = try await keeper.country()
+        #expect(try await log.states(count: 2) == [unknown, .signedIn(TIDALAccount(userID: 123456789, country: .assumedUS))])
+    }
+
+    @Test func everyListenerHearsEachChange() async throws {
+        let keeper = keeper(TIDALMockServer(replies: []), store: TIDALMemoryStore(TIDALClientFixtures.credential()))
+        _ = await keeper.load()
+        let first = TIDALStateLog(listeningTo: keeper)
+        let second = TIDALStateLog(listeningTo: keeper)
+        defer { first.stop(); second.stop() }
+        _ = try await first.states(count: 1)
+        _ = try await second.states(count: 1)
+        try await keeper.signOut()
+        #expect(try await first.states(count: 2).last == .signedOut)
+        #expect(try await second.states(count: 2).last == .signedOut)
+    }
 }
+
+private typealias TIDALState = TokenKeeper.State

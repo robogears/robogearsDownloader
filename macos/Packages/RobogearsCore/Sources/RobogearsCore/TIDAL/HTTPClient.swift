@@ -4,22 +4,38 @@ import Foundation
 
 /// One HTTP request, fully described before it is sent, so tests can compare
 /// it field by field with the Electron app's request.
-public struct HTTPRequest: Sendable, Equatable, CustomStringConvertible {
+public struct HTTPRequest: Sendable, Equatable, CustomStringConvertible, CustomReflectable {
     public enum Method: String, Sendable {
         case get = "GET"
         case post = "POST"
+    }
+
+    /// What a good answer looks like, which decides whether a web page
+    /// means "the network is in the way" (G1-9 skeptic note 3).
+    public enum ExpectedBody: Sendable, Equatable {
+        /// Anything but a web page: JSON from TIDAL's API and auth hosts,
+        /// audio from its CDN. A web page instead is a captive portal or a
+        /// proxy answering, so it reads as offline.
+        case data
+        /// A web page by design, such as the Spotify embed page. Only a
+        /// redirect or a 511 counts as the network being in the way; a
+        /// portal page answering with 200 can't be told apart here, so the
+        /// page's own parser has to notice the content it needs is missing.
+        case webPage
     }
 
     public var method: Method
     public var url: URL
     public var headers: [String: String]
     public var body: Data?
+    public var expectedBody: ExpectedBody
 
-    public init(method: Method, url: URL, headers: [String: String], body: Data? = nil) {
+    public init(method: Method, url: URL, headers: [String: String], body: Data? = nil, expectedBody: ExpectedBody = .data) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.expectedBody = expectedBody
     }
 
     /// Method, host and path only. Headers carry Basic and Bearer secrets,
@@ -30,12 +46,18 @@ public struct HTTPRequest: Sendable, Equatable, CustomStringConvertible {
         return "\(method.rawValue) \(url.scheme ?? "https")://\(host)\(url.path)"
             + (body.map { " (body \($0.count) bytes)" } ?? "")
     }
+
+    /// The same three parts, so `dump` can't list the headers, body or query
+    /// either.
+    public var customMirror: Mirror {
+        Mirror(self, children: ["method": method.rawValue, "host": url.host ?? "", "path": url.path])
+    }
 }
 
 /// A complete response. The body is the whole payload, so text decodes as
 /// UTF-8 in one piece and a multi-byte character is never split (the
 /// Electron app decoded chunk by chunk and could garble it: reference L1).
-public struct HTTPResponse: Sendable, Equatable {
+public struct HTTPResponse: Sendable, Equatable, CustomReflectable {
     public let status: Int
     public let headers: [String: String]
     public let body: Data
@@ -44,6 +66,12 @@ public struct HTTPResponse: Sendable, Equatable {
         self.status = status
         self.headers = headers
         self.body = body
+    }
+
+    /// Status and size only: a sign-in or renewal answer's body holds the
+    /// access and refresh tokens, and `dump` would otherwise list its bytes.
+    public var customMirror: Mirror {
+        Mirror(self, children: ["status": status, "bodyBytes": body.count])
     }
 
     /// Header lookup ignoring case, as HTTP header names are case-insensitive.
@@ -62,24 +90,30 @@ public struct HTTPResponse: Sendable, Equatable {
 /// do (G1-4: rows show "TIDAL is busy", "No internet connection",
 /// "Removed from TIDAL" instead of a false "not found").
 ///
-/// Raw response bodies are never carried here: they can hold TIDAL's own
-/// text, and the cards keep raw server text out of everything the person
-/// reads. `subStatus` is TIDAL's own error number, kept because the TIDAL
-/// spike may show it tells "not in your country" from "removed".
+/// The same rule serves TIDAL and the Spotify embed page (G1-4), so these
+/// words name no service: the caller knows which one it asked and names it
+/// ("TIDAL is busy, try again later"), and a Spotify failure can never read
+/// as "Can't reach TIDAL".
+///
+/// Raw response bodies are never carried here: they can hold the server's
+/// own text, and the cards keep raw server text out of everything the
+/// person reads. `subStatus` is TIDAL's own error number, kept because the
+/// TIDAL spike may show it tells "not in your country" from "removed".
 public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
     /// 429 after the retries ran out, or a `Retry-After` longer than the
-    /// policy's limit. `retryAfter` is what TIDAL asked for, if it said.
+    /// policy's limit. `retryAfter` is what the server asked for, if it said.
     case busy(retryAfter: Duration?)
     /// No usable answer: no connection, a timeout, a dropped connection, a
-    /// failed secure connection, or a web page where TIDAL data was expected
-    /// (a captive portal; G1-9 skeptic note 3).
+    /// failed secure connection, a redirect, or a web page where data was
+    /// expected (a captive portal; G1-9 skeptic note 3).
     case offline(detail: String)
     case notFound(subStatus: Int?)
     case forbidden(subStatus: Int?)
     case unauthorized(subStatus: Int?)
     /// 5xx after the retries ran out.
     case server(status: Int)
-    /// Any other status, including a redirect (redirects are not followed).
+    /// Any other status. A redirect is not one of them: redirects are not
+    /// followed and read as `offline`, the network being in the way.
     case unexpectedStatus(Int, subStatus: Int?)
     /// The answer arrived but wasn't the data expected.
     case decoding(detail: String)
@@ -87,12 +121,12 @@ public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
     public var description: String {
         switch self {
         case let .busy(retryAfter):
-            return "TIDAL is busy" + (retryAfter.map { " (asked to wait \($0.timeInterval) s)" } ?? "")
-        case let .offline(detail): return "Can't reach TIDAL: \(detail)"
+            return "The server is busy" + (retryAfter.map { " (asked to wait \($0.timeInterval) s)" } ?? "")
+        case let .offline(detail): return "Can't reach the server: \(detail)"
         case let .notFound(sub): return "Not found (404\(Self.sub(sub)))"
         case let .forbidden(sub): return "Refused (403\(Self.sub(sub)))"
         case let .unauthorized(sub): return "Not authorised (401\(Self.sub(sub)))"
-        case let .server(status): return "TIDAL server error (\(status))"
+        case let .server(status): return "Server error (\(status))"
         case let .unexpectedStatus(status, sub): return "Unexpected answer (\(status)\(Self.sub(sub)))"
         case let .decoding(detail): return "Unreadable answer: \(detail)"
         }
@@ -108,7 +142,7 @@ public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
     /// Plain words for a transport failure, for the activity log and rows.
     static func offlineDetail(for code: URLError.Code) -> String {
         switch code {
-        case .timedOut: return "TIDAL didn't answer in time"
+        case .timedOut: return "the server didn't answer in time"
         case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
             return "no internet connection"
         case .networkConnectionLost: return "the connection dropped"
@@ -126,8 +160,10 @@ public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
 extension HTTPResponse {
     /// The body when the status is 200, otherwise the matching
     /// `RequestError`. 200 exactly, as every Electron caller checked.
-    public func requireOK() throws(RequestError) -> Data {
-        if let interference = networkInterference { throw interference }
+    /// Pass `.webPage` for a page that is HTML by design (the Spotify embed
+    /// page), so the page itself isn't read as a captive portal.
+    public func requireOK(expecting expected: HTTPRequest.ExpectedBody = .data) throws(RequestError) -> Data {
+        if let interference = networkInterference(expecting: expected) { throw interference }
         switch status {
         case 200: return body
         case 401: throw .unauthorized(subStatus: subStatus)
@@ -148,23 +184,24 @@ extension HTTPResponse {
         throw .decoding(detail: body.isEmpty ? "empty answer" : "not JSON")
     }
 
-    /// Set when something between the Mac and TIDAL answered instead of
-    /// TIDAL: a redirect (TIDAL's API and auth hosts never redirect), a 511
-    /// "network authentication required", or a web page instead of an error
-    /// body. That is a captive portal or a proxy, which is a network
+    /// Set when something between the Mac and the server answered instead
+    /// of the server: a redirect (TIDAL's hosts never redirect, and
+    /// redirects are never followed), a 511 "network authentication
+    /// required", or, where data was expected, a web page instead of an
+    /// error body. That is a captive portal or a proxy, which is a network
     /// problem, never "not found", "refused" or a parse error (G1-9
     /// skeptic note 3).
-    public var networkInterference: RequestError? {
+    public func networkInterference(expecting expected: HTTPRequest.ExpectedBody = .data) -> RequestError? {
         if (300...399).contains(status) {
             return .offline(detail: "the request was redirected (a network sign-in page may be in the way)")
         }
-        if status == 511 || (!looksLikeJSON && isWebPage) {
+        if status == 511 || (expected == .data && !looksLikeJSON && isWebPage) {
             return .offline(detail: Self.webPageDetail)
         }
         return nil
     }
 
-    static let webPageDetail = "a web page came back instead of TIDAL data (a network sign-in page may be in the way)"
+    static let webPageDetail = "a web page came back instead of the expected answer (a network sign-in page may be in the way)"
 
     private var looksLikeJSON: Bool {
         let first = body.first { !Self.isJSONWhitespace($0) }
@@ -183,19 +220,15 @@ extension HTTPResponse {
         return parsed.subStatus ?? parsed.sub_status
     }
 
-    /// The OAuth `error` code from auth.tidal.com (e.g. "authorization_pending").
-    var oauthErrorCode: String? {
-        (try? JSONDecoder().decode(TIDALErrorBody.self, from: body))?.error
-    }
-
     private static func isJSONWhitespace(_ byte: UInt8) -> Bool {
         byte == 0x20 || byte == 0x0A || byte == 0x0D || byte == 0x09
     }
 }
 
-/// The parts of a TIDAL error body this layer reads.
+/// The parts of a TIDAL error body this layer reads. Only the sub-status:
+/// the OAuth `error` code is read by the sign-in flow on its own, so an
+/// `error` field of an unexpected shape can't hide the sub-status.
 private struct TIDALErrorBody: Decodable {
-    let error: String?
     let subStatus: Int?
     let sub_status: Int?
 }
@@ -263,10 +296,17 @@ enum TIDALHeaders {
 /// redirect behaviour the cards ask for.
 public final class HTTPClient: Sendable {
     /// Two kinds of time limit (G1-4 skeptic note 2). `inactivity` ends a
-    /// request that receives nothing for that long; `total` ends one that
-    /// trickles on too long. API and JSON calls get both; audio gets only
-    /// inactivity, because a 100 MB Hi-Res file on a slow line would hit any
-    /// fixed total limit every time.
+    /// try that receives nothing for that long; `total` ends the whole call,
+    /// retries and backoff included, so a stalled network (a captive portal,
+    /// a dead hotspot: G1-9) gives up after `total` instead of after five
+    /// full tries. API and JSON calls get both; audio gets only inactivity,
+    /// because a 100 MB Hi-Res file on a slow line would hit any fixed total
+    /// limit every time.
+    ///
+    /// One wait doesn't count against `total`: a 429's `Retry-After`. That
+    /// is the server answering at once and asking for a pause, not a stall,
+    /// and G1-4 honours it up to 60 s, which a 60 s total that included it
+    /// could never do.
     public struct Limits: Sendable, Equatable {
         public var inactivity: Duration
         public var total: Duration?
@@ -276,13 +316,24 @@ public final class HTTPClient: Sendable {
             self.total = total
         }
 
-        /// API and JSON calls: 30 s without data (as today) and 60 s in all for
-        /// each try (G1-4); retries add their own tries after the backoff.
+        /// API and JSON calls: 30 s without data (as today) and about 60 s
+        /// for the whole call (G1-4).
         public static let api = Limits(inactivity: .seconds(30), total: .seconds(60))
         /// Device sign-in requests: each gives up after 30 s (G1-3).
         public static let signIn = Limits(inactivity: .seconds(30), total: .seconds(30))
         /// Audio files and segments: 60 s without data, as today, no total.
         public static let audio = Limits(inactivity: .seconds(60), total: nil)
+
+        /// The limits for a try when `timeLeft` remains of the call's total.
+        /// A retry is cut to the time left, so it can't run past the end of
+        /// the call. The first try always gets these limits unchanged: on the
+        /// real clock a few microseconds have passed since the call began,
+        /// and a limit cut by that much would give every call a session of
+        /// its own and lose connection reuse.
+        func forTry(after retriesSoFar: Int, timeLeft: Duration?) -> Limits {
+            guard retriesSoFar > 0, let timeLeft, let total else { return self }
+            return Limits(inactivity: min(inactivity, timeLeft), total: min(total, timeLeft))
+        }
     }
 
     public let limits: Limits
@@ -301,8 +352,7 @@ public final class HTTPClient: Sendable {
         self.clock = clock
         let configuration = sessionConfiguration.copy() as! URLSessionConfiguration
         configuration.timeoutIntervalForRequest = limits.inactivity.timeInterval
-        // URLSession's resource timeout is a total limit; a week is its default.
-        configuration.timeoutIntervalForResource = limits.total?.timeInterval ?? 7 * 24 * 3600
+        configuration.timeoutIntervalForResource = limits.total?.timeInterval ?? Self.noTotalLimit
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
         configuration.httpShouldSetCookies = false
@@ -314,40 +364,63 @@ public final class HTTPClient: Sendable {
         session.finishTasksAndInvalidate()
     }
 
+    /// URLSession's resource timeout is a total limit; a week is its default.
+    private static let noTotalLimit: TimeInterval = 7 * 24 * 3600
+
     /// One try, no retry. Transport failures become `RequestError.offline`;
     /// task cancellation stays `CancellationError`, never "offline".
     public func perform(_ request: HTTPRequest) async throws -> HTTPResponse {
         do {
-            return try await performOnce(request)
+            return try await performOnce(request, limits: limits)
         } catch let error as URLError {
             throw RequestError.offline(detail: RequestError.offlineDetail(for: error.code))
         }
     }
 
     /// Sends with the retry rule. Returns the response for any status that
-    /// is TIDAL's answer (2xx, 3xx, 4xx other than 429), so callers decide
-    /// what 400 or 404 means for them. Throws `.busy`, `.server` or
-    /// `.offline` once retries run out.
+    /// is the server's answer (2xx, 3xx, 4xx other than 429), so callers
+    /// decide what 400 or 404 means for them. Throws `.busy`, `.server` or
+    /// `.offline` once retries run out or the call's total time limit is
+    /// reached.
+    ///
+    /// The total limit is kept on the injected clock: before each backoff
+    /// the call gives up if the wait would reach the end, and each retry's
+    /// own limits are cut to the time left. A stalled API call therefore
+    /// ends after 60 s (a sign-in step after 30 s) instead of after five
+    /// 30 s tries and the backoff between them (review finding on G1-4).
     public func send(_ request: HTTPRequest, retry: RetryPolicy = .standard) async throws -> HTTPResponse {
+        var deadline = limits.total.map { clock.now().addingTimeInterval($0.timeInterval) }
         var retriesSoFar = 0
+        var lastError: RequestError?
         while true {
+            let timeLeft = deadline.map { Duration.seconds(max($0.timeIntervalSince(clock.now()), 0)) }
+            // A real sleep can overrun by a hair; never start a try with no time.
+            if let timeLeft, timeLeft <= .zero, let lastError { throw lastError }
             let failure: RetryPolicy.Failure
             let finalError: RequestError
             do {
-                let response = try await performOnce(request)
+                let response = try await performOnce(request, limits: limits.forTry(after: retriesSoFar, timeLeft: timeLeft))
                 guard RetryPolicy.isRetryable(status: response.status) else { return response }
                 let retryAfter = response.header("Retry-After")
                     .flatMap { RetryPolicy.parseRetryAfter($0, now: clock.now()) }
                 failure = .status(response.status, retryAfter: retryAfter)
                 finalError = response.status == 429
                     ? .busy(retryAfter: retryAfter)
-                    : response.networkInterference ?? .server(status: response.status)
+                    : response.networkInterference(expecting: request.expectedBody) ?? .server(status: response.status)
             } catch let error as URLError {
                 failure = .transport(error.code)
                 finalError = .offline(detail: RequestError.offlineDetail(for: error.code))
             }
+            lastError = finalError
             switch retry.decision(after: failure, retriesSoFar: retriesSoFar) {
             case let .retry(after: wait):
+                if case .status(429, retryAfter: .some(_)) = failure {
+                    // The server asked for this pause; it isn't a stall (see Limits).
+                    deadline = deadline?.addingTimeInterval(wait.timeInterval)
+                }
+                if let deadline, clock.now().addingTimeInterval(wait.timeInterval) >= deadline {
+                    throw finalError
+                }
                 try await clock.sleep(for: wait)
                 retriesSoFar += 1
             case .giveUp:
@@ -359,16 +432,22 @@ public final class HTTPClient: Sendable {
     /// Throws `URLError` for transport failures and `CancellationError` when
     /// the calling task was cancelled (URLSession reports that as
     /// `URLError.cancelled`, which must not read as a network problem).
-    private func performOnce(_ request: HTTPRequest) async throws -> HTTPResponse {
+    private func performOnce(_ request: HTTPRequest, limits tryLimits: Limits) async throws -> HTTPResponse {
         try Task.checkCancellation()
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method.rawValue
-        urlRequest.timeoutInterval = limits.inactivity.timeInterval
+        urlRequest.timeoutInterval = tryLimits.inactivity.timeInterval
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         for (name, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: name)
         }
         urlRequest.httpBody = request.body
+        // URLSession sets the total limit per session, not per request, so a
+        // retry cut short gets a session of its own (see `Limits.forTry`).
+        // Retries are rare, and the connection they would have reused has
+        // usually just failed.
+        let session = tryLimits == limits ? self.session : Self.session(like: self.session, limits: tryLimits)
+        defer { if session !== self.session { session.finishTasksAndInvalidate() } }
         do {
             let (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirects.shared)
             guard let http = response as? HTTPURLResponse else {
@@ -383,11 +462,21 @@ public final class HTTPClient: Sendable {
             throw CancellationError()
         }
     }
+
+    /// A session configured like `base` (same transport, no cache, no
+    /// cookies) with different time limits.
+    private static func session(like base: URLSession, limits: Limits) -> URLSession {
+        let configuration = base.configuration
+        configuration.timeoutIntervalForRequest = limits.inactivity.timeInterval
+        configuration.timeoutIntervalForResource = limits.total?.timeInterval ?? noTotalLimit
+        return URLSession(configuration: configuration)
+    }
 }
 
 /// Redirects are not followed, as in the Electron app. Following one would
-/// carry the Bearer or Basic header toward a host nobody checked; a 3xx is
-/// returned as the answer and becomes `RequestError.unexpectedStatus`.
+/// carry the Bearer or Basic header toward a host nobody checked. The 3xx
+/// is returned as the answer, and `networkInterference` reads it as
+/// offline: TIDAL's hosts never redirect, so something on the network did.
 private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = RefuseRedirects()
 

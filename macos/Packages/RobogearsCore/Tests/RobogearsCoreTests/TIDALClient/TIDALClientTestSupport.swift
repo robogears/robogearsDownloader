@@ -295,6 +295,7 @@ final class TIDALMemoryStore: CredentialStore {
         var credential: TIDALCredential?
         var readError: CredentialStoreError?
         var writeError: CredentialStoreError?
+        var reads = 0
         var writes = 0
         var deletes = 0
     }
@@ -306,7 +307,10 @@ final class TIDALMemoryStore: CredentialStore {
     }
 
     func read() throws(CredentialStoreError) -> TIDALCredential? {
-        let snapshot = state.withLock { $0 }
+        let snapshot = state.withLock { state -> State in
+            state.reads += 1
+            return state
+        }
         if let error = snapshot.readError { throw error }
         return snapshot.credential
     }
@@ -329,6 +333,7 @@ final class TIDALMemoryStore: CredentialStore {
     }
 
     var stored: TIDALCredential? { state.withLock { $0.credential } }
+    var reads: Int { state.withLock { $0.reads } }
     var writes: Int { state.withLock { $0.writes } }
     var deletes: Int { state.withLock { $0.deletes } }
 
@@ -395,6 +400,51 @@ final class TIDALFakeKeychain: KeychainAPI, @unchecked Sendable {
             item = nil
             return errSecSuccess
         }
+    }
+}
+
+/// A thread-safe flag a test task sets when it finishes, so a test can see
+/// whether it finished before a gate opened without hanging if it didn't.
+final class TIDALFlag: Sendable {
+    private let value = Mutex(false)
+
+    func set() { value.withLock { $0 = true } }
+    var isSet: Bool { value.withLock { $0 } }
+
+    /// Polls for up to `limit` of real time.
+    func wait(upTo limit: Duration) async throws -> Bool {
+        let end = ContinuousClock.now + limit
+        while !isSet, ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
+        return isSet
+    }
+}
+
+/// Collects a keeper's state changes on a background task, so a test can
+/// wait for the next one with a time limit instead of hanging if it never
+/// comes. Call `stop()` when done; it ends the listening task.
+final class TIDALStateLog: Sendable {
+    private let list = Mutex<[TokenKeeper.State]>([])
+    private let listener = Mutex<Task<Void, Never>?>(nil)
+
+    init(listeningTo keeper: TokenKeeper) {
+        let task = Task {
+            for await state in await keeper.stateChanges() {
+                self.list.withLock { $0.append(state) }
+            }
+        }
+        listener.withLock { $0 = task }
+    }
+
+    func stop() { listener.withLock { $0?.cancel() } }
+
+    /// Every state seen so far, after waiting up to `limit` of real time for
+    /// there to be `count` of them.
+    func states(count: Int, upTo limit: Duration = .seconds(5)) async throws -> [TokenKeeper.State] {
+        let end = ContinuousClock.now + limit
+        while list.withLock({ $0.count }) < count, ContinuousClock.now < end {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        return list.withLock { $0 }
     }
 }
 

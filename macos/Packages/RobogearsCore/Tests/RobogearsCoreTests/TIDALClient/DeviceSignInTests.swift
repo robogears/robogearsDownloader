@@ -342,4 +342,41 @@ struct DeviceSignInTests {
         let leaks = text.contains("fake-device-code-0001")
         #expect(!leaks)
     }
+
+    @Test func dumpingAnAuthorizationHidesTheDeviceCode() {
+        var text = ""
+        dump(authorization(clock: TIDALTestClock()), to: &text)
+        #expect(!text.contains("fake-device-code-0001"), "\(text)")
+        #expect(text.contains("link.tidal.com"))
+    }
+
+    // MARK: Review findings
+
+    @Test func hugeLifetimeAndIntervalAreCappedAtADayInsteadOfCrashing() async throws {
+        let clock = TIDALTestClock()
+        let server = TIDALMockServer(replies: [.json(200, "{\"deviceCode\":\"d\",\"verificationUriComplete\":\"link.tidal.com/X\",\"expiresIn\":1e17,\"interval\":\"10000000000000000000\"}")])
+        let auth = try await signIn(server, clock: clock).requestAuthorization()
+        #expect(auth.expiresAt == clock.now().addingTimeInterval(86_400))
+        #expect(auth.interval == .seconds(86_400))
+    }
+
+    @Test func stalledNetworkOnTheFirstStepSaysCantReachAfterThirtySeconds() async throws {
+        let clock = TIDALTestClock()
+        let server = TIDALMockServer { request, _ in
+            clock.advance(by: .seconds(request.timeoutInterval))
+            return .failure(.timedOut)
+        }
+        await #expect(throws: DeviceSignInError.unreachable(.offline(detail: "the server didn't answer in time"))) {
+            try await signIn(server, clock: clock).requestAuthorization()
+        }
+        // G1-3: each sign-in request gives up after 30 s, retries included.
+        #expect(clock.now() == TIDALClientFixtures.start.addingTimeInterval(30))
+        #expect(server.requests.count == 1)
+    }
+
+    @Test func cantReachMessageNamesTIDALOnce() {
+        let error = DeviceSignInError.unreachable(.offline(detail: "no internet connection"))
+        #expect(error.description == "Can't reach TIDAL: no internet connection.")
+        #expect(DeviceSignInError.unreachable(.server(status: 503)).description == "Can't reach TIDAL: Server error (503).")
+    }
 }
