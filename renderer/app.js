@@ -1658,6 +1658,9 @@ checkUpdatesBtn.addEventListener('click', async () => {
             // The launch-time listener (insertUpdateNotice) will also fire from
             // the IPC event the main process sends, so the activity log notice
             // appears too — no duplicate handling needed here.
+        } else if (r.status === 'final') {
+            // Farewell Windows build: no more updates on Windows.
+            checkUpdatesBtn.textContent = 'Final Windows version';
         } else if (r.status === 'up-to-date') {
             checkUpdatesBtn.textContent = 'Up to date ✓';
         } else {

@@ -175,7 +175,15 @@ async function checkForUpdatesAndNotify() {
     notifyIfAvailable(await getUpdateStatus());
 }
 
+// Farewell Windows build (decision 4, item 5.8): the app moved to a
+// macOS-only Swift rewrite, so Windows copies stop looking for updates.
+// Without this, v0.1.30 on Windows finds no setup.exe in the Mac-only
+// releases and tries to install the release web page.
+const WINDOWS_SUPPORT_ENDED = process.platform === 'win32';
+const WINDOWS_FAREWELL_LINE = 'ℹ Windows support has ended. This is the final Windows version of robogears Downloader: it keeps working, but it won\'t look for updates any more.';
+
 ipcMain.handle('update:check', async () => {
+    if (WINDOWS_SUPPORT_ENDED) return { status: 'final', version: app.getVersion() };
     const result = await getUpdateStatus();
     notifyIfAvailable(result);
     return result;
@@ -486,7 +494,13 @@ app.whenReady().then(async () => {
 
     // Check GitHub releases for a newer version and surface it in the activity
     // log. Renderer handles the race if it isn't ready yet (queues the payload).
-    checkForUpdatesAndNotify().catch(() => {});
+    if (WINDOWS_SUPPORT_ENDED) {
+        mainWindow.webContents.once('did-finish-load', () => {
+            if (!mainWindow.isDestroyed()) mainWindow.webContents.send('download:line', WINDOWS_FAREWELL_LINE);
+        });
+    } else {
+        checkForUpdatesAndNotify().catch(() => {});
+    }
 
     // Confirm bundled ffmpeg is actually invokable. If neither the asar-unpacked
     // path nor a system 'ffmpeg' on PATH responds to `-version`, surface a clear
