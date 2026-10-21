@@ -26,6 +26,8 @@ struct VersionCompareTests {
         #expect(!VersionCompare.isNewer("0.2.0", than: "0.2"))
         #expect(VersionCompare.isNewer("0.2.0.1", than: "0.2"))
         #expect(VersionNumber("0.2") == VersionNumber("0.2.0"))
+        #expect(!(VersionNumber("0.2") < VersionNumber("0.2.0")))
+        #expect(!(VersionNumber("0.2.0") < VersionNumber("0.2")))
     }
 
     @Test func swiftAppsFirstVersionIsNewerThanTheLastElectronRelease() {
@@ -63,6 +65,9 @@ struct VersionCompareTests {
         // The Electron code read "0.1.31-rc1" as equal to 0.1.31.
         #expect(!VersionCompare.isNewer("0.1.31-rc1", than: "0.1.31"))
         #expect(VersionCompare.isNewer("0.1.31", than: "0.1.31-rc1"))
+        #expect(VersionNumber("0.1.31-rc1") < VersionNumber("0.1.31"))
+        #expect(!(VersionNumber("0.1.31") < VersionNumber("0.1.31-rc1")))
+        #expect(VersionNumber("0.1.31") != VersionNumber("0.1.31-rc1"))
     }
 
     @Test func dottedPreReleaseIsNoLongerReadAsAnExtraNumber() {
@@ -79,6 +84,7 @@ struct VersionCompareTests {
         for (older, newer) in zip(ordered, ordered.dropFirst()) {
             #expect(VersionCompare.isNewer(newer, than: older), "\(newer) > \(older)")
             #expect(!VersionCompare.isNewer(older, than: newer), "\(older) < \(newer)")
+            #expect(VersionNumber(older) != VersionNumber(newer), "\(older) != \(newer)")
         }
     }
 

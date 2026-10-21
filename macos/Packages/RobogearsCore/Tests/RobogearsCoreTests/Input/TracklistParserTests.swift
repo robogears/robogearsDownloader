@@ -109,14 +109,35 @@ struct TracklistTableTests {
     }
 
     @Test func columnNamedTrackHoldingNumbersIsSkippedForTheNextTitle() {
-        let (columns, _) = table("Track,Song,Artist\n1,Blue Lantern,Placeholder Artist\n2,Copper Sky,Placeholder Artist\n")
-        #expect(columns?.title == "Song")
+        // "Track" ranks above "Name", but here it holds track numbers.
+        let (columns, _) = table("Track,Name,Artist\n1,Blue Lantern,Placeholder Artist\n2,Copper Sky,Placeholder Artist\n")
+        #expect(columns?.title == "Name")
+    }
+
+    @Test func exactNamesBeatColumnOrder() {
+        // A vinyl tracklist's "Track" holds side positions (A1, B2); "Title"
+        // ranks higher even though it comes later.
+        let (titleColumns, entries) = table("Track,Title,Artist\nA1,Blue Lantern,Placeholder Artist\n")
+        #expect(titleColumns?.title == "Title")
+        #expect(entries.first?.title == "Blue Lantern")
+        // "Artist" ranks above "Album Artist".
+        let (artistColumns, _) = table("Track Name,Album Artist,Artist\nBlue Lantern,Various Artists,Placeholder Artist\n")
+        #expect(artistColumns?.artist == "Artist")
     }
 
     @Test func looseRuleFindsAnUnusualTitleHeaderButNotADurationOne() {
         let (columns, _) = table("Track Duration (ms),Song Title (Original),Artist\n215000,Blue Lantern,Placeholder Artist\n")
         #expect(columns?.title == "Song Title (Original)")
         #expect(columns?.duration == "Track Duration (ms)")
+    }
+
+    @Test func looseRuleNeverPicksATimeOrURIColumnAsTheTitle() {
+        // Values that aren't plain numbers, so only the header words rule
+        // these columns out.
+        let (timeColumns, _) = table("Track Time,Song Title (Original),Artist\n3:35,Blue Lantern,Placeholder Artist\n")
+        #expect(timeColumns?.title == "Song Title (Original)")
+        let (uriColumns, _) = table("Track URI,Song Title (Original),Artist\nspotify:track:0a1,Blue Lantern,Placeholder Artist\n")
+        #expect(uriColumns?.title == "Song Title (Original)")
     }
 
     @Test func blankFirstLineNoLongerHidesTheHeader() {
