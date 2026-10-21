@@ -28,7 +28,9 @@ enum DASHManifestReader {
         if mpd.isProtected { throw .copyProtected("ContentProtection") }
 
         // A BaseURL with no SegmentTemplate is one plain file
-        // (download-pipeline.md B7 step 4, "direct").
+        // (download-pipeline.md B7 step 4, "direct"). The MPD's own mimeType
+        // is reported as declared; `TIDALManifest.container` still treats the
+        // file as FLAC, as Electron did.
         guard mpd.hasSegmentTemplate else {
             guard let base = mpd.baseURL, !base.isEmpty else { throw .missingSegmentTemplate }
             return (.dash, .direct(try TIDALManifest.streamURL(base)), mpd.mimeType, mpd.codecs)

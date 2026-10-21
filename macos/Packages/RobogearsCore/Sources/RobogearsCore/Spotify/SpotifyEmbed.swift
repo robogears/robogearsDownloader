@@ -34,9 +34,14 @@ public enum SpotifyEmbed {
     }
 
     /// A GET for the embed page with the usual headers and the 30 s timeout.
+    /// Cookie handling is off, so the cookies Spotify sets are neither stored
+    /// nor sent back: Spotify data comes only from public pages, with no
+    /// credentials and no cookies (tidal-and-spotify-networking.md, "Rules and
+    /// invariants"). The session that sends it should still be ephemeral.
     public static func request(kind: Kind, id: String) -> URLRequest? {
         guard let url = url(kind: kind, id: id) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpShouldHandleCookies = false
         for (name, value) in requestHeaders {
             request.setValue(value, forHTTPHeaderField: name)
         }

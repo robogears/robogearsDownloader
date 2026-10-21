@@ -188,6 +188,21 @@ private func mediaNumbers(_ manifest: TIDALManifest) -> [String] {
         #expect(parsed.codecs == "flac")
     }
 
+    @Test func baseURLOnlyManifestIsFLACEvenWhenTheMPDSaysMP4() throws {
+        // Both Electron parsers hard-coded audio/flac for a BaseURL-only MPD,
+        // whatever its attributes said (download-pipeline.md B7 step 4,
+        // main-process-and-ipc.md section 12 step 5).
+        let parsed = try manifest("manifest-dash-direct-mp4.mpd", type: dash)
+        guard case .direct = parsed.location else {
+            Issue.record("expected one direct file")
+            return
+        }
+        #expect(parsed.mimeType == "audio/mp4")   // reported as declared
+        #expect(parsed.container == .flac)
+        #expect(parsed.container.fileExtension == "flac")
+        #expect(parsed.container.mimeType == "audio/flac")
+    }
+
     @Test func onlyTheFirstSegmentTemplateCounts() throws {
         // Electron counted every <S> in the document: 3 + 10 segments would
         // have been requested from the first template's URLs.
@@ -357,6 +372,17 @@ private func mediaNumbers(_ manifest: TIDALManifest) -> [String] {
         #expect(!parsed.description.contains("http"))
         #expect(!String(describing: parsed).contains("token="))
         #expect(parsed.description.contains("5 segments"))
+    }
+
+    @Test func dumpingAManifestOrItsLocationNeverPrintsTheSignedLinks() throws {
+        // `dump` and reflecting loggers read the mirror, not the description.
+        for file in ["manifest-dash.mpd", "manifest-dash-direct.mpd"] {
+            let parsed = try manifest(file, type: dash)
+            for text in everyPrintedForm(of: parsed) + everyPrintedForm(of: parsed.location) {
+                #expect(!text.contains("http"))
+                #expect(!text.contains("token="))
+            }
+        }
     }
 }
 

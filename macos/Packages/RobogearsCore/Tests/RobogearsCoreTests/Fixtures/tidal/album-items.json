@@ -1,7 +1,7 @@
 {
     "limit": 100,
     "offset": 0,
-    "totalNumberOfItems": 5,
+    "totalNumberOfItems": 7,
     "items": [
         {
             "item": {
@@ -32,6 +32,14 @@
             "type": "track"
         },
         42,
+        {
+            "item": { "id": 900000204, "title": "Harbour Lights (Official Video)" },
+            "type": "video"
+        },
+        {
+            "item": { "id": 900000205, "title": "Blue Lantern (Studio Session)" },
+            "type": "VIDEO"
+        },
         {
             "item": {
                 "id": 900000203,

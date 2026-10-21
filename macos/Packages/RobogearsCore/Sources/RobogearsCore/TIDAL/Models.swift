@@ -175,8 +175,9 @@ public struct TIDALTrack: Codable, Sendable, Hashable {
     public var audioModes: [String]?
     public var mediaMetadata: TIDALMediaMetadata?
     public var streamStartDate: String?
-    /// Whether TIDAL will stream the track. Read so a row can be marked before
-    /// Download All (G2-X4 skeptic); what TIDAL actually sends is unverified.
+    /// Whether TIDAL will stream the track. Read so a queued row can be marked
+    /// before Download All (`streamable`, G2-X4 skeptic); what TIDAL actually
+    /// sends is unverified.
     public var allowStreaming: Bool?
     public var streamReady: Bool?
     /// Present on some list items; `video` marks a music video.
@@ -253,6 +254,16 @@ public struct TIDALTrack: Codable, Sendable, Hashable {
     /// all read the same tag (G4-10; the Electron import path never set it).
     public var isHiRes: Bool {
         mediaMetadata?.tags?.contains(TIDALAudioQuality.hiResTag) ?? false
+    }
+
+    /// Whether TIDAL says it will stream the track: false when either
+    /// `allowStreaming` or `streamReady` is false, true when one is true and
+    /// neither is false, nil when TIDAL sent neither. A single "no" wins
+    /// because either one stops the download (G2-X4 skeptic).
+    public var streamable: Bool? {
+        if allowStreaming == false || streamReady == false { return false }
+        if allowStreaming == true || streamReady == true { return true }
+        return nil
     }
 
     /// True when the item is a music video rather than a track. The Electron
@@ -443,6 +454,38 @@ public struct TIDALPlaybackInfo: Codable, Sendable, Hashable {
     }
 }
 
+/// Printing, `dump` or a reflecting logger shows the manifest's length only:
+/// decoded, it holds the signed stream links that must never reach a log or
+/// the disk (G5-16 and its skeptic).
+extension TIDALPlaybackInfo: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    private var manifestSummary: String {
+        manifest.map { "<\($0.count) base64 characters>" } ?? "none"
+    }
+
+    public var description: String {
+        "TIDALPlaybackInfo(trackId: \(trackId.map { String($0) } ?? "nil"), "
+            + "audioQuality: \(audioQuality ?? "nil"), manifestMimeType: \(manifestMimeType ?? "nil"), "
+            + "manifest: \(manifestSummary), bitDepth: \(bitDepth.map(String.init) ?? "nil"), "
+            + "sampleRate: \(sampleRate.map(String.init) ?? "nil"))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(self, children: [
+            "trackId": trackId as Any,
+            "assetPresentation": assetPresentation as Any,
+            "audioMode": audioMode as Any,
+            "audioQuality": audioQuality as Any,
+            "manifestMimeType": manifestMimeType as Any,
+            "manifestHash": manifestHash as Any,
+            "manifest": manifestSummary,
+            "bitDepth": bitDepth as Any,
+            "sampleRate": sampleRate as Any,
+        ], displayStyle: .struct)
+    }
+}
+
 // MARK: - Users and errors
 
 /// `/v1/users/{id}`; only the country code is used.
@@ -544,6 +587,30 @@ public struct TIDALDeviceAuthorization: Codable, Sendable, Hashable {
     }
 }
 
+/// Printing, `dump` or a reflecting logger never shows the device code: until
+/// it expires, whoever holds it can collect the person's tokens once they
+/// approve. The user code stays visible because the sign-in sheet shows it
+/// anyway (owner's manual 2.3).
+extension TIDALDeviceAuthorization: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        "TIDALDeviceAuthorization(deviceCode: \(redactionMark(deviceCode)), userCode: \(userCode ?? "nil"), "
+            + "expiresIn: \(expiresIn.map(String.init) ?? "nil"), interval: \(interval.map(String.init) ?? "nil"))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(self, children: [
+            "deviceCode": redactionMark(deviceCode),
+            "userCode": userCode as Any,
+            "verificationUri": verificationUri as Any,
+            "verificationUriComplete": verificationUriComplete as Any,
+            "expiresIn": expiresIn as Any,
+            "interval": interval as Any,
+        ], displayStyle: .struct)
+    }
+}
+
 /// The user block inside a token reply.
 public struct TIDALTokenUser: Codable, Sendable, Hashable {
     public var userId: Int64?
@@ -610,14 +677,33 @@ public struct TIDALTokenGrant: Codable, Sendable, Hashable, CustomStringConverti
     }
 
     public var description: String {
-        let access = accessToken == nil ? "none" : "<redacted>"
-        let refresh = refreshToken == nil ? "none" : "<redacted>"
         let expires = expiresIn.map(String.init) ?? "nil"
         let userId = user?.userId.map { String($0) } ?? "nil"
-        return "TIDALTokenGrant(accessToken: \(access), refreshToken: \(refresh), expiresIn: \(expires), userId: \(userId))"
+        return "TIDALTokenGrant(accessToken: \(redactionMark(accessToken)), "
+            + "refreshToken: \(redactionMark(refreshToken)), expiresIn: \(expires), userId: \(userId))"
     }
 
     public var debugDescription: String { description }
+}
+
+/// `dump` and reflecting loggers read a value's mirror, not its description,
+/// so the mirror hides the tokens too.
+extension TIDALTokenGrant: CustomReflectable {
+    public var customMirror: Mirror {
+        Mirror(self, children: [
+            "accessToken": redactionMark(accessToken),
+            "refreshToken": redactionMark(refreshToken),
+            "tokenType": tokenType as Any,
+            "expiresIn": expiresIn as Any,
+            "scope": scope as Any,
+            "user": user as Any,
+        ], displayStyle: .struct)
+    }
+}
+
+/// What a printed secret shows instead of its value.
+private func redactionMark(_ secret: String?) -> String {
+    secret == nil ? "none" : "<redacted>"
 }
 
 /// The error body of `POST auth.tidal.com/v1/oauth2/token`, for example
@@ -674,13 +760,17 @@ public struct TIDALQueueTrack: Codable, Sendable, Hashable, Identifiable {
     /// The tier TIDAL lists for the track, kept so an AAC-only track can be
     /// marked before download (G2-10).
     public var audioQuality: String?
+    /// Whether TIDAL says it will stream the track (`TIDALTrack.streamable`),
+    /// kept so a restored queue can still mark a track TIDAL won't stream
+    /// before Download All (G2-X4 skeptic). Nil when TIDAL said nothing.
+    public var streamable: Bool?
 
     public var id: Int64 { tidalId }
 
     public init(
         tidalId: Int64, title: String, version: String? = nil, artists: [String] = [],
         album: String? = nil, duration: Int? = nil, isrc: String? = nil, hiRes: Bool = false,
-        explicit: Bool = false, audioQuality: String? = nil
+        explicit: Bool = false, audioQuality: String? = nil, streamable: Bool? = nil
     ) {
         self.tidalId = tidalId
         self.title = title
@@ -692,6 +782,7 @@ public struct TIDALQueueTrack: Codable, Sendable, Hashable, Identifiable {
         self.hiRes = hiRes
         self.explicit = explicit
         self.audioQuality = audioQuality
+        self.streamable = streamable
     }
 
     /// Builds the queue value from any TIDAL track reply. Nil when the track
@@ -710,7 +801,8 @@ public struct TIDALQueueTrack: Codable, Sendable, Hashable, Identifiable {
             isrc: track.isrc,
             hiRes: track.isHiRes,
             explicit: track.explicit ?? false,
-            audioQuality: track.audioQuality
+            audioQuality: track.audioQuality,
+            streamable: track.streamable
         )
     }
 
@@ -732,6 +824,7 @@ public struct TIDALQueueTrack: Codable, Sendable, Hashable, Identifiable {
         hiRes = c.lenientBool(.hiRes) ?? false
         explicit = c.lenientBool(.explicit) ?? false
         audioQuality = c.lenientString(.audioQuality)
+        streamable = c.lenientBool(.streamable)
     }
 
     /// The artists as one line, `A, B`, the way rows and tags always joined them.
@@ -744,10 +837,39 @@ public struct TIDALQueueTrack: Codable, Sendable, Hashable, Identifiable {
     /// display and matching only, never for file names (rule 3).
     public var displayTitle: String {
         guard let version, !version.isEmpty else { return title }
-        if title.range(of: version, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-            return title
-        }
+        if Self.containsPhrase(version, in: title) { return title }
         return title.isEmpty ? version : "\(title) (\(version))"
+    }
+
+    /// True when `phrase` appears in `text` as whole words, ignoring case and
+    /// accents: `Live` is in `Alive (Live)` but not in `Alive`, `Edit` is not
+    /// in `Meditation`. A plain substring test hid real editions, so a live or
+    /// edited version showed and matched as the plain song, the G3-12 failure
+    /// this title exists to prevent. Swift Regex has no lookbehind, so each
+    /// match's neighbours are checked by hand; a neighbour matters only where
+    /// the phrase itself starts or ends with a letter or digit.
+    static func containsPhrase(_ phrase: String, in text: String) -> Bool {
+        guard let first = phrase.first, let last = phrase.last else { return false }
+        let checkBefore = isWordCharacter(first)
+        let checkAfter = isWordCharacter(last)
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let match = text.range(
+                  of: phrase, options: [.caseInsensitive, .diacriticInsensitive],
+                  range: searchStart..<text.endIndex
+              ) {
+            let clearBefore = !checkBefore || match.lowerBound == text.startIndex
+                || !isWordCharacter(text[text.index(before: match.lowerBound)])
+            let clearAfter = !checkAfter || match.upperBound == text.endIndex
+                || !isWordCharacter(text[match.upperBound])
+            if clearBefore && clearAfter { return true }
+            searchStart = text.index(after: match.lowerBound)
+        }
+        return false
+    }
+
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber
     }
 
     /// Whether TIDAL lists a lossless version: true or false from the

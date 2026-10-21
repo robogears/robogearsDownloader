@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT3M5S">
+  <BaseURL>https://audio.example.test/mediatracks/synthetic/whole.mp4?token=abc&amp;expires=1700000000</BaseURL>
+  <Period id="0">
+    <AdaptationSet id="0" contentType="audio" mimeType="audio/mp4" segmentAlignment="true">
+      <Representation id="FLAC,44100,16" codecs="flac" bandwidth="1100000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

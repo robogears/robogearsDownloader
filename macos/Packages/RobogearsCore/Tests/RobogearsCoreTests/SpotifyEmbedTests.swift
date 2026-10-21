@@ -175,7 +175,9 @@ private func spotifyPage(_ file: String) throws -> Data {
         #expect(request.httpMethod == "GET")
         #expect(request.value(forHTTPHeaderField: "User-Agent")?.contains("Chrome/120") == true)
         #expect(request.value(forHTTPHeaderField: "Accept") == "text/html")
-        #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        // A Cookie header is only added at send time, so checking for it
+        // can't fail; turning cookie handling off is what keeps them out.
+        #expect(request.httpShouldHandleCookies == false)
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.timeoutInterval == 30)
     }

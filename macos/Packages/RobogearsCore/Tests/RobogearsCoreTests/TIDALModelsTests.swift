@@ -19,6 +19,15 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
     try JSONDecoder().decode(type, from: Data(json.utf8))
 }
 
+/// Every way a value commonly reaches a log: print, interpolation, debug
+/// printing, `dump`, and a logger that walks the value's mirror.
+func everyPrintedForm<T>(of value: T) -> [String] {
+    var dumped = ""
+    dump(value, to: &dumped)
+    let mirrored = Mirror(reflecting: value).children.map { "\($0.label ?? ""): \($0.value)" }
+    return [String(describing: value), "\(value)", String(reflecting: value), dumped] + mirrored
+}
+
 @Suite struct TIDALTrackModelTests {
     @Test func fullTrackReplyDecodesEveryFieldTheAppReads() throws {
         let track = try decode(TIDALTrack.self, fromFixture: "track.json")
@@ -130,19 +139,35 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
         let page = try decode(TIDALPage<TIDALPageItem>.self, fromFixture: "album-items.json")
         #expect(page.limit == 100)
         #expect(page.offset == 0)
-        #expect(page.totalNumberOfItems == 5)
-        // The bare number `42` can't be read and is skipped; the other four arrive.
-        #expect(page.items.count == 4)
+        #expect(page.totalNumberOfItems == 7)
+        // The bare number `42` can't be read and is skipped; the other six arrive.
+        #expect(page.items.count == 6)
+        #expect(page.items.compactMap(\.track?.id) ==
+            [900_000_201, 900_000_202, 900_000_204, 900_000_205, 900_000_203])
         #expect(page.musicTracks.map(\.id) == [900_000_201, 900_000_203])
     }
 
-    @Test func wrapperMarkedVideoIsDroppedEvenWhenTheInnerTypeIsNotExactlyVideo() throws {
+    @Test func innerMusicVideoLabelIsDroppedThoughItIsNotExactlyVideo() throws {
         // The Electron filter compared the inner `type` with exactly "video",
-        // so this "Music Video" inside a `video` wrapper would have been queued.
+        // so an inner "Music Video" would have been queued as a track.
         let page = try decode(TIDALPage<TIDALPageItem>.self, fromFixture: "album-items.json")
         let video = try #require(page.items.first { $0.track?.id == 900_000_202 })
-        #expect(video.type == "video")
+        #expect(video.track?.isVideo == true)
         #expect(video.musicTrack == nil)
+    }
+
+    @Test func wrapperMarkedVideoIsDroppedWhenTheInnerItemHasNoType() throws {
+        // Bug 19 and open question 4: the wrapper says video and the inner
+        // item carries no type, so a filter that reads only the inner item
+        // queues the video. `VIDEO` pins that the wrapper is read in any case.
+        let page = try decode(TIDALPage<TIDALPageItem>.self, fromFixture: "album-items.json")
+        for (id, wrapperType) in [(Int64(900_000_204), "video"), (900_000_205, "VIDEO")] {
+            let video = try #require(page.items.first { $0.track?.id == id })
+            #expect(video.type == wrapperType)
+            #expect(video.track?.type == nil)
+            #expect(video.track?.isVideo == false)
+            #expect(video.musicTrack == nil)
+        }
     }
 
     @Test func playlistPageAcceptsBareTracksAndDropsTheirVideos() throws {
@@ -189,6 +214,24 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
         #expect(info.sampleRate == 96_000)
     }
 
+    @Test func printingOrDumpingPlaybackInfoNeverShowsTheManifest() throws {
+        // Decoded, the manifest holds signed stream links (G5-16).
+        let info = TIDALPlaybackInfo(trackId: 900_000_101, audioQuality: "LOSSLESS", manifest: "c2lnbmVkLWxpbmstc3lu")
+        for text in everyPrintedForm(of: info) {
+            #expect(!text.contains("c2lnbmVkLWxpbmstc3lu"))
+        }
+        #expect(info.description.contains("20 base64 characters"))
+        #expect(info.description.contains("LOSSLESS"))
+    }
+
+    @Test func printingOrDumpingADeviceAuthorizationNeverShowsTheDeviceCode() throws {
+        let auth = try decode(TIDALDeviceAuthorization.self, fromFixture: "device-authorization.json")
+        for text in everyPrintedForm(of: auth) {
+            #expect(!text.contains("synthetic-device-code"))
+        }
+        #expect(auth.description.contains("ABCDE"))
+    }
+
     @Test func deviceAuthorizationKeepsCodeLifetimeAndInterval() throws {
         let auth = try decode(TIDALDeviceAuthorization.self, fromFixture: "device-authorization.json")
         #expect(auth.deviceCode == "synthetic-device-code-0001")
@@ -222,9 +265,9 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
         #expect(grant.user?.countryCode == "NL")
     }
 
-    @Test func printingATokenGrantNeverShowsTheTokens() throws {
+    @Test func printingOrDumpingATokenGrantNeverShowsTheTokens() throws {
         let grant = try decode(TIDALTokenGrant.self, fromFixture: "oauth-grant.json")
-        for text in [grant.description, grant.debugDescription, String(describing: grant), "\(grant)"] {
+        for text in everyPrintedForm(of: grant) {
             #expect(!text.contains("synthetic-access-value"))
             #expect(!text.contains("synthetic-refresh-value"))
         }
@@ -273,6 +316,27 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
         #expect(row.hiRes)
         #expect(row.explicit)
         #expect(row.audioQuality == "LOSSLESS")
+        #expect(row.streamable == true)
+    }
+
+    @Test func trackTIDALWontStreamIsMarkedBeforeDownload() {
+        // G2-X4 skeptic: either field saying no stops the download, so either
+        // one marks the row; silence from TIDAL leaves it unknown.
+        let cases: [(allow: Bool?, ready: Bool?, streamable: Bool?)] = [
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+            (false, nil, false),
+            (nil, false, false),
+            (nil, true, true),
+            (true, nil, true),
+            (nil, nil, nil),
+        ]
+        for (allow, ready, expected) in cases {
+            let track = TIDALTrack(id: 1, title: "Blue Lantern", allowStreaming: allow, streamReady: ready)
+            #expect(track.streamable == expected)
+            #expect(TIDALQueueTrack(track)?.streamable == expected)
+        }
     }
 
     @Test func trackWithoutAnIdCannotBeQueued() {
@@ -298,6 +362,30 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
         #expect(row.displayTitle == "Blue Lantern (Extended Mix)")
         let dashed = TIDALQueueTrack(tidalId: 2, title: "Blue Lantern - 2011 Remaster", version: "2011 Remaster")
         #expect(dashed.displayTitle == "Blue Lantern - 2011 Remaster")
+        let accented = TIDALQueueTrack(tidalId: 3, title: "Sueño (Versión Acústica)", version: "Version Acustica")
+        #expect(accented.displayTitle == "Sueño (Versión Acústica)")
+    }
+
+    @Test func editionInsideAnotherWordIsStillShown() {
+        // G3-12: a substring test read "Live" in "Alive" as the edition being
+        // there already, so the live version showed and matched as the plain song.
+        let cases: [(title: String, version: String, shown: String)] = [
+            ("Alive", "Live", "Alive (Live)"),
+            ("Meditation", "Edit", "Meditation (Edit)"),
+            ("Demons", "Demo", "Demons (Demo)"),
+            ("Credit", "Edit", "Credit (Edit)"),
+            ("Remixed Feelings", "Remix", "Remixed Feelings (Remix)"),
+        ]
+        for (title, version, shown) in cases {
+            #expect(TIDALQueueTrack(tidalId: 1, title: title, version: version).displayTitle == shown)
+        }
+    }
+
+    @Test func editionIsFoundAsAWholeWordAfterAnEarlierPartialMatch() {
+        // The first "live" sits inside "Alive"; the search must go on and find
+        // the real one in parentheses rather than doubling it.
+        let row = TIDALQueueTrack(tidalId: 1, title: "Alive (Live)", version: "Live")
+        #expect(row.displayTitle == "Alive (Live)")
     }
 
     @Test func blankEditionIsDroppedAndDisplayIsTheBareTitle() {
@@ -326,16 +414,19 @@ private func decode<T: Decodable>(_ type: T.Type, json: String) throws -> T {
     @Test func savedQueueTrackRoundTripsAndToleratesMissingFields() throws {
         let row = TIDALQueueTrack(
             tidalId: 7, title: "Paper Harbour", version: "Live", artists: ["Third Placeholder"],
-            album: "Crossing", duration: 210, isrc: "ZZX0", hiRes: true, explicit: true, audioQuality: "LOSSLESS"
+            album: "Crossing", duration: 210, isrc: "ZZX0", hiRes: true, explicit: true, audioQuality: "LOSSLESS",
+            streamable: false
         )
         let again = try JSONDecoder().decode(TIDALQueueTrack.self, from: JSONEncoder().encode(row))
         #expect(again == row)
+        #expect(again.streamable == false)
 
         let sparse = try decode(TIDALQueueTrack.self, json: #"{"tidalId": 8}"#)
         #expect(sparse.title == "")
         #expect(sparse.artists.isEmpty)
         #expect(!sparse.hiRes)
         #expect(!sparse.explicit)
+        #expect(sparse.streamable == nil)
     }
 
     @Test func savedQueueTrackWithoutAnIdIsRejected() {

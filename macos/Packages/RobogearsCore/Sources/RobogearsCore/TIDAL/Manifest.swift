@@ -59,12 +59,18 @@ public struct TIDALManifest: Sendable, Hashable, CustomStringConvertible {
     public let isFLAC: Bool
 
     /// Segments always join into a fragmented MP4 (the Electron preview
-    /// labelled them `audio/mp4`). A direct file is an MP4 when the manifest
+    /// labelled them `audio/mp4`). A BTS direct file is an MP4 when its JSON
     /// says so and FLAC otherwise, as both Electron paths defaulted to FLAC.
+    /// A DASH manifest with only a `BaseURL` is FLAC whatever the MPD's
+    /// attributes say: both Electron parsers hard-coded `audio/flac` there
+    /// (download-pipeline.md B7 step 4, main-process-and-ipc.md section 12
+    /// step 5), and no decision card changes it.
     public var container: Container {
         switch location {
         case .segments:
             return .mp4
+        case .direct where format == .dash:
+            return .flac
         case .direct:
             return (mimeType?.lowercased().contains("mp4") ?? false) ? .mp4 : .flac
         }
@@ -81,12 +87,7 @@ public struct TIDALManifest: Sendable, Hashable, CustomStringConvertible {
     /// Never prints a URL: these are signed links that grant access to the
     /// file and must not reach a log or the screen (G5-16).
     public var description: String {
-        let shape: String
-        switch location {
-        case .direct: shape = "direct"
-        case .segments(_, let media): shape = "\(media.count) segments"
-        }
-        return "TIDALManifest(\(format.rawValue), \(shape), codecs: \(codecs ?? "nil"), "
+        "TIDALManifest(\(format.rawValue), \(location), codecs: \(codecs ?? "nil"), "
             + "mimeType: \(mimeType ?? "nil"), flac: \(isFLAC))"
     }
 
@@ -209,6 +210,23 @@ public struct TIDALManifest: Sendable, Hashable, CustomStringConvertible {
             throw .invalidStreamURL
         }
         return url
+    }
+}
+
+/// `dump` and reflecting loggers read a value's mirror rather than its
+/// description, so the location's mirror hides the signed links as well
+/// (G5-16). A manifest's own default mirror then holds nothing secret.
+extension TIDALManifest.Location: CustomStringConvertible, CustomReflectable {
+    /// The shape only (`direct` or `12 segments`), never a URL.
+    public var description: String {
+        switch self {
+        case .direct: "direct"
+        case .segments(_, let media): "\(media.count) segments"
+        }
+    }
+
+    public var customMirror: Mirror {
+        Mirror(self, children: ["shape": description], displayStyle: .enum)
     }
 }
 
