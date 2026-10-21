@@ -24,6 +24,9 @@ import Testing
     #expect(UpdateVersion.isNewer("0.2.1", than: "0.2.1-rc.1"))
     #expect(!UpdateVersion.isNewer("0.2.1-rc.1", than: "0.2.1"))
     #expect(UpdateVersion.isNewer("0.2.1-rc.1", than: "0.1.31"))
+    // One shared rule: pre-releases order by their identifiers.
+    #expect(UpdateVersion.isNewer("v0.2.1-rc.2", than: "0.2.1-rc.1"))
+    #expect(!UpdateVersion.isNewer("0.2.1-rc.1", than: "V0.2.1-rc.2"))
 }
 
 @Test func tagsThatAreNotVersionsAreIgnored() {

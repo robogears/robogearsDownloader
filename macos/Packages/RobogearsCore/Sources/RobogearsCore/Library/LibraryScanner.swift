@@ -143,7 +143,12 @@ public actor LibraryIndexService {
         case failed(String)
     }
 
-    public private(set) var snapshot: LibraryIndexSnapshot?
+    public private(set) var snapshot: LibraryIndexSnapshot? {
+        didSet { matcherIndex = snapshot?.matcherIndex() }
+    }
+    /// Built once per snapshot, so checking a 500-row import doesn't
+    /// normalise the whole library 500 times.
+    public private(set) var matcherIndex: LibraryMatcher.Index?
     public private(set) var status: Status = .off
     private var generation = 0
     private var currentTask: Task<Void, Never>?
@@ -157,7 +162,16 @@ public actor LibraryIndexService {
         self.store = JSONFileStore(file: cacheFile)
         self.reader = reader
         self.isOnlineOnly = isOnlineOnly
-        if case .loaded(let saved) = store.load() { snapshot = saved }
+        if case .loaded(let saved) = store.load() {
+            snapshot = saved
+            matcherIndex = saved.matcherIndex()   // didSet doesn't run in init
+        }
+    }
+
+    /// The library check for one track: nil when the check is off, no index
+    /// exists yet, or nothing matches.
+    public func match(_ query: LibraryMatcher.Query) -> LibraryMatcher.Match? {
+        matcherIndex?.match(query)
     }
 
     public func setOnChange(_ handler: @escaping @Sendable (Status) -> Void) { onChange = handler }

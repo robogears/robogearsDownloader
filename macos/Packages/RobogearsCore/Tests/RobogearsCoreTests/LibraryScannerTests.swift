@@ -198,6 +198,39 @@ private func tempLibrary(_ label: String) -> URL {
     #expect(await service.snapshot == nil)
 }
 
+// MARK: - Joined to the matcher
+
+@Test func aScannedFileIsFoundByTheMatcherAndKeptAfterReload() async throws {
+    let dir = tempLibrary("lookup")
+    try copyFixtures(["blue-lantern.flac", "late-ferry.mp3"], into: dir)
+    let cache = tempLibrary("cache5").appendingPathComponent("library-index.json")
+    let service = LibraryIndexService(cacheFile: cache, isOnlineOnly: { _ in false })
+    await service.scan(dir)
+    await service.waitForScan()
+    let query = LibraryMatcher.Query(title: "Blue Lantern", artists: .names(["Placeholder Artist"]),
+                                     durationSeconds: 1)
+    let found = try #require(await service.match(query))
+    #expect(found.kind == .exact)
+    #expect(found.path.hasSuffix("blue-lantern.flac"))
+    #expect(QueueItem.LibraryMatch(found).kind == .exact)
+    // A relaunch reads the saved index; the matcher works before any rescan.
+    let reloaded = LibraryIndexService(cacheFile: cache, isOnlineOnly: { _ in false })
+    #expect(await reloaded.match(query)?.kind == .exact)
+    #expect(await reloaded.match(LibraryMatcher.Query(title: "Copper Sky")) == nil)
+}
+
+@Test func clearingTheFolderAlsoClearsTheMatcher() async throws {
+    let dir = tempLibrary("lookup-off")
+    try copyFixtures(["blue-lantern.flac"], into: dir)
+    let cache = tempLibrary("cache6").appendingPathComponent("library-index.json")
+    let service = LibraryIndexService(cacheFile: cache, isOnlineOnly: { _ in false })
+    await service.scan(dir)
+    await service.waitForScan()
+    #expect(await service.match(LibraryMatcher.Query(title: "Blue Lantern")) != nil)
+    await service.scan(nil)
+    #expect(await service.match(LibraryMatcher.Query(title: "Blue Lantern")) == nil)
+}
+
 // MARK: - Helpers
 
 private final class ProgressLog: @unchecked Sendable {
