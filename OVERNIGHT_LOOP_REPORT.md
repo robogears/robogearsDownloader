@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 14 done · build+tests GREEN · last: core lanes merged (726 tests)
+STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane, 4 download lanes, resolver lane
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,6 +15,7 @@ STATUS: LOOPING · cycle 0 · 14 done · build+tests GREEN · last: core lanes m
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 01:10 Download pipeline started (item 9): the shared shapes are committed (a79f82c) and four lanes are building in parallel — the per-track downloader, the download-folder checks and naming (includes D4 2.6/2.7), a native AAC (.m4a) writer and the batch runner. Resolver and shared TIDAL pace started as its own lane. Done here meanwhile: one version rule for the app (L1), the library index joined to the matcher (L5), and preview part 1 — 200-bar waveform peaks and a 1 GB preview cache with Clear Preview Cache (12 new tests; two checked by breaking the code). 740 tests pass.
 - 00:25 Core lanes merged (items 4–8), each built, independently reviewed and fixed: input and import parsing (170 tests incl. 30 mutation checks), one Unicode-aware matcher and the library matcher (112), TIDAL models, manifests and the Spotify embed (110), the TIDAL client with sign-in, token keeper, retries and credential stores (186), and the offline audio spikes with a native FLAC writer (80; findings in docs/spikes/audio-and-tagging.md). Merged tree: 726 tests pass, no warnings, app builds. Lane worktrees and the temporary Pictures link removed.
 - 23:50 Library scanner: own FLAC and Ogg Vorbis/Opus tag parsers (title, every ARTIST, ISRC, exact length) plus Apple's reader for MP3/M4A/WAV/AIFF; folder walk skips hidden, AppleDouble "._" files and links; online-only Dropbox/iCloud files detected without downloading and read only once allowed; saved index re-reads only new or changed files; an unreachable library keeps the last index; the newest scan request always wins. 16 new tests on generated audio (78 total).
 - 23:35 Windows farewell (D4 5.8) on its own branch loop/windows-farewell, based on v0.1.30: on Windows the Electron app stops checking for updates, says once at launch that Windows support has ended and this version keeps working, and Settings › Updates reads \"Final Windows version\"; version 0.1.31. Its setup.exe still has to be built by CI at ship time.

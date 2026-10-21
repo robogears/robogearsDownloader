@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
 PROJECT_PATH: ~/Developer/swiftRobotDownloader
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792607752
-LAST_TURN_EPOCH: 1792614220
+LAST_TURN_EPOCH: 1792614627
 CEILING_EPOCH: none         # or <int> if the user set a stop time
 BASE_BRANCH: main
 BRANCH: overnight-loop/2026-10-21-2235
@@ -32,10 +32,11 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
 - [~] 9. Download pipeline — done when: per-track download (segments in a TaskGroup of 8 or direct stream) → temporary file → tags and cover → length check → no-replace move into the flat download folder works end to end on a synthetic stream, with tests — STARTED 1792614220 · attempt 1 · approach: contracts committed (a79f82c), then four lanes in parallel: track, folder (incl. L4 naming 2.6/2.7), m4a writer, batch runner; implement → review → fix · active: 0m · wip: none · delegated: workflow wc5tyv5c2 (run wf_5ac1dad9-927) · worktrees ~/Developer/swiftRobotDownloader-lane-{track,folder,m4a,batch}, branches loop/dl-*
 - [x] 10. Library scanner — done when: background folder walk, tag reader for FLAC/Ogg/MP4/ID3 (3.10), saved index (3.7) and scan defaults (3.8) exist with tests on generated files — 25m (mapping LibraryFile → LibraryMatcher.Entry happens at the matching-lane merge)
 - [~] 11. Native UI — done when: a Fable-led design pass from docs/DESIGN.md is recorded, and the SwiftUI app shows the main window (input, drop zone, queue rows, activity), Settings window, sign-in sheet and menu-bar commands, wired to RobogearsCore; screenshots of real pixels in Light and Dark are checked — STARTED 1792609791 · attempt 1 · approach: workflow — model+main window, then sheets+Settings, then code review + Fable pixel review, then fixes; stand-in data until core is wired · active: 0m · wip: none · delegated: workflow wy0jgeb07 (run wf_489a441f-2b7) · worktree ~/Developer/swiftRobotDownloader-lane-ui, branch loop/ui
-- [ ] 12. Preview player and waveform — done when: peaks (200 bars) and AVFoundation playback with scrubbing work on a generated file, one player at a time (5.16)
+- [~] 12. Preview player and waveform — done when: peaks (200 bars) and AVFoundation playback with scrubbing work on a generated file, one player at a time (5.16) — STARTED 1792614627 · attempt 1 · approach: part 1 done here (7844196: WaveformPeaks + PreviewCache, 12 tests, two mutation checks); part 2 (preview loader using the track lane's audio fetcher, Now Playing 5.13, one-player rule 5.16) after item 9 merges · active: 20m · wip: none
 - [x] 13. Sound effects — done when: every sound (download chime, cancel chime, warning honk, success ping, brand easter eggs) is synthesised natively with the exact frequencies and envelopes from the reference — 14m
 - [x] 14. Updater — done when: the GitHub-releases updater (owner's github-updater recipe, SHA-256 gate, asset contract `mac-arm64.dmg`) is implemented and unit-tested without touching the network for real installs — 25m
 - [x] 15. App state — done when: settings, the two folders (bookmarks that follow a rename; unavailable, missing and in-the-Trash detected; a download folder inside the library refused) and the queue (atomic saves, a damaged file kept aside, failed rows keep their reason, unfinished rows come back waiting) live in RobogearsCore/State with tests — 18m
+- [~] 16. Resolver and shared TIDAL pace (self-generated: item 11 needs it to be wired) — done when: links, Spotify, tracklists, search and Match Again turn into queue rows per D4 area 4, through one shared pace (1.4), cancellable (1.11), tested on the mock URLProtocol — STARTED 1792614627 · attempt 1 · approach: one lane, implement → review → fix · delegated: workflow w7631wviv (run wf_91130b23-6a1) · worktree ~/Developer/swiftRobotDownloader-lane-resolve, branch loop/resolve
 <!-- open = [ ] or [~]; resume [~] first
      [~] N. <item> — STARTED <epoch> · attempt <n> · approach: <one line> · active: <m>m · wip: <hash|none> [· delegated: <task/run id> · <worktree/branch>] [· interrupted]
      [x] N. <item> — <active>m
@@ -43,10 +44,10 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
      [!] N. <item> — blocked by <reason> (morning command in the report) -->
 
 ## Ladder backlog (self-generated when the mission is exhausted)
-- [ ] L5. Merge notes for the core lanes — the lanes branched before the fixture rule in .gitignore, so their generated fixtures (audio-spikes: Fixtures/audio) may exist only as ignored files in their worktrees; copy them across at merge. Map LibraryFile → LibraryMatcher.Entry when matching merges. Unify UpdateVersion with lane input's VersionCompare (L1).
+- [x] L5. Merge notes for the core lanes — done fc53b39 (LibraryLookup.swift: LibraryFile → Entry, cached matcher index on LibraryIndexService, QueueItem.LibraryMatch(_:)); fixtures were already merged; FLAC reader unification left as a leftover (TagReader's FLACCommentReader vs FLACMetadataReader.summary)
 - [x] L3. Remove the temporary link `~/Pictures/GitHub Projects/swiftRobotDownloader` → `~/Developer/swiftRobotDownloader` — done when: the core-lane workflow and the design lead have finished, the lane worktrees are merged and removed, and the link is deleted (only the link, never the target) — done 22 Oct 00:25 (link removed, target untouched)
 - [~] L4. Apply D4 2.6 and 2.7 (in item 9's folder lane) (owner chose all recommended, 21 Oct 2026) — done when: file naming keeps title-only names except a clash with a different song ("<Title> (<Artist>).flac", deterministic order version → artist → album), the version goes in the title tag, and untagged existing files fall back to keeping the row with Save As…
-- [ ] L1. Unify version comparison — done when: one compare function serves the updater and the lane-input VersionCompare (UpdateVersion vs VersionCompare duplicate after the merge)
+- [x] L1. Unify version comparison — done fc53b39 (UpdateVersion.isNewer uses VersionNumber; rc ordering test)
 - [x] L2. Release packaging script — done when: a script builds the Release app, the DMG named robogears-downloader-mac-arm64.dmg (.app at the root, for the v0.1.30 updater), the zip robogears-downloader-mac-arm64.zip, and a .sha256 for each; the CI workflow gains actions/checkout in the release job — 8m (the CI part is a recommendation; the loop doesn't edit CI unattended)
 
 ## Parked — needs direction (never build these on a guess)
