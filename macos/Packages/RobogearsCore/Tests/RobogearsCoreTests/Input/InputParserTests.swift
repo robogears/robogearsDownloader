@@ -108,7 +108,8 @@ struct TidalLinkParsingTests {
 
     @Test func cjkPunctuationAfterATidalLinkIsLeftOut() {
         #expect(InputParser.parse("https://tidal.com/browse/track/123\u{3001}") == .tidal(.track(id: 123)))
-        #expect(InputParser.parse("\u{300C}https://tidal.com/browse/album/42\u{300D}") == .tidal(.album(id: 42)))
+        // Without "https://", the bracket would otherwise become part of the host.
+        #expect(InputParser.parse("\u{300C}tidal.com/browse/album/42\u{300D}") == .tidal(.album(id: 42)))
         #expect(InputParser.parse("https://tidal.com/browse/track/123\u{2026}") == .tidal(.track(id: 123)))
     }
 
