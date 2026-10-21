@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
 PROJECT_PATH: ~/Developer/swiftRobotDownloader
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792607752
-LAST_TURN_EPOCH: 1792609039
+LAST_TURN_EPOCH: 1792609856
 CEILING_EPOCH: none         # or <int> if the user set a stop time
 BASE_BRANCH: main
 BRANCH: overnight-loop/2026-10-21-2235
@@ -31,7 +31,7 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
 - [~] 8. Offline spikes with generated audio — done when: docs/spikes/ answers, with evidence, (a) can AVFoundation decode and play FLAC and DASH-style FLAC-in-fragmented-MP4, (b) exactly which tag keys and picture block the old FFmpeg arguments write, (c) can a native Swift writer produce an equivalent FLAC (tags + front-cover picture type 3) — STARTED 1792608143 · attempt 1 · approach: parallel lane, implement → review → fix · active: 0m · wip: none · delegated: workflow wbgcdb3gj · worktree ~/Pictures/GitHub Projects/swiftRobotDownloader-lane-<slug>, branch loop/core-<slug>
 - [ ] 9. Download pipeline — done when: per-track download (segments in a TaskGroup of 8 or direct stream) → temporary file → tags and cover → length check → no-replace move into the flat download folder works end to end on a synthetic stream, with tests
 - [ ] 10. Library scanner — done when: background folder walk, tag reader for FLAC/Ogg/MP4/ID3 (3.10), saved index (3.7) and scan defaults (3.8) exist with tests on generated files
-- [ ] 11. Native UI — done when: a Fable-led design pass from docs/DESIGN.md is recorded, and the SwiftUI app shows the main window (input, drop zone, queue rows, activity), Settings window, sign-in sheet and menu-bar commands, wired to RobogearsCore; screenshots of real pixels in Light and Dark are checked
+- [~] 11. Native UI — done when: a Fable-led design pass from docs/DESIGN.md is recorded, and the SwiftUI app shows the main window (input, drop zone, queue rows, activity), Settings window, sign-in sheet and menu-bar commands, wired to RobogearsCore; screenshots of real pixels in Light and Dark are checked — STARTED 1792609791 · attempt 1 · approach: workflow — model+main window, then sheets+Settings, then code review + Fable pixel review, then fixes; stand-in data until core is wired · active: 0m · wip: none · delegated: workflow wy0jgeb07 (run wf_489a441f-2b7) · worktree ~/Developer/swiftRobotDownloader-lane-ui, branch loop/ui
 - [ ] 12. Preview player and waveform — done when: peaks (200 bars) and AVFoundation playback with scrubbing work on a generated file, one player at a time (5.16)
 - [x] 13. Sound effects — done when: every sound (download chime, cancel chime, warning honk, success ping, brand easter eggs) is synthesised natively with the exact frequencies and envelopes from the reference — 14m
 - [x] 14. Updater — done when: the GitHub-releases updater (owner's github-updater recipe, SHA-256 gate, asset contract `mac-arm64.dmg`) is implemented and unit-tested without touching the network for real installs — 25m
