@@ -43,7 +43,7 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
 
 ## Ladder backlog (self-generated when the mission is exhausted)
 - [ ] L1. Unify version comparison — done when: one compare function serves the updater and the lane-input VersionCompare (UpdateVersion vs VersionCompare duplicate after the merge)
-- [ ] L2. Release packaging script — done when: a script builds the Release app, the DMG named robogears-downloader-mac-arm64.dmg (.app at the root, for the v0.1.30 updater), the zip robogears-downloader-mac-arm64.zip, and a .sha256 for each; the CI workflow gains actions/checkout in the release job
+- [x] L2. Release packaging script — done when: a script builds the Release app, the DMG named robogears-downloader-mac-arm64.dmg (.app at the root, for the v0.1.30 updater), the zip robogears-downloader-mac-arm64.zip, and a .sha256 for each; the CI workflow gains actions/checkout in the release job — 8m (the CI part is a recommendation; the loop doesn't edit CI unattended)
 
 ## Parked — needs direction (never build these on a guess)
 - ⏸ Live TIDAL check — question: run the device sign-in, a refresh with the second client pair, and record field names (user code, lifetime, version, presentation) — options: owner signs in once in the morning | skip — unlocks: verifying 1.3, 1.9, 2.7, 2.23 and the real download path

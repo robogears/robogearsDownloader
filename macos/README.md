@@ -21,3 +21,16 @@ cd macos && xcodebuild -project RobogearsDownloader.xcodeproj -scheme RobogearsD
 ```
 
 The generated `RobogearsDownloader.xcodeproj` is committed so the project opens without XcodeGen; regenerate it after editing `project.yml`.
+
+## Release artifacts
+
+```bash
+macos/scripts/package-release.sh
+```
+
+Builds the Release app and writes to `macos/dist/`:
+- `robogears-downloader-mac-arm64.dmg`, for first installs and for the v0.1.30 Electron updater, which installs the first `.app` at the image's root;
+- `robogears-downloader-mac-arm64.zip`, for the Swift app's own updater;
+- a `.sha256` file for each.
+
+It never publishes; cutting the draft release is the github-ship skill's job.

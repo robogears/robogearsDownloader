@@ -66,3 +66,4 @@ macos/**/.build/
 macos/**/.swiftpm/
 xcuserdata/
 *.xcuserstate
+macos/dist/
