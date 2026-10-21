@@ -56,6 +56,92 @@ public enum ArtistCredit: Sendable, Hashable {
         return keys
     }
 
+    // MARK: - Names that contain a separator
+
+    // Splitting a free-text line breaks a listed name that contains a
+    // separator into pieces that never equal it: "Tyler, The Creator, Kali
+    // Uchis" gives "tyler", "the creator" and "kali uchis", none of which is
+    // TIDAL's "Tyler, The Creator", so the right artist read as "different"
+    // (matching review, finding 1). A run of neighbouring pieces may therefore
+    // stand for one listed name, but only piece by piece: the listed name must
+    // split into exactly those pieces itself. "Wind & Lantern" can be rebuilt
+    // from "Salt, Wind & Lantern"; "Wind Lantern", one name with no separator,
+    // can't, so no fragment match comes back (D4 3.3, G3-3 skeptic). Runs are
+    // only ever compared with listed names, never with another line's pieces.
+
+    /// Joins the pieces of a run so a run key can't be confused with a name key.
+    private static let runJoiner = "\u{1F}"
+
+    /// The pieces of a free-text line in their written order, repeats kept,
+    /// so runs of neighbouring pieces can be rebuilt. Empty for a list.
+    private var orderedTextKeys: [String] {
+        guard case .text(let line) = self else { return [] }
+        return Self.orderedKeys(line)
+    }
+
+    private static func orderedKeys(_ line: String) -> [String] {
+        splitFreeText(line).map(Normalizer.fullKey).filter { !$0.isEmpty }
+    }
+
+    /// The run key of a listed name that a free-text split would break into two
+    /// or more pieces; nil for a name with no separator in it.
+    static func separatedNameKey(_ name: String) -> String? {
+        let pieces = orderedKeys(name)
+        return pieces.count >= 2 ? pieces.joined(separator: runJoiner) : nil
+    }
+
+    /// The run keys of the listed names that contain a separator. Empty for
+    /// free text, whose pieces may not be rebuilt into names on both sides.
+    var separatedNameKeys: Set<String> {
+        guard case .names(let names) = self else { return [] }
+        return Set(names.compactMap(Self.separatedNameKey))
+    }
+
+    /// The run key of every run of two or more neighbouring free-text pieces.
+    /// Empty for a list.
+    var runKeys: Set<String> {
+        let keys = orderedTextKeys
+        var runs = Set<String>()
+        for start in keys.indices {
+            for end in stride(from: start + 2, through: keys.count, by: 1) {
+                runs.insert(keys[start..<end].joined(separator: Self.runJoiner))
+            }
+        }
+        return runs
+    }
+
+    /// The artists this credit names, read against a structured list (TIDAL's
+    /// `artists[]`): each listed name or free-text piece, except that a run of
+    /// neighbouring pieces that a listed name splits into counts as that one
+    /// name, under its whole-name key. The longest run wins, left to right.
+    /// Deduplicated, in order; the same as `pieceKeys` whenever no listed name
+    /// contains a separator, so today's shares are unchanged otherwise.
+    func artistKeys(readAgainst listedNames: [String]) -> [String] {
+        guard case .text = self else { return pieceKeys }
+        var nameForRun: [String: String] = [:]
+        for name in listedNames {
+            if let run = Self.separatedNameKey(name) { nameForRun[run] = Normalizer.fullKey(name) }
+        }
+        let keys = orderedTextKeys
+        guard !nameForRun.isEmpty else { return Self.uniqueKeys(keys) }
+        var units: [String] = []
+        var start = 0
+        while start < keys.count {
+            var unit = keys[start]
+            var next = start + 1
+            for end in stride(from: keys.count, through: start + 2, by: -1) {
+                if let name = nameForRun[keys[start..<end].joined(separator: Self.runJoiner)] {
+                    unit = name
+                    next = end
+                    break
+                }
+            }
+            units.append(unit)
+            start = next
+        }
+        return Self.uniqueKeys(units)
+    }
+
     // MARK: - Splitting free text
 
     /// Characters that always separate names in a free-text artist line.

@@ -281,6 +281,22 @@ struct LibraryMatcherTests {
         #expect(Self.match("Blue Lantern", .names(["Salt, Wind & Lantern"]), in: [band])?.kind == .exact)
     }
 
+    @Test("a tag crediting a band with a comma in its name beside a guest is exact for that band")
+    func separatedBandBesideGuestInTag() {
+        // Review finding 1: the tag split into "salt", "wind", "lantern" and
+        // "second guest", none equal to TIDAL's one name, so it re-downloaded.
+        let tagged = Entry(path: "/Music/x.flac", tagTitle: "Blue Lantern", tagArtists: ["Salt, Wind & Lantern, Second Guest"])
+        let result = Self.match("Blue Lantern", .names(["Salt, Wind & Lantern"]), in: [tagged])
+        #expect(result?.kind == .exact)
+        #expect(result?.evidence == .titleAndArtist)
+    }
+
+    @Test("a tag's neighbouring pieces never make a listed name that has no separator")
+    func tagPiecesDoNotRebuildPlainName() {
+        let tagged = Entry(path: "/Music/x.flac", tagTitle: "Blue Lantern", tagArtists: ["Salt, Wind & Lantern"])
+        #expect(Self.match("Blue Lantern", .names(["Wind Lantern"]), in: [tagged])?.kind == .similar)
+    }
+
     @Test("a shortened artist tag drops to similar, the safe direction")
     func shortenedArtistTag() {
         let short = Entry(path: "/Music/x.flac", tagTitle: "Blue Lantern", tagArtists: ["Placeholder"])

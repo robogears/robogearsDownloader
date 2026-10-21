@@ -25,7 +25,8 @@
 /// - A partial title still needs an artist score of at least 50, the fix for the
 ///   "Free Your Mind" false matches recorded in CLAUDE.md.
 /// - A result with the same ISRC as the source is the same recording and is
-///   preferred over everything else (G3-2 skeptic).
+///   preferred over everything else (G3-2 skeptic). When several releases
+///   share it, the one on the source's album wins (D4 4.5, G4-5 skeptic).
 public enum TidalMatcher {
 
     /// What the source asks for.
@@ -35,12 +36,17 @@ public enum TidalMatcher {
         /// Seconds; nil or 0 when the source has no length.
         public var durationSeconds: Double?
         public var isrc: String?
+        /// The album the source names (a Spotify link's album, a CSV's album
+        /// column), used to choose among releases of the same recording.
+        public var album: String?
 
-        public init(title: String, artists: ArtistCredit = .unknown, durationSeconds: Double? = nil, isrc: String? = nil) {
+        public init(title: String, artists: ArtistCredit = .unknown, durationSeconds: Double? = nil,
+                    isrc: String? = nil, album: String? = nil) {
             self.title = title
             self.artists = artists
             self.durationSeconds = durationSeconds
             self.isrc = isrc
+            self.album = album
         }
     }
 
@@ -54,13 +60,17 @@ public enum TidalMatcher {
         public var artistNames: [String]
         public var durationSeconds: Double?
         public var isrc: String?
+        /// The title of the TIDAL album this result comes from.
+        public var album: String?
 
-        public init(title: String, version: String? = nil, artistNames: [String], durationSeconds: Double? = nil, isrc: String? = nil) {
+        public init(title: String, version: String? = nil, artistNames: [String], durationSeconds: Double? = nil,
+                    isrc: String? = nil, album: String? = nil) {
             self.title = title
             self.version = version
             self.artistNames = artistNames
             self.durationSeconds = durationSeconds
             self.isrc = isrc
+            self.album = album
         }
     }
 
@@ -99,6 +109,9 @@ public enum TidalMatcher {
         /// the pick is the same name, so the queue can show the source's names
         /// beside TIDAL's (D4 4.14).
         public let artistDiffers: Bool
+        /// True when the source and TIDAL name the same album. It decides
+        /// between releases of one recording (album, single, compilation).
+        public let albumAgrees: Bool
 
         /// The row starts left out of Download all until the person clicks + Add.
         public var startsLeftOut: Bool { confirmation == .unconfirmed }
@@ -150,9 +163,15 @@ public enum TidalMatcher {
     /// Strict ordering: confirmation tier, then total (higher first), then the
     /// earlier position. Written out because Swift's sort isn't documented as
     /// stable, and ties must keep TIDAL's relevance order.
+    ///
+    /// Among releases of the same recording (one ISRC on an album, a single
+    /// and a compilation), the one on the source's album comes first, then
+    /// the total, which carries the length (D4 4.5 option A; G4-5 skeptic:
+    /// "pick by duration and album name rather than the first item").
     static func ranksBefore(_ a: Match, _ b: Match) -> Bool {
         let tierA = tier(a.confirmation), tierB = tier(b.confirmation)
         if tierA != tierB { return tierA < tierB }
+        if a.confirmation == .sameRecordingCode, a.albumAgrees != b.albumAgrees { return a.albumAgrees }
         if a.score.total != b.score.total { return a.score.total > b.score.total }
         return a.index < b.index
     }
@@ -194,8 +213,10 @@ public enum TidalMatcher {
         } else {
             return nil
         }
+        let albumAgrees = Normalizer.keysAgree(Normalizer.fullKey(wanted.album ?? ""),
+                                               Normalizer.fullKey(candidate.album ?? ""))
         return Match(index: index, candidate: candidate, score: score, confirmation: confirmation,
-                     artistDiffers: artistKnown && !artist.agrees)
+                     artistDiffers: artistKnown && !artist.agrees, albumAgrees: albumAgrees)
     }
 
     /// Compares the wanted title with TIDAL's title as it reads with its
@@ -222,18 +243,20 @@ public enum TidalMatcher {
     /// like today's `Math.round`. A free-text line that equals one of TIDAL's
     /// names, or all of them together, counts as complete agreement, so a band
     /// whose name contains a separator ("Salt, Wind & Lantern") still agrees
-    /// with itself.
+    /// with itself. When such a band is credited beside someone else
+    /// ("Tyler, The Creator, Kali Uchis"), the neighbouring pieces that make up
+    /// its TIDAL name count as that one artist (`ArtistCredit.artistKeys`).
     static func artistScore(wanted: ArtistCredit, tidalNames: [String]) -> (score: Int, agrees: Bool) {
-        let pieces = wanted.pieceKeys
-        guard !pieces.isEmpty else { return (0, false) }
+        guard wanted.isKnown else { return (0, false) }
         let tidalKeys = Set(ArtistCredit.names(tidalNames).pieceKeys)
         if let whole = wanted.wholeLineKey,
            tidalKeys.contains(whole)
             || Normalizer.keysAgree(whole, Normalizer.fullKey(tidalNames.joined(separator: " "))) {
             return (100, true)
         }
-        let agreeing = pieces.filter(tidalKeys.contains).count
-        let share = (Double(agreeing) * 100 / Double(pieces.count)).rounded()
+        let artists = wanted.artistKeys(readAgainst: tidalNames)
+        let agreeing = artists.filter(tidalKeys.contains).count
+        let share = (Double(agreeing) * 100 / Double(artists.count)).rounded()
         return (Int(share), agreeing > 0)
     }
 

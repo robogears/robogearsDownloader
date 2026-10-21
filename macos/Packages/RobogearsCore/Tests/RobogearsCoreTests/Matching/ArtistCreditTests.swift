@@ -42,6 +42,25 @@ struct ArtistCreditTests {
                 == ["salt", "wind", "lantern", "salt wind lantern"])
     }
 
+    @Test("neighbouring free-text pieces count as one listed name that splits into them")
+    func runsRebuildSeparatedListedNames() {
+        let line = ArtistCredit.text("Salt, Wind & Lantern, Second Guest")
+        #expect(line.artistKeys(readAgainst: ["Salt, Wind & Lantern"]) == ["salt wind lantern", "second guest"])
+        #expect(line.artistKeys(readAgainst: ["Wind & Lantern"]) == ["salt", "wind lantern", "second guest"])
+        #expect(line.artistKeys(readAgainst: ["Wind Lantern"]) == ["salt", "wind", "lantern", "second guest"])
+        #expect(line.artistKeys(readAgainst: []) == line.pieceKeys)
+    }
+
+    @Test("only names with a separator have a run key, and only lists offer them")
+    func separatedNameKeys() throws {
+        #expect(ArtistCredit.separatedNameKey("Wind Lantern") == nil)
+        let band = try #require(ArtistCredit.separatedNameKey("Salt, Wind & Lantern"))
+        #expect(ArtistCredit.names(["Salt, Wind & Lantern", "Second Guest"]).separatedNameKeys == [band])
+        #expect(ArtistCredit.text("Salt, Wind & Lantern").separatedNameKeys.isEmpty)
+        #expect(ArtistCredit.names(["Salt, Wind & Lantern"]).runKeys.isEmpty)
+        #expect(ArtistCredit.text("Salt, Wind & Lantern, Second Guest").runKeys.contains(band))
+    }
+
     @Test("empty or blank credits are unknown", arguments: [
         ArtistCredit.unknown, .text(""), .text("  , & "), .names([]), .names(["", " "]),
     ])

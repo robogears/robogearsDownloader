@@ -157,6 +157,12 @@ public enum Normalizer {
     /// words starting the same way ("lively", "mixtape", "dubai") don't count.
     private static let versionWordEndings: Set<String> = ["", "s", "es", "ed", "ing", "ion", "ions", "er", "ers"]
 
+    /// "Reprise" makes its past tense with a plain "-d" ("Reprised"), which the
+    /// endings above can't express (matching review, finding 3). Only this
+    /// stem gets it: "Lived" and "Singled" are ordinary words, so "live" and
+    /// "single" must not.
+    private static let stemsTakingD: Set<String> = ["reprise"]
+
     static func stripVersionTails(_ folded: String) -> String {
         var text = Array(folded)
         text = cutAtBracket(text)
@@ -252,7 +258,9 @@ public enum Normalizer {
     private static func isVersionWord(_ word: String) -> Bool {
         guard !word.isEmpty else { return false }
         for stem in versionWords where word.hasPrefix(stem) {
-            if versionWordEndings.contains(String(word.dropFirst(stem.count))) { return true }
+            let ending = String(word.dropFirst(stem.count))
+            if versionWordEndings.contains(ending) { return true }
+            if ending == "d" && stemsTakingD.contains(stem) { return true }
         }
         return false
     }

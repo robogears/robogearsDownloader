@@ -11,7 +11,8 @@ import Foundation
 /// - The same ISRC is exact before anything else, whatever the title says (3.5).
 /// - "Artist agrees" means a whole name matches, using every artist tag in the
 ///   file; "Ox" no longer agrees with "Boxer Collective", and a reordered
-///   multi-artist line now does (3.3).
+///   multi-artist line now does (3.3). A listed name containing a separator
+///   ("Tyler, The Creator") agrees with the same name inside a longer tag line.
 /// - An exact match becomes similar when both lengths are known and more than
 ///   10 seconds apart, so an extended mix isn't hidden behind a radio edit (3.4).
 /// - A named edition must be confirmed: a library file with the bare title is
@@ -173,11 +174,12 @@ public enum LibraryMatcher {
             // otherwise; a contradicted one is held as the best similar so far.
             var heldSimilar: (entry: Prepared, evidence: Match.Evidence)?
             let queryArtistKeys = query.artists.comparisonKeys
+            let querySeparatedNames = query.artists.separatedNameKeys
             if !queryArtistKeys.isEmpty {
                 for key in titleKeys {
                     for index in byTagFull[key] ?? [] {
                         let entry = entries[index]
-                        guard !entry.artistKeys.isDisjoint(with: queryArtistKeys) else { continue }
+                        guard entry.artistAgrees(queryArtistKeys, separatedNames: querySeparatedNames) else { continue }
                         let lengthGap = MatchRules.lengthGap(query.durationSeconds, entry.duration)
                         let evidence: Match.Evidence?
                         if namesEdition && key == bareFull {
@@ -245,8 +247,19 @@ public enum LibraryMatcher {
         let nameCoreKeys: [String]
         /// Every tag artist value, whole and split into names (D4 3.3).
         let artistKeys: Set<String>
+        /// Runs of neighbouring pieces of each tag value, so a tag "Tyler, The
+        /// Creator, Kali Uchis" still names TIDAL's "Tyler, The Creator".
+        /// Compared with the query's listed names only (`ArtistCredit.runKeys`).
+        let artistRunKeys: Set<String>
         let duration: Double?
         let recordingCode: String?
+
+        /// Artist agreement for an exact match: a key shared with the query's
+        /// names or pieces, or a run of tag pieces that one of the query's
+        /// listed names splits into.
+        func artistAgrees(_ queryKeys: Set<String>, separatedNames: Set<String>) -> Bool {
+            !artistKeys.isDisjoint(with: queryKeys) || !artistRunKeys.isDisjoint(with: separatedNames)
+        }
 
         init(_ entry: Entry) {
             path = entry.path
@@ -260,6 +273,9 @@ public enum LibraryMatcher {
             nameCoreKeys = LibraryMatcher.uniqueKeys(names.map(Normalizer.coreKey))
             artistKeys = entry.tagArtists.reduce(into: Set<String>()) { keys, value in
                 keys.formUnion(ArtistCredit.text(value).comparisonKeys)
+            }
+            artistRunKeys = entry.tagArtists.reduce(into: Set<String>()) { keys, value in
+                keys.formUnion(ArtistCredit.text(value).runKeys)
             }
             duration = MatchRules.knownLength(entry.tagDurationSeconds)
             recordingCode = MatchRules.recordingCodeKey(entry.tagISRC)

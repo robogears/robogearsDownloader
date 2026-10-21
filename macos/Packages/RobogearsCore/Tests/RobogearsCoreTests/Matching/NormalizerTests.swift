@@ -145,6 +145,7 @@ struct NormalizerTests {
         "Blue Lantern — Extended Mix",
         "Blue Lantern - Deluxe Edition",
         "Blue Lantern - Mono Version",
+        "Blue Lantern - Reprised",
     ])
     func versionSegmentsAreCut(_ title: String) {
         #expect(Normalizer.coreKey(title) == "blue lantern")
@@ -154,6 +155,9 @@ struct NormalizerTests {
         ("Blue Lantern - Part Two", "blue lantern part two"),
         ("Blue Lantern - Lively Harbor", "blue lantern lively harbor"),
         ("Blue Lantern - Mixtape Days", "blue lantern mixtape days"),
+        // "-d" is for "reprise" only: "lived" and "singled" are ordinary words.
+        ("Blue Lantern - We Lived", "blue lantern we lived"),
+        ("Blue Lantern - Singled Out", "blue lantern singled out"),
         ("Anti-Hero Remix Night", "anti hero remix night"),
     ])
     func nonVersionSegmentsAreKept(_ title: String, _ core: String) {

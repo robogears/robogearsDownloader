@@ -180,6 +180,45 @@ struct TidalMatcherTests {
         #expect(TidalMatcher.artistScore(wanted: .text("Salt, Wind & Lantern"), tidalNames: ["Lantern"]).agrees)
     }
 
+    // MARK: - A name with a separator, credited beside someone else (review finding 1)
+
+    static let bandAndGuest: ArtistCredit = .text("Salt, Wind & Lantern, Second Guest")
+
+    @Test("a band with a comma in its name, credited beside a guest, agrees with TIDAL's whole name")
+    func separatedBandBesideGuestAgrees() throws {
+        let match = try #require(TidalMatcher.bestMatch(for: Wanted(title: "Intro", artists: Self.bandAndGuest), among: [
+            Candidate(title: "Intro", artistNames: ["Salt, Wind & Lantern"]),
+        ]))
+        #expect(match.confirmation == .artistAgrees)
+        #expect(!match.artistDiffers)
+        #expect(!match.startsLeftOut)
+        // Two artists wanted (the band and the guest), one listed.
+        #expect(match.score.artist == 50)
+    }
+
+    @Test("a partial title by a band with a comma in its name is no longer 'not found'")
+    func separatedBandAcceptsPartialTitle() throws {
+        let wanted = Wanted(title: "Blue Lantern - 2011 Remaster", artists: Self.bandAndGuest)
+        let match = try #require(TidalMatcher.bestMatch(for: wanted, among: [
+            Candidate(title: "Blue Lantern", artistNames: ["Salt, Wind & Lantern"]),
+        ]))
+        #expect(match.score.title == 50)
+        #expect(match.confirmation == .artistAgrees)
+    }
+
+    @Test("the band and the guest both listed on TIDAL is complete agreement")
+    func separatedBandAndGuestBothListed() {
+        let evidence = TidalMatcher.artistScore(wanted: Self.bandAndGuest,
+                                                tidalNames: ["Salt, Wind & Lantern", "Second Guest"])
+        #expect(evidence.score == 100)
+    }
+
+    @Test("neighbouring pieces never rebuild a TIDAL name that has no separator")
+    func runsDoNotRebuildPlainNames() {
+        #expect(!TidalMatcher.artistScore(wanted: Self.bandAndGuest, tidalNames: ["Wind Lantern"]).agrees)
+        #expect(!TidalMatcher.artistScore(wanted: Self.bandAndGuest, tidalNames: ["Lantern Second Guest"]).agrees)
+    }
+
     @Test("the artist share rounds like today's Math.round")
     func artistShareRounds() {
         let evidence = TidalMatcher.artistScore(wanted: .names(["Placeholder Artist", "Second Guest", "Third Guest"]),
@@ -266,6 +305,54 @@ struct TidalMatcherTests {
             Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238, isrc: "ZZAAA2600007"),
         ]))
         #expect(match.index == 1)
+    }
+
+    // MARK: - Album among releases of one ISRC (D4 4.5 A, G4-5 skeptic)
+
+    static let orchardWanted = Wanted(title: "Blue Lantern", artists: .text("Placeholder Artist"), durationSeconds: 238,
+                                      isrc: "ZZAAA2600007", album: "Glass Orchard")
+
+    @Test("releases of one ISRC with the same length: the one on the source's album wins")
+    func isrcReleaseOnSourceAlbumWins() throws {
+        let match = try #require(TidalMatcher.bestMatch(for: Self.orchardWanted, among: [
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238,
+                      isrc: "ZZAAA2600007", album: "Harbor Hits, Vol. 2"),
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238,
+                      isrc: "ZZAAA2600007", album: "GLASS ORCHARD"),
+        ]))
+        #expect(match.index == 1)
+        #expect(match.albumAgrees)
+    }
+
+    @Test("among releases of one ISRC, the album counts before a closer length")
+    func isrcAlbumBeforeLength() throws {
+        let match = try #require(TidalMatcher.bestMatch(for: Self.orchardWanted, among: [
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238,
+                      isrc: "ZZAAA2600007", album: "Harbor Hits, Vol. 2"),
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 243,
+                      isrc: "ZZAAA2600007", album: "Glass Orchard"),
+        ]))
+        #expect(match.index == 1)
+    }
+
+    @Test("the album never outranks the same ISRC")
+    func albumDoesNotBeatRecordingCode() throws {
+        let match = try #require(TidalMatcher.bestMatch(for: Self.orchardWanted, among: [
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238,
+                      isrc: "ZZAAA2600001", album: "Glass Orchard"),
+            Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], durationSeconds: 238,
+                      isrc: "ZZAAA2600007", album: "Harbor Hits, Vol. 2"),
+        ]))
+        #expect(match.index == 1)
+        #expect(match.confirmation == .sameRecordingCode)
+    }
+
+    @Test("blank album names never agree")
+    func blankAlbumsDoNotAgree() throws {
+        let wanted = Wanted(title: "Blue Lantern", artists: .text("Placeholder Artist"), isrc: "ZZAAA2600007", album: " ")
+        let candidate = Candidate(title: "Blue Lantern", artistNames: ["Placeholder Artist"], isrc: "ZZAAA2600007", album: "")
+        let match = try #require(TidalMatcher.evaluate(wanted, candidate, index: 0))
+        #expect(!match.albumAgrees)
     }
 
     @Test("malformed ISRCs never count as the same recording")
