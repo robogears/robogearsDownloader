@@ -1,0 +1,37 @@
+{
+    "id": 900000101,
+    "title": "Blue Lantern",
+    "duration": 245,
+    "replayGain": -8.2,
+    "peak": 0.98,
+    "allowStreaming": true,
+    "streamReady": true,
+    "streamStartDate": "2011-05-02T00:00:00.000+0000",
+    "premiumStreamingOnly": false,
+    "trackNumber": 3,
+    "volumeNumber": 1,
+    "version": "Extended Mix",
+    "popularity": 41,
+    "copyright": "2011 Placeholder Records",
+    "url": "http://www.tidal.example.test/track/900000101",
+    "isrc": "ZZX001100003",
+    "editable": false,
+    "explicit": true,
+    "audioQuality": "LOSSLESS",
+    "audioModes": ["STEREO"],
+    "mediaMetadata": { "tags": ["LOSSLESS", "HIRES_LOSSLESS"] },
+    "artist": { "id": 7000001, "name": "Placeholder Artist", "type": "MAIN", "picture": null },
+    "artists": [
+        { "id": 7000001, "name": "Placeholder Artist", "type": "MAIN", "picture": null },
+        { "id": 7000002, "name": "Second Example", "type": "FEATURED", "picture": null }
+    ],
+    "album": {
+        "id": 800000100,
+        "title": "Harbour Lights",
+        "cover": "1a2b3c4d-0000-4000-8000-00000000abcd",
+        "vibrantColor": "#aabbcc",
+        "videoCover": null,
+        "releaseDate": "2011-05-02"
+    },
+    "mixes": { "TRACK_MIX": "000example" }
+}

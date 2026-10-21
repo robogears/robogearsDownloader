@@ -1,0 +1,54 @@
+{
+    "limit": 100,
+    "offset": 0,
+    "totalNumberOfItems": 5,
+    "items": [
+        {
+            "item": {
+                "id": 900000201,
+                "title": "Harbour Lights",
+                "duration": 210,
+                "trackNumber": 1,
+                "volumeNumber": 1,
+                "audioQuality": "LOSSLESS",
+                "mediaMetadata": { "tags": ["LOSSLESS"] },
+                "artists": [ { "id": 7000001, "name": "Placeholder Artist" } ],
+                "album": { "id": 800000100, "title": "Harbour Lights", "cover": "1a2b3c4d-0000-4000-8000-00000000abcd" }
+            },
+            "type": "track"
+        },
+        {
+            "item": {
+                "id": 900000202,
+                "title": "Harbour Lights (Official Video)",
+                "duration": 214,
+                "type": "Music Video",
+                "artists": [ { "id": 7000001, "name": "Placeholder Artist" } ]
+            },
+            "type": "video"
+        },
+        {
+            "item": { "title": "A row with no id" },
+            "type": "track"
+        },
+        42,
+        {
+            "item": {
+                "id": 900000203,
+                "title": "Blue Lantern",
+                "version": "Radio Edit",
+                "duration": 187,
+                "trackNumber": 3,
+                "volumeNumber": 1,
+                "audioQuality": "LOSSLESS",
+                "mediaMetadata": { "tags": ["LOSSLESS", "HIRES_LOSSLESS"] },
+                "artists": [
+                    { "id": 7000001, "name": "Placeholder Artist" },
+                    { "id": 7000002, "name": "Second Example" }
+                ],
+                "album": { "id": 800000100, "title": "Harbour Lights", "cover": "1a2b3c4d-0000-4000-8000-00000000abcd" }
+            },
+            "type": "track"
+        }
+    ]
+}
