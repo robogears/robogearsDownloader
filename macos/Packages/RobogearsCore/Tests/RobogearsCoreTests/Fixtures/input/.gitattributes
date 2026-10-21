@@ -1,0 +1,3 @@
+# These files test encodings and line endings byte for byte; never convert them.
+* -text -diff
+README.txt text diff
