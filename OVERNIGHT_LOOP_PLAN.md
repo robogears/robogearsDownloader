@@ -5,7 +5,7 @@ STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
 PROJECT_PATH: ~/Developer/swiftRobotDownloader
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1792607752
-LAST_TURN_EPOCH: 1792609856
+LAST_TURN_EPOCH: 1792612388
 CEILING_EPOCH: none         # or <int> if the user set a stop time
 BASE_BRANCH: main
 BRANCH: overnight-loop/2026-10-21-2235
@@ -43,6 +43,7 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
      [!] N. <item> — blocked by <reason> (morning command in the report) -->
 
 ## Ladder backlog (self-generated when the mission is exhausted)
+- [ ] L5. Merge notes for the core lanes — the lanes branched before the fixture rule in .gitignore, so their generated fixtures (audio-spikes: Fixtures/audio) may exist only as ignored files in their worktrees; copy them across at merge. Map LibraryFile → LibraryMatcher.Entry when matching merges. Unify UpdateVersion with lane input's VersionCompare (L1).
 - [ ] L3. Remove the temporary link `~/Pictures/GitHub Projects/swiftRobotDownloader` → `~/Developer/swiftRobotDownloader` — done when: the core-lane workflow and the design lead have finished, the lane worktrees are merged and removed, and the link is deleted (only the link, never the target)
 - [ ] L4. Apply D4 2.6 and 2.7 (owner chose all recommended, 21 Oct 2026) — done when: file naming keeps title-only names except a clash with a different song ("<Title> (<Artist>).flac", deterministic order version → artist → album), the version goes in the title tag, and untagged existing files fall back to keeping the row with Save As…
 - [ ] L1. Unify version comparison — done when: one compare function serves the updater and the lane-input VersionCompare (UpdateVersion vs VersionCompare duplicate after the merge)
