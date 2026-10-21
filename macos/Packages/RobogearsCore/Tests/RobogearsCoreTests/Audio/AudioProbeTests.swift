@@ -81,6 +81,21 @@ struct AudioProbeTests {
         #expect(native.decodedToTheEnd)
     }
 
+    @Test("a cut-off FLAC is caught: it decodes fewer frames than it declares")
+    func cutOffFileIsCaught() throws {
+        // What a half-finished write leaves (decision card G2-2): the full
+        // STREAMINFO at the start, but only part of the audio.
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let whole = try AudioFixture.data("ffmpeg-bts-16-44100.flac")
+        let url = folder.appendingPathComponent("Blue Lantern.flac")
+        try whole.prefix(whole.count * 6 / 10).write(to: url)
+        let report = try AudioProbe.inspect(url)
+        #expect(report.declaredFrames == 44100)
+        #expect((report.decodedFrames ?? 0) < 44100)
+        #expect(!report.decodedToTheEnd)
+    }
+
     @Test("the native file decodes to exactly the same samples as FFmpeg's")
     func samePCMAsFFmpeg() throws {
         let folder = try AudioFixture.temporaryFolder()

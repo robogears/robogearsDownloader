@@ -84,6 +84,15 @@ struct FLACMetadataReaderTests {
         #expect(info.md5 == Data(count: 16))
     }
 
+    @Test("a STREAMINFO with sample rate 0 still reads, with no duration")
+    func zeroSampleRateReads() throws {
+        var info = try FLACMetadataReader.read(AudioFixture.data("bts-16-44100.flac")).streamInfo
+        info.sampleRate = 0
+        let read = try FLACStreamInfo(bytes: info.bytes)
+        #expect(read.sampleRate == 0 && read.totalSamples == 44100)
+        #expect(read.duration == nil)
+    }
+
     @Test("a file that isn't FLAC is refused")
     func notFLAC() {
         #expect(throws: FLACFormatError.notFLAC) { try FLACMetadataReader.read(Data("RIFF....WAVE".utf8)) }

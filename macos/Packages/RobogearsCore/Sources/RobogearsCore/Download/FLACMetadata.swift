@@ -122,7 +122,8 @@ public struct FLACStreamInfo: Sendable, Equatable {
         bitsPerSample = UInt8((packed >> 36) & 0x1F) + 1
         totalSamples = packed & 0xF_FFFF_FFFF
         md5 = r.bytes(18, 16)
-        guard sampleRate > 0 else { throw FLACFormatError.invalidStreamInfo }
+        // A sample rate of 0 is accepted rather than refused: the library
+        // scanner reads files from any encoder, and `duration` handles it.
     }
 
     public var bytes: Data {
@@ -142,9 +143,9 @@ public struct FLACStreamInfo: Sendable, Equatable {
         return w.data
     }
 
-    /// Length in seconds, when the total sample count is known.
+    /// Length in seconds, when the total sample count and sample rate are known.
     public var duration: Double? {
-        totalSamples == 0 ? nil : Double(totalSamples) / Double(sampleRate)
+        totalSamples == 0 || sampleRate == 0 ? nil : Double(totalSamples) / Double(sampleRate)
     }
 }
 

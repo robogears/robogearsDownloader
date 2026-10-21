@@ -196,11 +196,14 @@ public enum FLACWriter {
         _ audio: FLACAudio, tags: FLACTags, coverJPEG: Data?, toolName: String = defaultToolName, to url: URL
     ) throws {
         let head = try header(streamInfo: audio.streamInfo, tags: tags, coverJPEG: coverJPEG, toolName: toolName)
-        try head.write(to: url, options: .withoutOverwriting)
+        // Creating the file exclusively is the only step that can fail because
+        // a file is already there; after it, the file is ours to remove.
+        let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         do {
-            let handle = try FileHandle(forWritingTo: url)
             defer { try? handle.close() }
-            try handle.seekToEnd()
+            try handle.write(contentsOf: head)
             let chunk = 4 << 20
             for range in audio.frameRanges {
                 var start = range.lowerBound

@@ -61,7 +61,8 @@ electron_remux() { # <source> <destination>
 ff -f lavfi -i "testsrc2=size=48x40:rate=1" -frames:v 1 -q:v 6 "$out/cover.jpg"
 
 # BTS-like native FLAC: 1.0 s at 16-bit/44.1 kHz and 0.6 s at 24-bit/96 kHz.
-# Neither length is a whole number of 4608-sample frames, so the last frame is short.
+# Neither length is a whole number of frames (FFmpeg uses 4608 samples per frame at
+# 44.1 kHz and 8192 at 96 kHz), so each file ends with a short frame.
 ff -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=1.0" \
    -f lavfi -i "anoisesrc=color=pink:sample_rate=44100:duration=1.0:amplitude=0.05:seed=7" \
    -filter_complex "[0][1]amerge=inputs=2[a]" -map "[a]" -c:a flac -sample_fmt s16 "$out/bts-16-44100.flac"
