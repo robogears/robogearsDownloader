@@ -177,10 +177,10 @@ public struct FLACVorbisComment: Sendable, Equatable {
     /// Reads a block body. A field without "=" is kept as a name with an
     /// empty value rather than failing the whole file, because the library
     /// scanner reads files written by any tagger.
-    public init(bytes: Data) throws {
+    public init(bytes: Data) throws(FLACFormatError) {
         let r = FLACByteReader(bytes)
         var o = 0
-        func string() throws -> String {
+        func string() throws(FLACFormatError) -> String {
             guard r.has(o, 4) else { throw FLACFormatError.invalidVorbisComment }
             let length = Int(r.u32le(o))
             guard r.has(o + 4, length) else { throw FLACFormatError.invalidVorbisComment }
@@ -261,15 +261,15 @@ public struct FLACPicture: Sendable, Equatable {
         self.data = data
     }
 
-    public init(bytes: Data) throws {
+    public init(bytes: Data) throws(FLACFormatError) {
         let r = FLACByteReader(bytes)
         var o = 0
-        func u32() throws -> UInt32 {
+        func u32() throws(FLACFormatError) -> UInt32 {
             guard r.has(o, 4) else { throw FLACFormatError.invalidPicture }
             defer { o += 4 }
             return r.u32be(o)
         }
-        func blob() throws -> Data {
+        func blob() throws(FLACFormatError) -> Data {
             let length = Int(try u32())
             guard r.has(o, length) else { throw FLACFormatError.invalidPicture }
             defer { o += length }

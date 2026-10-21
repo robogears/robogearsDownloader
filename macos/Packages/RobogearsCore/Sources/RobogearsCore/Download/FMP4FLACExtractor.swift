@@ -25,6 +25,12 @@ extension FLACAudio {
     /// The Electron app chose by the manifest's MIME type instead
     /// (download-pipeline.md B7); sniffing can't be fooled by a manifest
     /// that names the wrong type.
+    ///
+    /// These are the only two layouts taken. FFmpeg read any container, so a
+    /// progressive (unfragmented) MP4 is where the native path falls short:
+    /// it's refused with `unsupportedMP4("no movie fragments")`, and reading
+    /// it would need the stsz/stsc/stco sample tables. Whether TIDAL ever
+    /// sends one is a live check (docs/spikes/audio-and-tagging.md).
     public init(downloaded data: Data) throws {
         let r = FLACByteReader(data)
         let isNative = r.has(0, 4)
@@ -68,11 +74,10 @@ enum FMP4FLACExtractor {
             let followingMdat = top[(index + 1)...].first { $0.type == "mdat" }?.bodyStart
             for traf in try boxes(r, in: box.body) where traf.type == "traf" {
                 let samples = try trackFragmentSamples(
-                    r, traf: traf, moof: box, trackID: track.id, defaults: defaults, followingMdat: followingMdat
+                    r, traf: traf, moof: box, trackID: track.id, defaults: defaults,
+                    followingMdat: followingMdat, mdats: mdatBodies
                 )
                 for sample in samples {
-                    guard mdatBodies.contains(where: { $0.contains(sample.lowerBound) && sample.upperBound <= $0.upperBound })
-                    else { throw FLACFormatError.truncated("MP4 sample outside its mdat") }
                     guard let header = FLACFrameHeader.parse(r, at: sample.lowerBound), header.length <= sample.count
                     else { throw FLACFormatError.invalidFrame(offset: sample.lowerBound) }
                     counted += UInt64(header.blockSize)
@@ -212,7 +217,8 @@ enum FMP4FLACExtractor {
 
     // MARK: Fragments (moof)
 
-    /// The byte ranges of one track fragment's samples, in order.
+    /// The byte ranges of one track fragment's samples, in order. Every
+    /// sample lies inside one of `mdats` (the file's mdat bodies), or this throws.
     ///
     /// Offsets in a run count from the start of the moof (tfhd's
     /// default-base-is-moof flag, or the spec's rule for the first track
@@ -221,7 +227,7 @@ enum FMP4FLACExtractor {
     /// which is unknown once segments are joined.
     static func trackFragmentSamples(
         _ r: FLACByteReader, traf: FMP4Box, moof: FMP4Box, trackID: UInt32,
-        defaults: SampleDefaults, followingMdat: Int?
+        defaults: SampleDefaults, followingMdat: Int?, mdats: [Range<Int>]
     ) throws -> [Range<Int>] {
         let children = try boxes(r, in: traf.body)
         guard let tfhd = children.first(where: { $0.type == "tfhd" }), tfhd.body.count >= 8 else {
@@ -272,12 +278,32 @@ enum FMP4FLACExtractor {
             guard flags & 0x200 != 0 || defaultSize != nil else {
                 throw FLACFormatError.unsupportedMP4("no sample sizes")
             }
+            // A run's samples sit back to back, so all of them belong to the
+            // mdat that holds the first. Checking against it while listing
+            // keeps a corrupt count from building millions of ranges before
+            // anything notices: with only a default size of 1, a 150 MB
+            // download could otherwise list ~150 M ranges (spike review).
+            var mdatEnd = 0
+            if count > 0 {
+                guard let mdat = mdats.first(where: { $0.contains(dataStart) }) else {
+                    throw FLACFormatError.truncated("MP4 sample outside its mdat")
+                }
+                mdatEnd = mdat.upperBound
+                if flags & 0x200 == 0 {
+                    let size = Int(defaultSize ?? 0)
+                    guard size > 0 else { throw FLACFormatError.invalidFrame(offset: dataStart) }
+                    guard count <= (mdatEnd - dataStart) / size else {
+                        throw FLACFormatError.truncated("MP4 sample outside its mdat")
+                    }
+                }
+            }
             for _ in 0..<count {
                 p += fieldSizes[0]
                 let size: Int
                 if flags & 0x200 != 0 { size = Int(r.u32be(p)) } else { size = Int(defaultSize ?? 0) }
                 p += fieldSizes[1] + fieldSizes[2] + fieldSizes[3]
                 guard size > 0 else { throw FLACFormatError.invalidFrame(offset: dataStart) }
+                guard size <= mdatEnd - dataStart else { throw FLACFormatError.truncated("MP4 sample outside its mdat") }
                 samples.append(dataStart..<(dataStart + size))
                 dataStart += size
             }

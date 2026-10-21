@@ -144,13 +144,18 @@ public enum FLACWriter {
     /// file later without rewriting the audio. Kept the same.
     public static let paddingSize = 8192
 
-    /// Written as the Vorbis vendor string and the `encoder` tag.
+    /// Written as the Vorbis vendor string and the `encoder` tag. FFmpeg
+    /// wrote its own name there ("Lavf…"); naming the app instead departs
+    /// from reference B11 and is marked "owner to confirm" in the spike
+    /// write-up. Pass `toolName:` to write any other string.
     public static var defaultToolName: String { "robogears Downloader \(RobogearsCore.version)" }
 
     /// The file's metadata part: "fLaC", STREAMINFO, PICTURE (when there's a
     /// cover), VORBIS_COMMENT and PADDING, in the order FFmpeg wrote them.
     /// Tags from the source file are never carried over (FFmpeg carried
-    /// them, and copied MP4 brand names into DASH tracks' tags; spike, part b).
+    /// them, and copied MP4 brand names into DASH tracks' tags; spike, part
+    /// b). That departs from reference B11 and is marked "owner to confirm"
+    /// in the spike write-up.
     public static func header(
         streamInfo: FLACStreamInfo, tags: FLACTags, coverJPEG: Data?, toolName: String = defaultToolName
     ) throws -> Data {

@@ -38,7 +38,17 @@ struct AudioProbeTests {
         #expect(report.formatID == "flac")
         #expect(report.sampleRate == 44100 && report.channelCount == 2 && report.sourceBitDepth == 16)
         #expect(report.declaredFrames == 44100)
+        #expect(report.verdict == .complete)
         #expect(report.decodedToTheEnd)
+    }
+
+    @Test("without a decode there is no verdict")
+    func noDecodeNoVerdict() throws {
+        let report = try AudioProbe.inspect(AudioFixture.url("bts-16-44100.flac"), decode: false)
+        #expect(report.declaredFrames == 44100)
+        #expect(report.decodedFrames == nil)
+        #expect(report.verdict == nil)
+        #expect(!report.decodedToTheEnd)
     }
 
     @Test("native FLAC at 24-bit/96 kHz decodes to the end")
@@ -66,12 +76,16 @@ struct AudioProbeTests {
         // decoded count is still exact.
         #expect(report.decodedFrames == 57600)
         #expect(report.declaredFrames >= 57600)
+        // Which is why the probe is for finished files only: a whole joined
+        // download reads as short.
+        #expect(report.verdict == .short)
     }
 
     @Test("FFmpeg's FLAC with an unknown sample count can't be decoded; the native file can")
     func unknownCountBreaksAVFoundation() throws {
         let ffmpeg = try AudioProbe.inspect(AudioFixture.url("ffmpeg-dash-live-16-44100.flac"))
         #expect(ffmpeg.declaredFrames == 0)
+        #expect(ffmpeg.decodedFrames == 0)
         #expect(!ffmpeg.decodedToTheEnd)
 
         let folder = try AudioFixture.temporaryFolder()
@@ -93,7 +107,26 @@ struct AudioProbeTests {
         let report = try AudioProbe.inspect(url)
         #expect(report.declaredFrames == 44100)
         #expect((report.decodedFrames ?? 0) < 44100)
+        #expect(report.verdict == .short)
         #expect(!report.decodedToTheEnd)
+    }
+
+    @Test("a FLAC that doesn't state its length is 'length unknown', never short")
+    func unknownLengthIsNotDamage() throws {
+        // FFmpeg's copy of a live-packaged DASH stream declares 0 samples. The
+        // file is healthy (FFmpeg decodes it with -xerror; its PCM matches the
+        // original), so card G2-2b must not call it damaged.
+        let whole = try AudioProbe.inspect(AudioFixture.url("ffmpeg-dash-live-16-44100.flac"))
+        #expect(whole.verdict == .lengthUnknown)
+
+        // A cut-off copy gets the same answer: the probe can't tell them apart,
+        // and says so instead of guessing.
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let data = try AudioFixture.data("ffmpeg-dash-live-16-44100.flac")
+        let url = folder.appendingPathComponent("Blue Lantern.flac")
+        try data.prefix(data.count * 6 / 10).write(to: url)
+        #expect(try AudioProbe.inspect(url).verdict == .lengthUnknown)
     }
 
     @Test("the native file decodes to exactly the same samples as FFmpeg's")

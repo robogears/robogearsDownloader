@@ -125,6 +125,117 @@ struct FLACMetadataReaderTests {
         #expect(layout.streamInfo.totalSamples == 44100)
     }
 
+    /// bts-16-44100.flac rebuilt with the given blocks after its STREAMINFO.
+    func rebuilt(with blocks: [FLACMetadataBlock]) throws -> Data {
+        let source = try AudioFixture.data("bts-16-44100.flac")
+        let layout = try FLACMetadataReader.read(source)
+        return AudioFixture.flac([layout.blocks[0]] + blocks, audio: source.subdata(in: layout.audioOffset..<source.count))
+    }
+
+    var tagsBlock: FLACMetadataBlock {
+        FLACMetadataBlock(.vorbisComment, body: FLACVorbisComment(vendor: "tagger", fields: [
+            .init("TITLE", "Blue Lantern"), .init("ARTIST", "Placeholder Artist"),
+        ]).bytes)
+    }
+
+    @Test("a damaged PICTURE block is listed, and the tags still read")
+    func damagedPictureKeepsTags() throws {
+        let data = try rebuilt(with: [FLACMetadataBlock(.picture, body: Data([0, 0, 0])), tagsBlock])
+        let layout = try FLACMetadataReader.read(data)
+        #expect(layout.vorbisComment?.values(for: "title") == ["Blue Lantern"])
+        #expect(layout.pictures.isEmpty)
+        #expect(layout.unreadableBlocks == [FLACUnreadableBlock(index: 1, typeCode: 6, error: .invalidPicture)])
+        #expect(layout.streamInfo.totalSamples == 44100)
+    }
+
+    @Test("a damaged VORBIS_COMMENT is listed, and STREAMINFO and the cover still read")
+    func damagedTagsKeepCover() throws {
+        let cover = try FLACPicture.frontCover(jpeg: AudioFixture.data("cover.jpg"))
+        let data = try rebuilt(with: [
+            FLACMetadataBlock(.picture, body: cover.bytes),
+            FLACMetadataBlock(.vorbisComment, body: Data([0xFF, 0xFF, 0xFF, 0x7F])),
+        ])
+        let layout = try FLACMetadataReader.read(data)
+        #expect(layout.vorbisComment == nil)
+        #expect(layout.pictures == [cover])
+        #expect(layout.unreadableBlocks == [FLACUnreadableBlock(index: 2, typeCode: 4, error: .invalidVorbisComment)])
+    }
+
+    @Test("reading from disk gives the same STREAMINFO, tags and audio start as reading in memory")
+    func summaryMatchesInMemoryRead() throws {
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let id3 = Data("ID3".utf8) + Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14]) + Data(count: 20)
+        var files = try ["bts-16-44100.flac", "bts-24-96000.flac", "ffmpeg-bts-16-44100.flac",
+                         "ffmpeg-dash-24-96000.flac", "ffmpeg-dash-live-16-44100.flac"].map { ($0, try AudioFixture.data($0)) }
+        files.append(("id3 + ffmpeg-bts-16-44100.flac", try id3 + AudioFixture.data("ffmpeg-bts-16-44100.flac")))
+        for (name, data) in files {
+            let url = folder.appendingPathComponent(UUID().uuidString + ".flac")
+            try data.write(to: url)
+            let layout = try FLACMetadataReader.read(data)
+            let summary = try FLACMetadataReader.summary(of: url)
+            #expect(summary.leadingTagSize == layout.leadingTagSize, "\(name)")
+            #expect(summary.streamInfo == layout.streamInfo, "\(name)")
+            #expect(summary.vorbisComment == layout.vorbisComment, "\(name)")
+            #expect(summary.audioOffset == layout.audioOffset, "\(name)")
+            #expect(summary.pictureBodies.count == layout.pictures.count, "\(name)")
+            #expect(summary.unreadableBlocks.isEmpty, "\(name)")
+        }
+    }
+
+    @Test("reading from disk skips the cover: a PICTURE that wouldn't decode costs nothing")
+    func summarySkipsPictures() throws {
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // The app's own block order: the cover comes before the tags.
+        let junkCover = FLACMetadataBlock(.picture, body: Data(repeating: 0xEE, count: 300_000))
+        let url = folder.appendingPathComponent("Blue Lantern.flac")
+        try rebuilt(with: [junkCover, tagsBlock]).write(to: url)
+        let summary = try FLACMetadataReader.summary(of: url)
+        #expect(summary.vorbisComment?.values(for: "artist") == ["Placeholder Artist"])
+        #expect(summary.unreadableBlocks.isEmpty)
+        #expect(summary.pictureBodies == [46..<300_046]) // after fLaC and STREAMINFO, past its own header
+
+        // The ranges point at the real cover when there is one.
+        let cover = try AudioFixture.data("cover.jpg")
+        let native = folder.appendingPathComponent("native.flac")
+        let audio = try FLACAudio(nativeFLAC: AudioFixture.data("bts-16-44100.flac"))
+        try FLACWriter.write(audio, tags: AudioFixture.tags, coverJPEG: cover, to: native)
+        let range = try #require(try FLACMetadataReader.summary(of: native).pictureBodies.first)
+        let bytes = try Data(contentsOf: native).subdata(in: range)
+        #expect(try FLACPicture(bytes: bytes).data == cover)
+    }
+
+    @Test("reading from disk lists a damaged VORBIS_COMMENT and still returns STREAMINFO")
+    func summaryDamagedTags() throws {
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("Blue Lantern.flac")
+        try rebuilt(with: [FLACMetadataBlock(.vorbisComment, body: Data([1]))]).write(to: url)
+        let summary = try FLACMetadataReader.summary(of: url)
+        #expect(summary.vorbisComment == nil)
+        #expect(summary.unreadableBlocks == [FLACUnreadableBlock(index: 1, typeCode: 4, error: .invalidVorbisComment)])
+        #expect(summary.streamInfo.totalSamples == 44100)
+    }
+
+    @Test("reading from disk refuses a file cut off inside its cover, a non-FLAC file and a misplaced STREAMINFO")
+    func summaryRefusals() throws {
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func summary(of data: Data) throws -> FLACFileSummary {
+            let url = folder.appendingPathComponent(UUID().uuidString)
+            try data.write(to: url)
+            return try FLACMetadataReader.summary(of: url)
+        }
+        let ffmpeg = try AudioFixture.data("ffmpeg-bts-16-44100.flac")
+        #expect(throws: FLACFormatError.truncated("metadata block body")) { try summary(of: ffmpeg.prefix(500)) }
+        #expect(throws: FLACFormatError.truncated("metadata block header")) { try summary(of: ffmpeg.prefix(42)) }
+        #expect(throws: FLACFormatError.notFLAC) { try summary(of: Data("RIFF....WAVE".utf8)) }
+        #expect(throws: FLACFormatError.notFLAC) { try summary(of: Data()) }
+        let paddingFirst = AudioFixture.flac([FLACMetadataBlock(.padding, body: Data(count: 4))])
+        #expect(throws: FLACFormatError.invalidStreamInfo) { try summary(of: paddingFirst) }
+    }
+
     @Test("reads a Data slice whose indices don't start at 0")
     func readsSlices() throws {
         let flac = try AudioFixture.data("bts-16-44100.flac")

@@ -2,9 +2,12 @@
 //
 // Used by the native writer (to take a BTS stream's STREAMINFO and find
 // where its audio starts) and by the spike to record exactly what FFmpeg
-// wrote. It reads only the metadata blocks, so the library scanner can hand
-// it the head of a file (decision card G3-10, recommended option: small own
-// readers instead of a tag library).
+// wrote. `read(_:)` needs every metadata block in memory, which for the
+// app's own files includes a cover of a few hundred KB placed before the
+// tags (FFmpeg's block order, kept by the native writer). The library
+// scanner (decision card G3-10, recommended option: small own readers
+// instead of a tag library) uses `summary(of:)` instead, which reads from
+// the file and seeks past the cover and the padding.
 import Foundation
 
 /// The layout of a FLAC file: its metadata blocks and where the audio begins.
@@ -17,14 +20,54 @@ public struct FLACFileLayout: Sendable, Equatable {
     /// Where the first audio frame starts, counted from the start of the data.
     public var audioOffset: Int
     public var streamInfo: FLACStreamInfo
-    /// The first VORBIS_COMMENT block (the format allows only one).
+    /// The first VORBIS_COMMENT block (the format allows only one), when it
+    /// could be decoded.
     public var vorbisComment: FLACVorbisComment?
+    /// Every PICTURE block that could be decoded.
     public var pictures: [FLACPicture]
+    /// Tag and picture blocks that couldn't be decoded. One bad block from
+    /// some tagger doesn't cost the rest of the file.
+    public var unreadableBlocks: [FLACUnreadableBlock]
+}
+
+/// What the library scanner needs from a .flac on disk: STREAMINFO and the
+/// tags, read without loading the cover or the audio (decision card G3-10).
+public struct FLACFileSummary: Sendable, Equatable {
+    public var leadingTagSize: Int
+    public var streamInfo: FLACStreamInfo
+    /// The first VORBIS_COMMENT block, when it could be decoded.
+    public var vorbisComment: FLACVorbisComment?
+    /// Where each PICTURE block's body sits in the file. The bodies are
+    /// skipped, not read: decode one with `FLACPicture(bytes:)` when the
+    /// cover is actually wanted.
+    public var pictureBodies: [Range<Int>]
+    /// Where the first audio frame starts in the file.
+    public var audioOffset: Int
+    /// Blocks that were read but couldn't be decoded. The scanner counts
+    /// these so tag failures aren't silent (card G3-10, skeptic's change).
+    public var unreadableBlocks: [FLACUnreadableBlock]
+}
+
+/// A metadata block whose body couldn't be decoded.
+public struct FLACUnreadableBlock: Sendable, Equatable {
+    /// Its position among the file's metadata blocks, from 0.
+    public var index: Int
+    public var typeCode: UInt8
+    public var error: FLACFormatError
+
+    public init(index: Int, typeCode: UInt8, error: FLACFormatError) {
+        self.index = index
+        self.typeCode = typeCode
+        self.error = error
+    }
 }
 
 public enum FLACMetadataReader {
     /// Reads the metadata blocks. The data needs to reach the end of the last
-    /// block; audio frames after that are neither needed nor checked.
+    /// block; audio frames after that are neither needed nor checked. A
+    /// missing or malformed STREAMINFO, or a block that runs past the data,
+    /// fails the whole file; a VORBIS_COMMENT or PICTURE that doesn't decode
+    /// is listed in `unreadableBlocks` instead.
     public static func read(_ data: Data) throws -> FLACFileLayout {
         let r = FLACByteReader(data)
         let start = leadingID3v2Size(r)
@@ -47,11 +90,92 @@ public enum FLACMetadataReader {
 
         guard let first = blocks.first, first.type == .streamInfo else { throw FLACFormatError.invalidStreamInfo }
         let streamInfo = try FLACStreamInfo(bytes: first.body)
-        let comment = try blocks.first { $0.type == .vorbisComment }.map { try FLACVorbisComment(bytes: $0.body) }
-        let pictures = try blocks.filter { $0.type == .picture }.map { try FLACPicture(bytes: $0.body) }
+        var comment: FLACVorbisComment?
+        var sawComment = false
+        var pictures: [FLACPicture] = []
+        var unreadable: [FLACUnreadableBlock] = []
+        for (index, block) in blocks.enumerated() {
+            do throws(FLACFormatError) {
+                switch block.type {
+                case .vorbisComment where !sawComment:
+                    sawComment = true
+                    comment = try FLACVorbisComment(bytes: block.body)
+                case .picture:
+                    pictures.append(try FLACPicture(bytes: block.body))
+                default:
+                    break
+                }
+            } catch {
+                unreadable.append(FLACUnreadableBlock(index: index, typeCode: block.typeCode, error: error))
+            }
+        }
         return FLACFileLayout(
-            leadingTagSize: start, blocks: blocks, audioOffset: o,
-            streamInfo: streamInfo, vorbisComment: comment, pictures: pictures
+            leadingTagSize: start, blocks: blocks, audioOffset: o, streamInfo: streamInfo,
+            vorbisComment: comment, pictures: pictures, unreadableBlocks: unreadable
+        )
+    }
+
+    /// Reads a .flac's metadata from disk one block header at a time,
+    /// loading only the STREAMINFO and VORBIS_COMMENT bodies and seeking past
+    /// the rest. A cover of any size costs nothing, and the audio is never
+    /// touched. Fails the file in the same cases as `read(_:)`.
+    public static func summary(of url: URL) throws -> FLACFileSummary {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let fileSize = Int(try handle.seekToEnd())
+        func bytes(at offset: Int, _ count: Int, _ what: String) throws -> Data {
+            guard offset >= 0, count >= 0, count <= fileSize - offset else { throw FLACFormatError.truncated(what) }
+            try handle.seek(toOffset: UInt64(offset))
+            let data = try handle.read(upToCount: count) ?? Data()
+            guard data.count == count else { throw FLACFormatError.truncated(what) }
+            return data
+        }
+
+        let start = leadingID3v2Size(FLACByteReader(try bytes(at: 0, min(10, fileSize), "ID3 tag")))
+        guard start <= fileSize - 4, try bytes(at: start, 4, "FLAC marker") == Data("fLaC".utf8) else {
+            throw FLACFormatError.notFLAC
+        }
+
+        var streamInfo: FLACStreamInfo?
+        var comment: FLACVorbisComment?
+        var sawComment = false
+        var pictureBodies: [Range<Int>] = []
+        var unreadable: [FLACUnreadableBlock] = []
+        var o = start + 4
+        var index = 0
+        var isLast = false
+        while !isLast {
+            let header = FLACByteReader(try bytes(at: o, 4, "metadata block header"))
+            let typeCode = header.u8(0) & 0x7F
+            isLast = header.u8(0) & 0x80 != 0
+            let length = Int(header.u24be(1))
+            let body = (o + 4)..<(o + 4 + length)
+            guard length <= fileSize - body.lowerBound else { throw FLACFormatError.truncated("metadata block body") }
+            guard index > 0 || typeCode == FLACBlockType.streamInfo.rawValue else { throw FLACFormatError.invalidStreamInfo }
+
+            switch FLACBlockType(rawValue: typeCode) {
+            case .streamInfo where index == 0:
+                streamInfo = try FLACStreamInfo(bytes: bytes(at: body.lowerBound, length, "metadata block body"))
+            case .vorbisComment where !sawComment:
+                sawComment = true
+                let data = try bytes(at: body.lowerBound, length, "metadata block body")
+                do throws(FLACFormatError) {
+                    comment = try FLACVorbisComment(bytes: data)
+                } catch {
+                    unreadable.append(FLACUnreadableBlock(index: index, typeCode: typeCode, error: error))
+                }
+            case .picture:
+                pictureBodies.append(body)
+            default:
+                break
+            }
+            o = body.upperBound
+            index += 1
+        }
+        guard let streamInfo else { throw FLACFormatError.invalidStreamInfo }
+        return FLACFileSummary(
+            leadingTagSize: start, streamInfo: streamInfo, vorbisComment: comment,
+            pictureBodies: pictureBodies, audioOffset: o, unreadableBlocks: unreadable
         )
     }
 

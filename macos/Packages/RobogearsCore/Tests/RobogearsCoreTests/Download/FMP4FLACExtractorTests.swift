@@ -130,6 +130,147 @@ struct FMP4FLACExtractorTests {
         #expect(dash.countedSampleCount == 57600)
     }
 
+    // MARK: Layouts the FFmpeg fixtures don't reach
+
+    /// The fixture's first box of `type` found by walking `path` from the top.
+    func box(_ data: Data, _ path: [String]) throws -> FMP4Box {
+        let r = FLACByteReader(data)
+        let top = try FMP4FLACExtractor.boxes(r, in: 0..<data.count)
+        let first = try #require(top.first { $0.type == path[0] })
+        return try #require(try FMP4FLACExtractor.path(r, Array(path.dropFirst()), from: first))
+    }
+
+    func renamed(_ data: Data, box target: FMP4Box, to type: String) -> Data {
+        var copy = data
+        copy.replaceSubrange((target.start + 4)..<(target.start + 8), with: Data(type.utf8))
+        return copy
+    }
+
+    @Test("an explicit tfhd base data offset is refused")
+    func tfhdBaseDataOffsetRefused() throws {
+        // Joined segments lose the file each offset counted from (live check 1).
+        var data = try AudioFixture.data("dash-24-96000.mp4")
+        let tfhd = try box(data, ["moof", "traf", "tfhd"])
+        data[tfhd.bodyStart + 3] |= 0x01
+        #expect(throws: FLACFormatError.unsupportedMP4("tfhd base data offset")) { try FLACAudio(fragmentedMP4: data) }
+    }
+
+    @Test("an encrypted sample entry (enca) is refused by name")
+    func encryptedAudioRefused() throws {
+        let data = try AudioFixture.data("dash-24-96000.mp4")
+        let stsd = try box(data, ["moov", "trak", "mdia", "minf", "stbl", "stsd"])
+        let entry = try #require(try FMP4FLACExtractor.boxes(FLACByteReader(data), in: (stsd.bodyStart + 8)..<stsd.end).first)
+        #expect(entry.type == "fLaC")
+        #expect(throws: FLACFormatError.unsupportedMP4("encrypted audio")) {
+            try FLACAudio(fragmentedMP4: renamed(data, box: entry, to: "enca"))
+        }
+    }
+
+    @Test("a FLAC sample entry without a dfLa box is refused")
+    func missingDfLaRefused() throws {
+        let data = try AudioFixture.data("dash-24-96000.mp4")
+        let stsd = try box(data, ["moov", "trak", "mdia", "minf", "stbl", "stsd"])
+        let r = FLACByteReader(data)
+        let entry = try #require(try FMP4FLACExtractor.boxes(r, in: (stsd.bodyStart + 8)..<stsd.end).first)
+        let dfLa = try #require(try FMP4FLACExtractor.boxes(r, in: (entry.bodyStart + 28)..<entry.end).first { $0.type == "dfLa" })
+        #expect(throws: FLACFormatError.missingFLACConfiguration) {
+            try FLACAudio(fragmentedMP4: renamed(data, box: dfLa, to: "free"))
+        }
+    }
+
+    @Test("a progressive (unfragmented) MP4 is refused as having no movie fragments")
+    func progressiveMP4Refused() throws {
+        // FFmpeg read these; the native reader doesn't yet (spike write-up,
+        // recommendation). Same file with every moof taken out, mdats kept.
+        let data = try AudioFixture.data("dash-24-96000.mp4")
+        let top = try FMP4FLACExtractor.boxes(FLACByteReader(data), in: 0..<data.count)
+        let progressive = top.filter { $0.type != "moof" }.reduce(Data()) { $0 + data.subdata(in: $1.start..<$1.end) }
+        #expect(throws: FLACFormatError.unsupportedMP4("no movie fragments")) { try FLACAudio(fragmentedMP4: progressive) }
+        #expect(throws: FLACFormatError.unsupportedMP4("no movie fragments")) { try FLACAudio(downloaded: progressive) }
+    }
+
+    @Test("a run with neither a data offset nor sample sizes takes the next mdat and the track's default size")
+    func runUsesFollowingMdatAndTrexSize() throws {
+        let frames = (0..<3).map { SyntheticFMP4.frame(number: UInt8($0), size: 32) }
+        let file = try SyntheticFMP4.initSegment(trexDefaultSize: 32)
+            + SyntheticFMP4.fragment(runs: [.init(samples: 3, dataOffset: false, sizes: false)], frames: frames)
+        let audio = try FLACAudio(fragmentedMP4: file)
+        #expect(audio.framesData() == frames.reduce(Data(), +))
+        #expect(audio.countedSampleCount == UInt64(3 * SyntheticFMP4.samplesPerFrame))
+    }
+
+    @Test("the fragment's default size wins over the track's")
+    func tfhdDefaultSizeWins() throws {
+        let frames = (0..<2).map { SyntheticFMP4.frame(number: UInt8($0), size: 40) }
+        let file = try SyntheticFMP4.initSegment(trexDefaultSize: 32)
+            + SyntheticFMP4.fragment(tfhdDefaultSize: 40, runs: [.init(samples: 2, sizes: false)], frames: frames)
+        #expect(try FLACAudio(fragmentedMP4: file).framesData() == frames.reduce(Data(), +))
+    }
+
+    @Test("a second run without a data offset continues where the first ended")
+    func runContinuesFromCursor() throws {
+        let frames = [40, 50, 30, 60].enumerated().map { SyntheticFMP4.frame(number: UInt8($0.offset), size: $0.element) }
+        let file = try SyntheticFMP4.initSegment() + SyntheticFMP4.fragment(
+            runs: [.init(samples: 2), .init(samples: 2, dataOffset: false)], frames: frames
+        )
+        let audio = try FLACAudio(fragmentedMP4: file)
+        #expect(audio.framesData() == frames.reduce(Data(), +))
+        #expect(audio.frameRanges.count == 1)
+        #expect(audio.countedSampleCount == UInt64(4 * SyntheticFMP4.samplesPerFrame))
+    }
+
+    @Test("a run with no sample sizes anywhere is refused")
+    func noSampleSizesRefused() throws {
+        let frames = [SyntheticFMP4.frame(number: 0, size: 32)]
+        let file = try SyntheticFMP4.initSegment()
+            + SyntheticFMP4.fragment(runs: [.init(samples: 1, sizes: false)], frames: frames)
+        #expect(throws: FLACFormatError.unsupportedMP4("no sample sizes")) { try FLACAudio(fragmentedMP4: file) }
+    }
+
+    @Test("a run claiming more samples than its mdat holds is refused before its samples are listed")
+    func corruptCountRefusedWhileListing() throws {
+        // With only a default size, nothing else bounds the count; the
+        // extractor must not build one range per claimed sample first.
+        func samples(_ file: Data) throws -> [Range<Int>] {
+            let r = FLACByteReader(file)
+            let top = try FMP4FLACExtractor.boxes(r, in: 0..<file.count)
+            let moov = try #require(top.first { $0.type == "moov" })
+            let moofIndex = try #require(top.firstIndex { $0.type == "moof" })
+            let traf = try #require(try FMP4FLACExtractor.child(r, "traf", in: top[moofIndex]))
+            return try FMP4FLACExtractor.trackFragmentSamples(
+                r, traf: traf, moof: top[moofIndex], trackID: 1,
+                defaults: FMP4FLACExtractor.trackDefaults(r, moov: moov, trackID: 1),
+                followingMdat: top[(moofIndex + 1)...].first { $0.type == "mdat" }?.bodyStart,
+                mdats: top.filter { $0.type == "mdat" }.map(\.body)
+            )
+        }
+        let frame = SyntheticFMP4.frame(number: 0, size: 40)
+        let defaultSized = try SyntheticFMP4.initSegment()
+            + SyntheticFMP4.fragment(tfhdDefaultSize: 1, runs: [.init(samples: 1, sizes: false, claimedCount: 200)], frames: [frame])
+        #expect(defaultSized.count > 200) // so the old whole-file bound let it through
+        #expect(throws: FLACFormatError.truncated("MP4 sample outside its mdat")) { try samples(defaultSized) }
+
+        // Per-sample sizes: the first sample that runs past the mdat stops the listing.
+        var sized = try SyntheticFMP4.initSegment()
+            + SyntheticFMP4.fragment(runs: [.init(samples: 2)], frames: [frame, SyntheticFMP4.frame(number: 1, size: 40)])
+        let trun = try box(sized, ["moof", "traf", "trun"])
+        sized.replaceSubrange((trun.bodyStart + 16)..<(trun.bodyStart + 20), with: SyntheticFMP4.u32(41))
+        #expect(throws: FLACFormatError.truncated("MP4 sample outside its mdat")) { try samples(sized) }
+        #expect(throws: FLACFormatError.truncated("MP4 sample outside its mdat")) { try FLACAudio(fragmentedMP4: sized) }
+    }
+
+    @Test("the download reader drops an ID3v2 tag in front of a native FLAC")
+    func downloadedNativeWithID3() throws {
+        let flac = try AudioFixture.data("bts-16-44100.flac")
+        let tagged = Data("ID3".utf8) + Data([0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14]) + Data(count: 20) + flac
+        let audio = try FLACAudio(downloaded: tagged)
+        #expect(audio.frameRanges == [(30 + 8288)..<tagged.count])
+        #expect(audio.framesData() == (try AudioFixture.frames(ofFLAC: flac)))
+        let written = try FLACWriter.data(audio, tags: AudioFixture.tags, coverJPEG: nil)
+        #expect(written.prefix(4) == Data("fLaC".utf8))
+        #expect(try FLACMetadataReader.read(written).leadingTagSize == 0)
+    }
+
     @Test("64-bit box sizes and size 0 (to the end) are understood")
     func boxSizeForms() throws {
         var data = Data([0, 0, 0, 1]) + Data("free".utf8) + Data([0, 0, 0, 0, 0, 0, 0, 24])

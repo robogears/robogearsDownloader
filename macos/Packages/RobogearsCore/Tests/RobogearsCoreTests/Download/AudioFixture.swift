@@ -34,6 +34,20 @@ enum AudioFixture {
         return data.subdata(in: layout.audioOffset..<data.count)
     }
 
+    /// A FLAC file built from the given metadata blocks (the last one gets
+    /// the "last" flag) followed by `audio`.
+    static func flac(_ blocks: [FLACMetadataBlock], audio: Data = Data()) -> Data {
+        var w = FLACByteWriter()
+        w.append(Data("fLaC".utf8))
+        for (index, block) in blocks.enumerated() {
+            w.u8(block.typeCode | (index == blocks.count - 1 ? 0x80 : 0))
+            w.u24be(UInt32(block.body.count))
+            w.append(block.body)
+        }
+        w.append(audio)
+        return w.data
+    }
+
     /// A fresh folder for files a test writes, removed by the caller.
     static func temporaryFolder() throws -> URL {
         let folder = FileManager.default.temporaryDirectory
