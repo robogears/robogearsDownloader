@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 document
+STATUS: LOOPING · cycle 0 · 9 done · build+tests GREEN · last: library scanner
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,6 +15,7 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 23:50 Library scanner: own FLAC and Ogg Vorbis/Opus tag parsers (title, every ARTIST, ISRC, exact length) plus Apple's reader for MP3/M4A/WAV/AIFF; folder walk skips hidden, AppleDouble "._" files and links; online-only Dropbox/iCloud files detected without downloading and read only once allowed; saved index re-reads only new or changed files; an unreachable library keeps the last index; the newest scan request always wins. 16 new tests on generated audio (78 total).
 - 23:35 Windows farewell (D4 5.8) on its own branch loop/windows-farewell, based on v0.1.30: on Windows the Electron app stops checking for updates, says once at launch that Windows support has ended and this version keeps working, and Settings › Updates reads \"Final Windows version\"; version 0.1.31. Its setup.exe still has to be built by CI at ship time.
 - 23:20 Design direction (docs/DESIGN_DIRECTION.md, Fable design lead): the waveform queue is the one hand-drawn element; pure-black/white canvas only in the content layer, system chrome everywhere else; ink as AccentColor; 13 colour tokens with measured contrast incl. Increase Contrast; exact waveform, row and motion specs; full menu-bar map; accessibility; 17 real-pixel checks. Eight brief questions answered (owner to confirm).
 - 23:10 Project moved to ~/Developer/swiftRobotDownloader (owner); git worktrees re-pointed; D4 set to all recommended (owner).
@@ -30,7 +31,7 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 ## Cycle log
 
 ## Completed
-- Total: 7 · recent: ✅ Decision-4 document — 20m · ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
+- Total: 9 · recent: ✅ Library scanner — 25m · ✅ Windows farewell branch · ✅ Decision-4 document — 20m · ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
 
 ## Blocked (environment)
 
@@ -51,7 +52,7 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 
 ## Test status
 - Baseline: Electron JS files pass `node --check` (11/11); no test suite exists; `node_modules` absent, so the Electron app can't be built or run here; Xcode 27.1 and Swift 6.4 available; no Swift project yet. Full output in .overnight-loop/baseline.txt
-- Latest: RobogearsCore 62/62 tests pass; app builds (Debug)
+- Latest: RobogearsCore 78/78 tests pass; app builds (Debug)
 
 ## Usage-limit waits
 
@@ -68,6 +69,6 @@ git checkout main && git merge --no-ff overnight-loop/2026-10-21-2235
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "overnight-loop/2026-10-21-2235", "base": "main",
- "cycles": 0, "done": 7, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 9, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```
