@@ -1,0 +1,4 @@
+# The root .gitignore keeps downloaded music out of the repository. These
+# files are small synthetic test fixtures (see README.txt), so they are tracked.
+!*.flac
+!*.m4a
