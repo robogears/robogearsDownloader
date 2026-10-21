@@ -34,7 +34,7 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
 - [ ] 11. Native UI — done when: a Fable-led design pass from docs/DESIGN.md is recorded, and the SwiftUI app shows the main window (input, drop zone, queue rows, activity), Settings window, sign-in sheet and menu-bar commands, wired to RobogearsCore; screenshots of real pixels in Light and Dark are checked
 - [ ] 12. Preview player and waveform — done when: peaks (200 bars) and AVFoundation playback with scrubbing work on a generated file, one player at a time (5.16)
 - [x] 13. Sound effects — done when: every sound (download chime, cancel chime, warning honk, success ping, brand easter eggs) is synthesised natively with the exact frequencies and envelopes from the reference — 14m
-- [ ] 14. Updater — done when: the GitHub-releases updater (owner's github-updater recipe, SHA-256 gate, asset contract `mac-arm64.dmg`) is implemented and unit-tested without touching the network for real installs
+- [x] 14. Updater — done when: the GitHub-releases updater (owner's github-updater recipe, SHA-256 gate, asset contract `mac-arm64.dmg`) is implemented and unit-tested without touching the network for real installs — 25m
 <!-- open = [ ] or [~]; resume [~] first
      [~] N. <item> — STARTED <epoch> · attempt <n> · approach: <one line> · active: <m>m · wip: <hash|none> [· delegated: <task/run id> · <worktree/branch>] [· interrupted]
      [x] N. <item> — <active>m
@@ -42,6 +42,8 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
      [!] N. <item> — blocked by <reason> (morning command in the report) -->
 
 ## Ladder backlog (self-generated when the mission is exhausted)
+- [ ] L1. Unify version comparison — done when: one compare function serves the updater and the lane-input VersionCompare (UpdateVersion vs VersionCompare duplicate after the merge)
+- [ ] L2. Release packaging script — done when: a script builds the Release app, the DMG named robogears-downloader-mac-arm64.dmg (.app at the root, for the v0.1.30 updater), the zip robogears-downloader-mac-arm64.zip, and a .sha256 for each; the CI workflow gains actions/checkout in the release job
 
 ## Parked — needs direction (never build these on a guess)
 - ⏸ Live TIDAL check — question: run the device sign-in, a refresh with the second client pair, and record field names (user code, lifetime, version, presentation) — options: owner signs in once in the morning | skip — unlocks: verifying 1.3, 1.9, 2.7, 2.23 and the real download path
