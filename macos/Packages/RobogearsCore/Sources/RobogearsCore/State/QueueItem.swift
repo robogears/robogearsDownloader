@@ -1,0 +1,108 @@
+import Foundation
+
+/// One row of the review queue.
+public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
+    public enum Source: String, Codable, Sendable { case tidal, spotify, importList, search }
+
+    /// What a library check found (decision 4, area 3).
+    public struct LibraryMatch: Codable, Equatable, Sendable {
+        public enum Kind: String, Codable, Sendable { case exact, similar }
+        public var kind: Kind
+        public var path: String
+        public var libraryTitle: String
+        public init(kind: Kind, path: String, libraryTitle: String) {
+            self.kind = kind; self.path = path; self.libraryTitle = libraryTitle
+        }
+    }
+
+    /// Whether the TIDAL match exists and can be trusted.
+    public enum Match: Codable, Equatable, Sendable {
+        case matched
+        /// TIDAL searched and nothing fitted.
+        case notOnTIDAL
+        /// The lookup itself failed (busy, offline): Match Again can fix it.
+        case couldNotCheck(reason: String)
+        /// The title matched but TIDAL credits another artist; left out until + Add.
+        case differentArtist(tidalArtist: String)
+    }
+
+    /// Where the row is in downloading. Only `waiting` and `failed` survive a
+    /// restart: a crash mid-batch brings unfinished rows back as waiting.
+    public enum DownloadState: Codable, Equatable, Sendable {
+        case waiting
+        /// In a running batch, not started yet.
+        case queued
+        case downloading(percent: Int)
+        case done(quality: String)
+        case skipped(reason: String)
+        /// Kept across restarts with its reason (decision 4, item 2.9).
+        case failed(reason: String)
+    }
+
+    public let id: UUID
+    public var tidalID: Int64?
+    public var title: String
+    public var version: String?
+    public var artist: String
+    public var album: String?
+    public var durationSeconds: Int?
+    public var isrc: String?
+    public var hiRes: Bool
+    public var explicit: Bool
+    public var source: Source
+    /// The text the person brought (Spotify or a CSV), shown as a quiet second
+    /// line when it differs from what TIDAL will save (decision 4, item 4.14).
+    public var originalTitle: String?
+    public var originalArtist: String?
+    public var match: Match
+    public var libraryMatch: LibraryMatch?
+    /// Exact library matches start left out; the person can + Add them.
+    public var included: Bool
+    public var state: DownloadState
+
+    public init(id: UUID = UUID(), tidalID: Int64?, title: String, version: String? = nil, artist: String,
+                album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil, hiRes: Bool = false,
+                explicit: Bool = false, source: Source, originalTitle: String? = nil, originalArtist: String? = nil,
+                match: Match = .matched, libraryMatch: LibraryMatch? = nil, included: Bool? = nil,
+                state: DownloadState = .waiting) {
+        self.id = id
+        self.tidalID = tidalID
+        self.title = title
+        self.version = version
+        self.artist = artist
+        self.album = album
+        self.durationSeconds = durationSeconds
+        self.isrc = isrc
+        self.hiRes = hiRes
+        self.explicit = explicit
+        self.source = source
+        self.originalTitle = originalTitle
+        self.originalArtist = originalArtist
+        self.match = match
+        self.libraryMatch = libraryMatch
+        // Library review happens in the queue (product rule 4): an exact match
+        // starts greyed out; a similar one stays included with a warning.
+        self.included = included ?? (libraryMatch?.kind != .exact)
+        self.state = state
+    }
+
+    /// Rows that Download All sends: matched, included, not already done.
+    public var isDownloadable: Bool {
+        guard tidalID != nil, case .matched = match, included else { return false }
+        switch state {
+        case .waiting, .failed: return true
+        default: return false
+        }
+    }
+
+    /// The form a row takes on disk: in-flight states fall back to waiting so
+    /// a crash or quit never strands a row as "downloading" or loses it.
+    public var persisted: QueueItem {
+        var copy = self
+        switch state {
+        case .queued, .downloading: copy.state = .waiting
+        default: break
+        }
+        return copy
+    }
+}

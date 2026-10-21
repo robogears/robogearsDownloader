@@ -35,6 +35,7 @@ Mission (owner, 21 Oct 2026): "the main plan for this project is to convert it c
 - [ ] 12. Preview player and waveform — done when: peaks (200 bars) and AVFoundation playback with scrubbing work on a generated file, one player at a time (5.16)
 - [x] 13. Sound effects — done when: every sound (download chime, cancel chime, warning honk, success ping, brand easter eggs) is synthesised natively with the exact frequencies and envelopes from the reference — 14m
 - [x] 14. Updater — done when: the GitHub-releases updater (owner's github-updater recipe, SHA-256 gate, asset contract `mac-arm64.dmg`) is implemented and unit-tested without touching the network for real installs — 25m
+- [x] 15. App state — done when: settings, the two folders (bookmarks that follow a rename; unavailable, missing and in-the-Trash detected; a download folder inside the library refused) and the queue (atomic saves, a damaged file kept aside, failed rows keep their reason, unfinished rows come back waiting) live in RobogearsCore/State with tests — 18m
 <!-- open = [ ] or [~]; resume [~] first
      [~] N. <item> — STARTED <epoch> · attempt <n> · approach: <one line> · active: <m>m · wip: <hash|none> [· delegated: <task/run id> · <worktree/branch>] [· interrupted]
      [x] N. <item> — <active>m
