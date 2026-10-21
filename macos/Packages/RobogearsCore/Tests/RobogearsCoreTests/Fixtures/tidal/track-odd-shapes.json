@@ -1,0 +1,18 @@
+{
+    "id": "900000102",
+    "title": "Paper Harbour",
+    "duration": 199.6,
+    "trackNumber": 1.0,
+    "volumeNumber": null,
+    "explicit": "no",
+    "audioQuality": "HIGH",
+    "version": null,
+    "mediaMetadata": { "tags": "LOSSLESS" },
+    "artists": [
+        null,
+        "not an artist object",
+        { "id": 7000003, "name": "Third Placeholder" },
+        { "id": "7000004", "name": "" }
+    ],
+    "album": "not an album object"
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+  <Period>
+    <AdaptationSet mimeType="audio/mp4">
+      <Representation id="FLAC,96000,24" codecs="flac" bandwidth="3000000">
+        <SegmentTemplate initialization="https://audio.example.test/hi/0.mp4" media="https://audio.example.test/hi/$Number$.mp4">
+          <SegmentTimeline><S d="384000" r="2"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+      <Representation id="FLAC,44100,16" codecs="flac" bandwidth="1100000">
+        <SegmentTemplate initialization="https://audio.example.test/lo/0.mp4" media="https://audio.example.test/lo/$Number$.mp4">
+          <SegmentTimeline><S d="176128" r="9"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

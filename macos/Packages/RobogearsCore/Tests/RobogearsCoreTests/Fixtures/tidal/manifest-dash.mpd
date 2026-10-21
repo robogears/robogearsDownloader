@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:cenc="urn:mpeg:cenc:2013" xsi:schemaLocation="urn:mpeg:dash:schema:mpd:2011 DASH-MPD.xsd" profiles="urn:mpeg:dash:profile:isoff-main:2011" type="static" minBufferTime="PT3.993S" mediaPresentationDuration="PT0M18.204S">
+  <Period id="0">
+    <AdaptationSet id="0" contentType="audio" mimeType="audio/mp4" segmentAlignment="true">
+      <Representation id="FLAC,44100,16" codecs="flac" bandwidth="1100000" audioSamplingRate="44100">
+        <SegmentTemplate timescale="44100" initialization="https://audio.example.test/mediatracks/synthetic/0.mp4?token=abc&amp;expires=1700000000" media="https://audio.example.test/mediatracks/synthetic/$Number$.mp4?token=abc&amp;expires=1700000000" startNumber="1">
+          <SegmentTimeline>
+            <S d="176128" r="3"/>
+            <S d="98304"/>
+          </SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
