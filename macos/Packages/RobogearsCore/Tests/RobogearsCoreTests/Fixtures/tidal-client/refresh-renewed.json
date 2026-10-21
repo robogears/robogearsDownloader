@@ -1,0 +1,7 @@
+{
+  "scope": "r_usr w_usr w_sub",
+  "user": { "userId": 123456789, "countryCode": "DE" },
+  "token_type": "Bearer",
+  "access_token": "fake-access-2",
+  "expires_in": 3600
+}
