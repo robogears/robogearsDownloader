@@ -206,10 +206,12 @@ struct TidalMatcherTests {
         #expect(match.confirmation == .artistAgrees)
     }
 
-    @Test("the band and the guest both listed on TIDAL is complete agreement")
+    @Test("the band and the guest both listed on TIDAL, in another order, is complete agreement")
     func separatedBandAndGuestBothListed() {
+        // In TIDAL's order the joined names would equal the whole line anyway;
+        // reversed, only reading the band as one name gives 100 (was 25).
         let evidence = TidalMatcher.artistScore(wanted: Self.bandAndGuest,
-                                                tidalNames: ["Salt, Wind & Lantern", "Second Guest"])
+                                                tidalNames: ["Second Guest", "Salt, Wind & Lantern"])
         #expect(evidence.score == 100)
     }
 
