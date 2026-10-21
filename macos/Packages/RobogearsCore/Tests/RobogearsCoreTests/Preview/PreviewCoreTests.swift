@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import Foundation
 import Testing
 @testable import RobogearsCore
@@ -168,5 +169,24 @@ private func writeSamples(_ url: URL, _ samples: [Float]) throws {
         let cache = PreviewCache(directory: root.appendingPathComponent("Previews"))
         try await cache.storePeaks([0.1, 0.2], for: 3)
         #expect(await cache.peaks(for: 3) == nil)
+    }
+}
+
+@Suite("Now Playing") struct NowPlayingTests {
+    @Test func aPausedPreviewReportsRateZeroAndAClampedPosition() {
+        let info = PreviewNowPlaying.Info(title: "Blue Lantern", artist: "Placeholder Artist",
+                                          duration: 225, elapsed: 400, isPlaying: false)
+        let dict = PreviewNowPlaying.dictionary(for: info)
+        #expect(dict[MPMediaItemPropertyTitle] as? String == "Blue Lantern")
+        #expect(dict[MPMediaItemPropertyArtist] as? String == "Placeholder Artist")
+        #expect(dict[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
+        #expect(dict[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 225)
+    }
+
+    @Test func aPlayingPreviewReportsRateOne() {
+        let info = PreviewNowPlaying.Info(title: "T", artist: "A", duration: 10, elapsed: -1, isPlaying: true)
+        let dict = PreviewNowPlaying.dictionary(for: info)
+        #expect(dict[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 1)
+        #expect(dict[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 0)
     }
 }
