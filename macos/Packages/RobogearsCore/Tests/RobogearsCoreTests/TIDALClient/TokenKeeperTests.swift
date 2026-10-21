@@ -166,6 +166,13 @@ struct TokenKeeperTests {
         #expect(store.stored?.isRefused == false)
     }
 
+    @Test func forbiddenRenewalIsReportedButNotTreatedAsARefusedSignIn() async throws {
+        let store = TIDALMemoryStore(expired())
+        let keeper = keeper(TIDALMockServer(replies: [.fixture(403, "api-forbidden.json")]), store: store)
+        await #expect(throws: RequestError.forbidden(subStatus: 4005)) { try await keeper.currentToken() }
+        #expect(store.stored?.isRefused == false)
+    }
+
     @Test func busyRenewalIsReportedBusy() async throws {
         let server = TIDALMockServer { _, _ in .json(429, "{}", headers: ["Retry-After": "120"]) }
         let store = TIDALMemoryStore(expired())
