@@ -197,3 +197,79 @@ private func row(_ title: String, state: QueueItem.DownloadState = .waiting, lib
     #expect(message?.contains("isn't available. Connect the drive or choose another folder.") == true)
     #expect(Folders.message(for: .inTrash, reference: reference, role: "download folder")?.contains("is in the Trash") == true)
 }
+
+// MARK: - The old app's files (D4 5.11)
+
+@Suite("Old Electron files") struct LegacyElectronFilesTests {
+    private func oldFolder(_ names: [String]) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for name in names {
+            if name == "chrome-extension" || name == "Local Storage" {
+                try FileManager.default.createDirectory(at: dir.appendingPathComponent(name), withIntermediateDirectories: true)
+            } else {
+                try Data("x".utf8).write(to: dir.appendingPathComponent(name))
+            }
+        }
+        return dir
+    }
+
+    /// Moves into a private folder instead of the real Trash.
+    private func fakeTrash() -> (URL, @Sendable (URL) throws -> Void) {
+        let bin = FileManager.default.temporaryDirectory.appendingPathComponent("fake-trash-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        return (bin, { try FileManager.default.moveItem(at: $0, to: bin.appendingPathComponent($0.lastPathComponent)) })
+    }
+
+    @Test func theAppKeepsItsOwnFilesOutsideTheOldFolder() {
+        #expect(AppPaths.supportDirectory() != AppPaths.legacyElectronDirectory())
+        #expect(AppPaths.settingsFile().deletingLastPathComponent() == AppPaths.supportDirectory())
+        #expect(AppPaths.queueFile().deletingLastPathComponent() == AppPaths.supportDirectory())
+    }
+
+    @Test func noOldFolderMeansNoNotice() {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-none-\(UUID().uuidString)")
+        #expect(!LegacyElectronFiles(folder: missing).shouldOfferNotice)
+    }
+
+    @Test func aFolderWithOnlyUnknownFilesGetsNoNotice() throws {
+        let dir = try oldFolder(["update-cache.json", "something-else.txt"])
+        #expect(!LegacyElectronFiles(folder: dir).shouldOfferNotice)
+    }
+
+    @Test func moveToTrashTakesOnlyKnownItemsAndLeavesTheRest() throws {
+        let dir = try oldFolder(["settings.json", "queue.json", "token.json", "chrome-extension", "Local Storage",
+                                 "update-cache.json", "my-notes.txt"])
+        let (bin, trash) = fakeTrash()
+        let files = LegacyElectronFiles(folder: dir, trash: trash)
+        #expect(files.shouldOfferNotice)
+        let moved = try files.moveToTrash().map(\.lastPathComponent)
+        #expect(Set(moved) == ["settings.json", "queue.json", "token.json", "chrome-extension", "Local Storage"])
+        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        #expect(left == ["my-notes.txt", "update-cache.json"])
+        #expect(FileManager.default.fileExists(atPath: bin.appendingPathComponent("queue.json").path))
+    }
+
+    @Test func deleteOldSignInRemovesOnlyTheTokenFileForGood() throws {
+        let dir = try oldFolder(["token.json", "settings.json"])
+        let (bin, trash) = fakeTrash()
+        let files = LegacyElectronFiles(folder: dir, trash: trash)
+        #expect(files.hasOldSignIn)
+        try files.deleteOldSignIn()
+        #expect(!files.hasOldSignIn)
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("settings.json").path))
+        // Deleted, not trashed: in the Trash it would stay readable.
+        #expect(!FileManager.default.fileExists(atPath: bin.appendingPathComponent("token.json").path))
+        try files.deleteOldSignIn()   // a second click does nothing
+    }
+
+    @Test func theNoticeIsRememberedInSettingsAndOldFilesDecode() throws {
+        var settings = AppSettings()
+        #expect(!settings.oldAppNoticeShown)
+        settings.oldAppNoticeShown = true
+        let back = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(back.oldAppNoticeShown)
+        let older = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"previewVolume":0.3}"#.utf8))
+        #expect(!older.oldAppNoticeShown)
+    }
+}

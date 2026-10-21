@@ -166,14 +166,11 @@ public struct FileCredentialStore: CredentialStore {
         self.fileURL = fileURL
     }
 
-    /// The Swift app's own file. Deliberately not `token.json`: the
-    /// Electron app's file may sit in the same folder, and the owner decided
-    /// the Swift app starts fresh and never reads it (D3).
-    public static func defaultFileURL(appFolderName: String = "robogears Downloader") -> URL {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support
-            .appendingPathComponent(appFolderName, isDirectory: true)
-            .appendingPathComponent("tidal-sign-in.json", isDirectory: false)
+    /// The Swift app's own file, in its own folder and deliberately not
+    /// `token.json`: the owner decided the Swift app starts fresh and never
+    /// reads the Electron app's sign-in (D3, D4 5.11).
+    public static func defaultFileURL(in folder: URL = AppPaths.supportDirectory()) -> URL {
+        folder.appendingPathComponent("tidal-sign-in.json", isDirectory: false)
     }
 
     public func read() throws(CredentialStoreError) -> TIDALCredential? {

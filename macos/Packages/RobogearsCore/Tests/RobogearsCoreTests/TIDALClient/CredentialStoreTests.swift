@@ -121,7 +121,9 @@ struct CredentialStoreTests {
     @Test func defaultFileIsNotTheElectronTokenFile() {
         let url = FileCredentialStore.defaultFileURL()
         #expect(url.lastPathComponent == "tidal-sign-in.json")
-        #expect(url.deletingLastPathComponent().lastPathComponent == "robogears Downloader")
+        // Its own folder, never the Electron app's "robogears Downloader" (D4 5.11).
+        #expect(url.deletingLastPathComponent().lastPathComponent == "com.robogears.downloader")
+        #expect(url.deletingLastPathComponent() != AppPaths.legacyElectronDirectory())
         #expect(url.path.contains("Application Support"))
     }
 
