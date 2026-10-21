@@ -32,9 +32,9 @@ public struct TagReader: TagReading {
     public func readTags(at url: URL) async -> AudioTags? {
         switch url.pathExtension.lowercased() {
         case "flac":
-            return try? FLACTags.read(url)
+            return try? FLACCommentReader.read(url)
         case "ogg", "oga", "opus":
-            return try? OggTags.read(url)
+            return try? OggCommentReader.read(url)
         default:
             return await Self.readWithAVFoundation(url)
         }
@@ -94,7 +94,7 @@ enum VorbisComments {
 /// FLAC: "fLaC" then metadata blocks, each with a 4-byte header (last-block
 /// flag + type, 24-bit length). STREAMINFO gives the length; VORBIS_COMMENT
 /// the tags. Pictures are skipped without being read.
-enum FLACTags {
+enum FLACCommentReader {
     static func read(_ url: URL) throws -> AudioTags? {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -130,7 +130,7 @@ enum FLACTags {
 /// first logical stream; the length comes from the last page's granule
 /// position divided by the sample rate (Opus counts at 48 kHz after the
 /// encoder's pre-skip).
-enum OggTags {
+enum OggCommentReader {
     static func read(_ url: URL) throws -> AudioTags? {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
