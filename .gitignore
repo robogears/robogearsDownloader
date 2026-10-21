@@ -67,3 +67,6 @@ macos/**/.swiftpm/
 xcuserdata/
 *.xcuserstate
 macos/dist/
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
