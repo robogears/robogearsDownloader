@@ -27,6 +27,10 @@ public struct TrackDownloadRequest: Sendable, Equatable {
     public var isrc: String?
     /// The row showed the Hi-Res badge; saving below it is flagged (2.21).
     public var expectsHiRes: Bool
+    /// Whether TIDAL's track details list a lossless version: false shows the
+    /// AAC badge before downloading, and an existing .m4a blocks a download
+    /// only when this is false (2.10). Nil when unknown.
+    public var losslessOnTIDAL: Bool?
     /// The folder the batch started with; a batch keeps it to the end (2.17).
     public var folder: URL
     /// The person chose Replace on a damaged existing file (2.3): the old
@@ -35,7 +39,7 @@ public struct TrackDownloadRequest: Sendable, Equatable {
 
     public init(rowID: UUID, tidalID: Int64, title: String, version: String? = nil, artist: String,
                 album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil,
-                expectsHiRes: Bool = false, folder: URL, replaceExisting: Bool = false) {
+                expectsHiRes: Bool = false, losslessOnTIDAL: Bool? = nil, folder: URL, replaceExisting: Bool = false) {
         self.rowID = rowID
         self.tidalID = tidalID
         self.title = title
@@ -45,6 +49,7 @@ public struct TrackDownloadRequest: Sendable, Equatable {
         self.durationSeconds = durationSeconds
         self.isrc = isrc
         self.expectsHiRes = expectsHiRes
+        self.losslessOnTIDAL = losslessOnTIDAL
         self.folder = folder
         self.replaceExisting = replaceExisting
     }
@@ -214,6 +219,41 @@ public protocol TrackDownloading: Sendable {
     /// it then throws `CancellationError`.
     func download(_ request: TrackDownloadRequest,
                   progress: @escaping @Sendable (Double) -> Void) async throws -> TrackDownloadOutcome
+}
+
+/// What the download folder says about a track before anything is saved.
+public enum FolderDecision: Sendable, Equatable {
+    /// Nothing to download: the outcome says why (a healthy copy, a damaged
+    /// copy left for the person to Replace, or an unreadable file holding
+    /// the name).
+    case skip(TrackDownloadOutcome)
+    /// Save under `fileName` (the plain "<Title>.flac" unless a different
+    /// song holds it, 2.6), with the notes that choice earns.
+    case save(fileName: String, notes: [SaveNote])
+}
+
+/// Everything the pipeline asks of the download folder: which name to use,
+/// whether the song is already there, and the final no-replace move. The
+/// same decision serves the queue's "In your download folder" badge (2.16).
+/// Never writes anything except in `moveIntoPlace` and Replace's move to
+/// the Trash.
+public protocol DownloadFolderPlanning: Sendable {
+    /// `fileExtension` is nil before TIDAL has said whether the track is
+    /// lossless: then only a copy that would block either kind skips
+    /// (a healthy .flac of the same recording, or an .m4a when
+    /// `losslessOnTIDAL` is false), and the name returned is provisional.
+    /// Call again with the real extension before writing. With
+    /// `request.replaceExisting`, a damaged copy goes to the Trash here and
+    /// its name is free.
+    func decide(for request: TrackDownloadRequest, fileExtension: FileNaming.AudioExtension?) async throws -> FolderDecision
+
+    /// Moves the finished, checked file from its temporary folder into
+    /// `request.folder` in one step, never over an existing file (a name
+    /// differing only in upper or lower case counts as taken). If another
+    /// file took the name meanwhile, decides again and uses the next free
+    /// name. Returns the name used and any notes the new name earned.
+    func moveIntoPlace(_ temporaryFile: URL, for request: TrackDownloadRequest, plannedName: String,
+                       fileExtension: FileNaming.AudioExtension) async throws -> (fileName: String, notes: [SaveNote])
 }
 
 /// What an AAC write produced.
