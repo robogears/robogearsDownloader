@@ -9,12 +9,13 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
 - ❓ Live TIDAL check: can you sign in once in the morning so the TIDAL calls can be verified? — options: yes | later — parked item: Live TIDAL check
 - ❓ Signing: you chose the free self-signed certificate (D4 5.7). When convenient, create it in Keychain Access (Certificate Assistant › Create a Certificate…, type Code Signing) and tell me its name — parked item: Signing certificate
-- ❓ Windows: you chose the farewell Windows build (D4 5.8). Its installer has to be built by CI at ship time; say when you want it — parked item: Windows copies
+- ❓ Windows: the farewell build is ready on branch loop/windows-farewell. Its installer has to be built by the old Electron CI (which may need its Node 20 actions bumped first) and attached as robogears-downloader-setup.exe to the first Swift release — say when — parked item: Windows copies
 
 ## Recommendations (things the loop chose not to do unattended)
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 23:35 Windows farewell (D4 5.8) on its own branch loop/windows-farewell, based on v0.1.30: on Windows the Electron app stops checking for updates, says once at launch that Windows support has ended and this version keeps working, and Settings › Updates reads \"Final Windows version\"; version 0.1.31. Its setup.exe still has to be built by CI at ship time.
 - 23:20 Design direction (docs/DESIGN_DIRECTION.md, Fable design lead): the waveform queue is the one hand-drawn element; pure-black/white canvas only in the content layer, system chrome everywhere else; ink as AccentColor; 13 colour tokens with measured contrast incl. Increase Contrast; exact waveform, row and motion specs; full menu-bar map; accessibility; 17 real-pixel checks. Eight brief questions answered (owner to confirm).
 - 23:10 Project moved to ~/Developer/swiftRobotDownloader (owner); git worktrees re-pointed; D4 set to all recommended (owner).
 - 00:00 Decision-4 document (docs/D4_BEHAVIOUR_DECISIONS.md): 68 decisions and 23 plain fixes across five areas, each drafted from the code, checked by a second agent, made consistent by a third (23 contradictions, 9 duplicates and 8 factual doubts resolved); one-screen summary at the top so you can answer "all recommended except …".
