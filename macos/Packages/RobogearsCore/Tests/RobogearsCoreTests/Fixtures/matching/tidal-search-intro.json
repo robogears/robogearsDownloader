@@ -1,0 +1,46 @@
+{
+  "limit": 10,
+  "offset": 0,
+  "totalNumberOfItems": 4,
+  "items": [
+    {
+      "id": 900001,
+      "title": "Intro",
+      "version": null,
+      "duration": 141,
+      "isrc": "ZZAAA2600001",
+      "artists": [{ "id": 7001, "name": "Another Band", "type": "MAIN" }],
+      "album": { "title": "Glass Orchard" }
+    },
+    {
+      "id": 900002,
+      "title": "Intro",
+      "version": "Live",
+      "duration": 230,
+      "isrc": "ZZAAA2600002",
+      "artists": [{ "id": 7002, "name": "Placeholder Artist", "type": "MAIN" }],
+      "album": { "title": "Late Ferry (Live)" }
+    },
+    {
+      "id": 900003,
+      "title": "Intro to Blue Lantern",
+      "version": null,
+      "duration": 95,
+      "isrc": "ZZAAA2600003",
+      "artists": [{ "id": 7002, "name": "Placeholder Artist", "type": "MAIN" }],
+      "album": { "title": "Late Ferry" }
+    },
+    {
+      "id": 900004,
+      "title": "Intro",
+      "version": null,
+      "duration": 98,
+      "isrc": "ZZAAA2600004",
+      "artists": [
+        { "id": 7002, "name": "Placeholder Artist", "type": "MAIN" },
+        { "id": 7003, "name": "Second Guest", "type": "FEATURED" }
+      ],
+      "album": { "title": "Late Ferry" }
+    }
+  ]
+}
