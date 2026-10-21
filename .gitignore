@@ -58,3 +58,11 @@ desktop.ini
 .vscode/
 *.swp
 *~
+
+# ─── Native macOS app (macos/) ─────────────────────────────────
+macos/build/
+macos/**/DerivedData/
+macos/**/.build/
+macos/**/.swiftpm/
+xcuserdata/
+*.xcuserstate

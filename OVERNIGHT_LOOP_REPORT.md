@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (baseline: no tests yet) · last: kickoff
+STATUS: LOOPING · cycle 0 · 1 done · build+tests GREEN · last: Swift project scaffold
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,12 +15,13 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (baseline: no tests ye
 ## Recommendations (things the loop chose not to do unattended)
 
 ## Progress log (last 20; older lines roll into the tally)
+- 22:40 Swift project scaffold: XcodeGen app target (robogears Downloader, 0.1.31, macOS 15) + RobogearsCore package with Swift Testing; app builds, 2 tests pass.
 - 22:35 Kickoff. Folder linked to GitHub `main` (b60576d, v0.1.30) without changing any file; loop branch created; Mac kept awake.
 
 ## Cycle log
 
 ## Completed
-- Total: 0
+- Total: 1 · recent: ✅ Swift project scaffold — 6m
 
 ## Blocked (environment)
 
@@ -39,7 +40,7 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (baseline: no tests ye
 
 ## Test status
 - Baseline: Electron JS files pass `node --check` (11/11); no test suite exists; `node_modules` absent, so the Electron app can't be built or run here; Xcode 27.1 and Swift 6.4 available; no Swift project yet. Full output in .overnight-loop/baseline.txt
-- Latest: —
+- Latest: RobogearsCore 2/2 tests pass; app builds (Debug)
 
 ## Usage-limit waits
 
@@ -56,6 +57,6 @@ git checkout main && git merge --no-ff overnight-loop/2026-10-21-2235
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "overnight-loop/2026-10-21-2235", "base": "main",
- "cycles": 0, "done": 0, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 1, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```

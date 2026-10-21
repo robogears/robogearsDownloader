@@ -1,0 +1,49 @@
+# XcodeGen spec for the native macOS app. Regenerate the project with:
+#   cd macos && xcodegen generate
+name: RobogearsDownloader
+options:
+  bundleIdPrefix: com.robogears
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.31"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    # Ad-hoc signing until the owner chooses a signing identity (D4 1.5 / 5.7).
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  RobogearsCore:
+    path: Packages/RobogearsCore
+targets:
+  RobogearsDownloader:
+    type: application
+    platform: macOS
+    sources:
+      - path: RobogearsDownloader
+    dependencies:
+      - package: RobogearsCore
+    settings:
+      base:
+        PRODUCT_NAME: "robogears Downloader"
+        PRODUCT_BUNDLE_IDENTIFIER: com.robogears.downloader
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "robogears Downloader"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 robogears"
+        COMBINE_HIDPI_IMAGES: YES
+schemes:
+  RobogearsDownloader:
+    build:
+      targets:
+        RobogearsDownloader: all
+    run:
+      config: Debug
+    archive:
+      config: Release
