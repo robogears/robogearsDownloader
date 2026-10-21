@@ -1,0 +1,8 @@
+{
+  "deviceCode": "fake-device-code-0001",
+  "userCode": "ABCDE",
+  "verificationUri": "link.tidal.com",
+  "verificationUriComplete": "link.tidal.com/ABCDE",
+  "expiresIn": 300,
+  "interval": 2
+}
