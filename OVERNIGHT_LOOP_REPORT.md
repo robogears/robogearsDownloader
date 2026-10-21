@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: updater core
+STATUS: LOOPING · cycle 0 · 4 done · build+tests GREEN · last: design brief
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,6 +15,7 @@ STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: updater core
 ## Recommendations (things the loop chose not to do unattended)
 
 ## Progress log (last 20; older lines roll into the tally)
+- 23:35 Design brief (docs/DESIGN.md): product and person, identity carried into native Light/Dark, every window and sheet with its one job, all 13 queue-row states, real facts, the full menu-bar and shortcut map, copy rules, the never-list, 8 questions for the design lead.
 - 23:30 Updater (core): GitHub check with ETag cache, arm64 zip + SHA-256 sidecar contract (no wrong-arch fallback), host-pinned capped download, ditto unpack + identity + codesign check, the shared rollback relauncher, translocation-aware destination, @Observable state machine; 32 new tests (44 total), wrong-arch test proven to fail on a bad fallback.
 - 23:05 Sound effects: all 8 sounds rendered natively from the Electron Web Audio graphs (same notes, envelopes, filters); new quieter "finished with problems" sound for you to approve by ear; 12 tests pass, note tests proven to fail on a wrong note.
 - 22:40 Swift project scaffold: XcodeGen app target (robogears Downloader, 0.1.31, macOS 15) + RobogearsCore package with Swift Testing; app builds, 2 tests pass.
@@ -23,7 +24,7 @@ STATUS: LOOPING · cycle 0 · 3 done · build+tests GREEN · last: updater core
 ## Cycle log
 
 ## Completed
-- Total: 3 · recent: ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
+- Total: 4 · recent: ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
 
 ## Blocked (environment)
 
@@ -59,6 +60,6 @@ git checkout main && git merge --no-ff overnight-loop/2026-10-21-2235
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "overnight-loop/2026-10-21-2235", "base": "main",
- "cycles": 0, "done": 3, "shelved": 0, "blocked": 0,
+ "cycles": 0, "done": 4, "shelved": 0, "blocked": 0,
  "state": "looping", "build": "green"}
 ```
