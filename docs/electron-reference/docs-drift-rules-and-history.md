@@ -31,7 +31,7 @@ Each row is a statement in `CLAUDE.md` that is wrong or incomplete at v0.1.30.
 
 | # | `CLAUDE.md` line(s) | What the doc says | What the code does | Evidence |
 |---|---|---|---|---|
-| D1 | 19, 108, 412, 743, 756-787 | Repo lives at `Z:\robogearsDownloader\`; restart with PowerShell `Get-Process electron …`; `gh` at a WinGet path | This checkout is `/Users/william/Pictures/GitHub Projects/swiftRobotDownloader` on macOS. No code depends on the repo location | — |
+| D1 | 19, 108, 412, 743, 756-787 | Repo lives at `Z:\robogearsDownloader\`; restart with PowerShell `Get-Process electron …`; `gh` at a WinGet path | This checkout is `~/Developer/swiftRobotDownloader` on macOS (moved there from `~/Pictures/GitHub Projects/` on 21 Oct 2026). No code depends on the repo location | — |
 | D2 | 21, 562 | Current version v0.1.25 | 0.1.30 | `package.json:3`; `chrome-extension/manifest.json:4` |
 | D3 | 568-691 | "Just landed" history ends at v0.1.25 | v0.1.26 to v0.1.30 (Chrome-extension bridge) are undocumented | `electron-main.js:24, 28, 497-522, 691-812`; `extension-server.js`; `RELEASE_NOTES.md` |
 | D4 | 27-62 | Feature table | Omits: the extension bridge; Settings → Extension tab; the "✓ Batch finished." row with an **Open folder** button; the Hi-Res badge in the search modal | `index.html:119, 163-186`; `app.js:1486-1501, 1340` |

@@ -7,16 +7,15 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 - Commits: `git log --oneline --grep='^loop' main..overnight-loop/2026-10-21-2235`
 
 ## Questions for you (parked forks and end-of-rope questions — answer any to unpark)
-- ❓ Decision 4: read docs/D4_BEHAVIOUR_DECISIONS.md and reply "all recommended" or "all recommended except …" — the build uses the recommended options meanwhile (2.6 and 2.7 stay literal).
 - ❓ Live TIDAL check: can you sign in once in the morning so the TIDAL calls can be verified? — options: yes | later — parked item: Live TIDAL check
-- ❓ Same-title songs (D4 2.6) and version text in file names (D4 2.7): bend the title-only rule as recommended, or keep it literal? — options: recommended | literal — parked item: D4 2.6 / 2.7 (built on the literal rule until you answer)
-- ❓ Signing: create a free self-signed code-signing certificate (recommended), stay ad-hoc, or pay for a Developer ID? — parked item: Signing certificate
-- ❓ Windows copies of v0.1.30: a farewell Windows build, or uninstall by hand? — parked item: Windows copies
+- ❓ Signing: you chose the free self-signed certificate (D4 5.7). When convenient, create it in Keychain Access (Certificate Assistant › Create a Certificate…, type Code Signing) and tell me its name — parked item: Signing certificate
+- ❓ Windows: you chose the farewell Windows build (D4 5.8). Its installer has to be built by CI at ship time; say when you want it — parked item: Windows copies
 
 ## Recommendations (things the loop chose not to do unattended)
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 23:10 Project moved to ~/Developer/swiftRobotDownloader (owner); git worktrees re-pointed; D4 set to all recommended (owner).
 - 00:00 Decision-4 document (docs/D4_BEHAVIOUR_DECISIONS.md): 68 decisions and 23 plain fixes across five areas, each drafted from the code, checked by a second agent, made consistent by a third (23 contradictions, 9 duplicates and 8 factual doubts resolved); one-screen summary at the top so you can answer "all recommended except …".
 - 23:55 App state: atomic JSON store that keeps a damaged file aside; settings (blank folders, volume stored as the slider position, Reset Folders keeps the volume); folder bookmarks that follow a rename and detect unplugged / missing / in-the-Trash / not writable, with plain messages; download folder inside the library refused by folder identity; queue rows (failed keeps its reason, in-flight rows come back waiting, exact library matches start left out) with a debounced, flushable store. 18 new tests (62 total); restore rule proven to fail when broken.
 - 23:40 Release packaging script (macos/scripts/package-release.sh): Release build, ad-hoc signed, robogears-downloader-mac-arm64.dmg (app at the root for the v0.1.30 updater) + .zip for the new updater + .sha256 for each; ran it, mounted the DMG read-only and verified layout and signature.
@@ -38,6 +37,8 @@ STATUS: LOOPING · cycle 0 · 7 done · build+tests GREEN · last: decision-4 do
 ## Excluded from commits (secret-shaped or too big — commit them yourself if they're fine)
 
 ## Decisions & assumptions (last 20 + tally)
+- Owner, 21 Oct 23:05: "just go with all of the recommended stuff for now" — every D4 item uses option A, including 2.6 and 2.7 (file names bend only for a clash with a different song; versions go in the title tag).
+- Owner, 21 Oct 23:05: "move the project file to /Users/william/Developer" and "update git and everything to the new path" — moved the whole project folder to ~/Developer/swiftRobotDownloader (moving only the Xcode project would break it), pointed every git worktree at the new location, cleared my own build caches (they hold absolute paths), updated the plan and docs. A temporary link at the old path keeps background agents working; it is removed once they finish (L3).
 - Kickoff questions went unanswered; these defaults are the direction:
   - Assumed git setup is fine: `git init`, remote `origin` = robogears/robogearsDownloader, `main` pointed at origin/main (b60576d) with a mixed reset, no file changed. Undo: delete the `.git` folder.
   - Assumed no deny rules: the repo tracks `.claude/settings.local.json`, so adding them would commit them. The loop relies on its own rules (branch-only pushes, stage-safe, no force-push).
