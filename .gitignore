@@ -70,3 +70,6 @@ macos/dist/
 
 # Claude Code runtime state
 .claude/scheduled_tasks.lock
+
+# Small generated audio used by the Swift tests (never real music)
+!macos/Packages/RobogearsCore/Tests/RobogearsCoreTests/Fixtures/**
