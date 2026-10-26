@@ -149,6 +149,11 @@ public enum TrackDownloadError: Error, Sendable, Equatable {
     /// Writing the file failed for another reason; `detail` goes to the
     /// activity log, never into the row.
     case writeFailed(detail: String)
+    /// Replace was chosen for a damaged copy, but the download folder's disk
+    /// has no Trash (some network shares). Nothing was deleted: the app asks
+    /// before deleting it permanently (2.3), then calls
+    /// `DownloadFolder.deleteDamagedCopyPermanently(named:for:)` and retries.
+    case folderHasNoTrash(fileName: String)
 
     /// True for the problems every remaining track would hit.
     public var stopsBatch: Bool {
@@ -194,6 +199,8 @@ public enum TrackDownloadError: Error, Sendable, Equatable {
             "Failed: TIDAL didn't return the album details. Retry to try again."
         case .writeFailed:
             "Failed: the file couldn't be saved. Retry to try again."
+        case let .folderHasNoTrash(fileName):
+            "This folder has no Trash. Delete “\(fileName)” permanently and download it again?"
         }
     }
 

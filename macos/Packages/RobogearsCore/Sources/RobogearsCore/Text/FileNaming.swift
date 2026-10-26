@@ -1,9 +1,14 @@
 // Names of the files the app saves into the download folder.
 //
 // Rule 3 (owner's request): the file is "<Title>.flac", or "<Title>.m4a" for
-// the AAC fallback, from TIDAL's title alone. Cards G2-5 (same-title songs)
-// and G2-6 (versions in the name) are waiting for the owner, so the policy
-// lives in `nameSource(title:)` alone and can change there later.
+// the AAC fallback, from TIDAL's title alone. The owner chose D4 2.6 and 2.7
+// option A (21 Oct 2026): the name stays title-only, and the version goes in
+// the title tag, not the name, unless a different song already holds the
+// plain name. Only then does the track take one of the clash names below:
+// the version, then the artist, then the album in brackets, and a number
+// after the last of those when every one is taken. Whether a clash applies
+// is decided by the download folder (Download/DownloadFolder.swift), which
+// reads the existing file's tags.
 //
 // Sanitising keeps the Electron mapping exactly (`tidal_lib.js:616-618`;
 // text-unicode-and-filenames.md §1) so files it saved are still found, then
@@ -70,9 +75,91 @@ public enum FileNaming {
 
     // MARK: - Naming policy
 
-    /// What the name is made from. Rule 3: TIDAL's title, nothing else.
+    /// What the name is made from. Rule 3: TIDAL's bare title, nothing else
+    /// (the version stays out of the plain name, 2.7). Clash names add to it.
     static func nameSource(title: String?) -> String {
         title ?? ""
+    }
+
+    // MARK: - Names a disk may treat as one
+
+    /// The form two file names share when a disk may store them as one file:
+    /// upper and lower case folded, and composed and decomposed accents made
+    /// alike. APFS is usually case-insensitive and keeps either Unicode form,
+    /// but external drives may differ, so the app compares by this key
+    /// instead of asking the file system (2.2, 2.6: an existing "Intro.flac"
+    /// blocks "INTRO.flac"). Accents themselves still count: "Cafe" and
+    /// "Café" are different names. Folding a little more than some disk
+    /// would only ever pick another free name, never replace a file.
+    public static func comparisonKey(_ fileName: String) -> String {
+        fileName.decomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive], locale: nil)
+            .precomposedStringWithCanonicalMapping
+    }
+
+    // MARK: - Clash names (D4 2.6, 2.7)
+
+    /// Most bytes a clash name's bracketed part may take, so a long album
+    /// name can't crowd the title out of the name.
+    static let maxQualifierBytes = 120
+
+    /// Room kept for " 999" after a numbered clash name.
+    static let numberRoomBytes = 4
+
+    /// The highest number a clash name gets before the app gives up.
+    public static let maxClashNumber = 999
+
+    /// The other names a track may take when a different song already holds
+    /// its plain name (2.6), in the owner's fixed order: "<Title> (<Version>)",
+    /// "<Title> (<Artist>)", "<Title> (<Album>)". Each part is sanitised like
+    /// the plain name. A part that is missing or empty once sanitised, a
+    /// version the title already contains, and a name that comes out the
+    /// same as the plain name or an earlier one (two long titles cut to one
+    /// name, 2.14) are skipped. The title part is shortened, never the
+    /// bracketed part, so every name stays within `maxStemBytes`.
+    public static func clashStems(title: String?, version: String?, artist: String?, album: String?) -> [String] {
+        clashCandidates(title: title, version: version, artist: artist, album: album).map(\.stem)
+    }
+
+    /// The numbered name after every clash name is taken: the last clash
+    /// name with " 2", " 3"… added (the plain name when there is none).
+    public static func numberedClashStem(title: String?, version: String?, artist: String?, album: String?,
+                                         number: Int) -> String {
+        "\(numberedClashBase(title: title, version: version, artist: artist, album: album)) \(number)"
+    }
+
+    /// What every numbered clash name starts with. Built with room for
+    /// " 999" so the start is the same for every number, which lets the
+    /// folder find numbered files by their start.
+    static func numberedClashBase(title: String?, version: String?, artist: String?, album: String?) -> String {
+        let last = clashCandidates(title: title, version: version, artist: artist, album: album).last?.qualifier
+        return clashStem(title: title, qualifier: last, reservedBytes: numberRoomBytes)
+    }
+
+    private static func clashCandidates(title: String?, version: String?, artist: String?,
+                                        album: String?) -> [(qualifier: String, stem: String)] {
+        var qualifiers: [String?] = []
+        // 2.7: the version only names the file when the title doesn't already say it.
+        if let version, EditionTitle.adds(version, to: title ?? "") { qualifiers.append(version) }
+        qualifiers.append(artist)
+        qualifiers.append(album)
+        var seen: Set<String> = [comparisonKey(stem(title: title))]
+        var out: [(qualifier: String, stem: String)] = []
+        for case let qualifier? in qualifiers where !cleaned(qualifier).isEmpty {
+            let candidate = clashStem(title: title, qualifier: qualifier, reservedBytes: 0)
+            if seen.insert(comparisonKey(candidate)).inserted { out.append((qualifier, candidate)) }
+        }
+        return out
+    }
+
+    /// "<Title> (<Qualifier>)" within `maxStemBytes - reservedBytes`, or just
+    /// the title when there is no qualifier.
+    private static func clashStem(title: String?, qualifier: String?, reservedBytes: Int) -> String {
+        var head = cleaned(nameSource(title: title))
+        if head.isEmpty { head = "unknown" }
+        let suffix = qualifier.map { " (\(capped(cleaned($0), maxBytes: maxQualifierBytes)))" } ?? ""
+        let room = maxStemBytes - reservedBytes - storedBytes(suffix)
+        return capped(head, maxBytes: room) + suffix
     }
 
     // MARK: - Sanitising
@@ -98,6 +185,13 @@ public enum FileNaming {
     private static let invisibleSpacers: Set<UInt32> = [0x200B, 0x2060, 0x180E]
 
     static func sanitizedStem(_ source: String) -> String {
+        let name = capped(cleaned(source), maxBytes: maxStemBytes)
+        return name.isEmpty ? "unknown" : name
+    }
+
+    /// The sanitising steps without the length cap or the "unknown" fallback,
+    /// so clash names can share the byte budget between their parts.
+    static func cleaned(_ source: String) -> String {
         let composed = source.precomposedStringWithCanonicalMapping
         var scalars = String.UnicodeScalarView()
         var pendingSpace = false
@@ -116,14 +210,19 @@ public enum FileNaming {
         var name = String(scalars)
         // "...Ready" made a hidden "...Ready.flac" (G2-X6).
         while let first = name.first, first == "." || first == " " { name.removeFirst() }
-        name = capped(name, maxBytes: maxStemBytes)
-        return name.isEmpty ? "unknown" : name
+        return name
+    }
+
+    /// The larger of a name's composed and decomposed UTF-8 lengths: the
+    /// most bytes any volume may store it in.
+    static func storedBytes(_ name: String) -> Int {
+        max(name.utf8.count, name.decomposedStringWithCanonicalMapping.utf8.count)
     }
 
     /// Shortens at a whole character. Counts the decomposed form too, in case
     /// a volume stores names decomposed and they grow.
     private static func capped(_ name: String, maxBytes: Int) -> String {
-        guard name.utf8.count > maxBytes || name.decomposedStringWithCanonicalMapping.utf8.count > maxBytes else {
+        guard storedBytes(name) > maxBytes else {
             return name
         }
         var result = ""
