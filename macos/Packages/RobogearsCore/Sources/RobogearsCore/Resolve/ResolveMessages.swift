@@ -102,7 +102,6 @@ enum ResolveMessages {
     static func spotifyCap(playlistName: String, listed: Int, total: Int?) -> String? {
         let name = playlistName.isEmpty ? "the playlist" : playlistName
         if let total {
-            guard total > listed else { return nil }
             return "Added the first \(number(listed)) of \(number(total)) tracks. "
                 + "To get the other \(number(total - listed)), export the playlist with Exportify and drop the CSV here."
         }

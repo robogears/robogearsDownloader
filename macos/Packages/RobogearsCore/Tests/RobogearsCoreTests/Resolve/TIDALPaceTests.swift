@@ -48,8 +48,9 @@ struct TIDALPaceTests {
             #expect(await resolveEventually { await pace.queued == 1 })
 
             // The extra slot: the click runs now, with every ordinary slot held.
-            let answer = try await pace.run(.interactive) { "preview" }
-            #expect(answer == "preview")
+            let clicked = TIDALFlag()
+            group.addTask { try await pace.run(.interactive) { clicked.set() } }
+            #expect(try await clicked.wait(upTo: .seconds(2)))
             #expect(matching.current == 0)
 
             await gate.open()
