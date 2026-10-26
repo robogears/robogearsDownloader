@@ -597,5 +597,24 @@ struct TrackDownloadPartsTests {
 
     @Test func finishedBackgroundWorkHandsBackItsResult() async throws {
         #expect(try await BackgroundWork.run({ 42 }) == 42)
+        #expect(try await BackgroundWork.run(async: { 43 }) == 43)
+    }
+
+    @Test func cancelledAsyncWorkIsAskedToStopTooAndCleansUpWhenItDoes() async throws {
+        let started = TIDALFlag()
+        let cleaned = TIDALFlag()
+        let task = Task {
+            try await BackgroundWork.run(async: {
+                started.set()
+                // Work that honours cancellation, as an AAC writer should.
+                try await Task.sleep(for: .seconds(60))
+                return 1
+            }, afterAbandon: { cleaned.set() })
+        }
+        #expect(try await started.wait(upTo: .seconds(5)))
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) { try await task.result.get() }
+        #expect(try await cleaned.wait(upTo: .seconds(5)))
     }
 }

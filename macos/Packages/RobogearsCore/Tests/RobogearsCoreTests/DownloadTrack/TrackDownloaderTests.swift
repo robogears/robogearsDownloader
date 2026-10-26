@@ -711,12 +711,15 @@ struct TrackDownloaderTests {
 
         task.cancel()
         let result = await task.result
+        // A request already on its way when Cancel came may still be
+        // recorded by the stand-in server; after that, nothing new starts.
+        try await Task.sleep(for: .milliseconds(100))
         let requestsByCancel = world.server.requests(matching: "audio.example.test").count
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(300))
 
         #expect(throws: CancellationError.self) { try result.get() }
         // Segment 2 holds back the writing, so the read-ahead window caps
-        // what started, and nothing more starts once Cancel is pressed.
+        // what started.
         #expect(requestsByCancel <= 2 + AudioFetcher.readAhead)
         #expect(world.server.requests(matching: "audio.example.test").count == requestsByCancel)
         #expect(made.folders == [temporary])
