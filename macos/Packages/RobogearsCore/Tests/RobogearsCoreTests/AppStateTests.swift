@@ -111,12 +111,19 @@ private func row(_ title: String, state: QueueItem.DownloadState = .waiting, lib
 
 @Test func quickChangesAreWrittenOnceAfterTheDebounce() async throws {
     let file = tempDir("debounce").appendingPathComponent("queue-v2.json")
-    let store = QueueStore(file: file, debounce: .milliseconds(200))
+    // A long debounce so the "not yet written" check holds on a busy
+    // machine, and a deadline instead of a fixed sleep for the write: the
+    // first version (200 ms, then a 600 ms sleep) failed once at load 300.
+    let store = QueueStore(file: file, debounce: .seconds(1))
     await store.save([row("One")])
     await store.save([row("One"), row("Two")])
     #expect(!FileManager.default.fileExists(atPath: file.path))
-    try await Task.sleep(for: .milliseconds(600))
+    let deadline = ContinuousClock.now + .seconds(15)
+    while !FileManager.default.fileExists(atPath: file.path), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(50))
+    }
     guard case .loaded(let back) = await QueueStore(file: file).load() else { Issue.record("expected loaded"); return }
+    // Only the latest save reached the disk.
     #expect(back.map(\.title) == ["One", "Two"])
 }
 
