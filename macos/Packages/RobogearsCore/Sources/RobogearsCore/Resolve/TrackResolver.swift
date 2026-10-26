@@ -34,7 +34,13 @@ public struct TrackResolver: Sendable {
     /// TIDAL don't start refusing them (D4 4.13).
     public var linkWindow = 4
 
+    /// `tidal`'s client must have been made with `pacing: pace`, the same
+    /// pace downloads and previews use: the slots come from `pace.run`, but
+    /// the shared 429 pause only reaches requests whose client reports to
+    /// that pace (D4 1.4). `web` is a separate client with no pacing.
     public init(tidal: TIDALAPI, pace: TIDALPace, web: HTTPClient, library: any LibraryMarking = NoLibrary()) {
+        assert((tidal.client.pacing as? TIDALPace) === pace,
+               "TrackResolver: make the TIDAL client with HTTPClient(pacing: pace) so one 429 pauses every caller")
         self.tidal = tidal
         self.pace = pace
         self.web = web
@@ -242,7 +248,9 @@ public struct TrackResolver: Sendable {
         }
 
         // Links inside the list are read first, a few at a time and in
-        // order (D4 4.13), then everything is matched as one list.
+        // order (D4 4.13), then everything is matched as one list. A link
+        // still loading when Cancel comes adds nothing; the ones already
+        // read keep their rows.
         let linkIndices = parsed.items.indices.filter { if case .link = parsed.items[$0] { true } else { false } }
         var expansions: [Int: Expansion] = [:]
         if !linkIndices.isEmpty {
@@ -254,7 +262,9 @@ public struct TrackResolver: Sendable {
                 guard case let .link(link) = parsed.items[linkIndices[position]] else { return Expansion() }
                 return try await resolver.expand(link)
             }
-            for (position, expansion) in results.enumerated() { expansions[linkIndices[position]] = expansion }
+            for (position, expansion) in results.enumerated() {
+                if let expansion { expansions[linkIndices[position]] = expansion }
+            }
         }
 
         var work: [WorkItem] = []
@@ -350,50 +360,60 @@ public struct TrackResolver: Sendable {
         case halt(ResolveFailure)
     }
 
-    /// Runs every step with at most `matchWindow` matches at once and hands
-    /// rows to the session in source order as the finished stretch grows, so
-    /// the queue keeps the list's order and Cancel keeps what is done
-    /// (D4 4.9). "Matching N / M" counts each finished match (D4 4.21).
+    /// Runs every match with at most `matchWindow` at once and hands rows to
+    /// the session in source order as the finished stretch grows, so the
+    /// queue keeps the list's order and Cancel keeps what is done (D4 4.9).
+    /// "Matching N / M" counts each finished match (D4 4.21).
+    ///
+    /// Rows already read from a link (a TIDAL album or playlist inside a
+    /// pasted list) need no request: they are finished from the start, so
+    /// they never wait for a matching place and Cancel never drops them.
     private func runInOrder(_ work: [WorkItem], _ session: AddSession) async throws {
         let total = work.count
         session.summary.total = session.summary.processed + total
-        let matchTotal = work.filter { if case .match = $0 { true } else { false } }.count
-        if matchTotal > 0 { session.emit(.progress(.matching(done: 0, total: matchTotal))) }
+        var results: [StepResult?] = work.map { item in
+            if case let .ready(rows) = item { return .rows(rows) }
+            return nil
+        }
+        let toMatch: [(index: Int, wanted: WantedTrack)] = work.enumerated().compactMap { index, item in
+            if case let .match(wanted) = item { return (index, wanted) }
+            return nil
+        }
+        if !toMatch.isEmpty { session.emit(.progress(.matching(done: 0, total: toMatch.count))) }
+
+        var flushed = 0
+        func flushFinished() async {
+            while flushed < total, let ready = results[flushed] {
+                if case let .rows(rows) = ready { await session.deliver(rows, processed: 1) }
+                flushed += 1
+            }
+        }
+        await flushFinished()
 
         let resolver = self
         let log: @Sendable (String) -> Void = { [emit = session.emit] in emit(.log($0)) }
-        var results = [StepResult?](repeating: nil, count: total)
-        var flushed = 0
         var matched = 0
         var halt: ResolveFailure?
         await withTaskGroup(of: (Int, StepResult).self) { group in
             var next = 0
-            func makeStep(_ index: Int) -> @Sendable () async -> (Int, StepResult) {
-                let item = work[index]
-                return { (index, await resolver.step(item, log: log)) }
-            }
-            while next < total, next < max(matchWindow, 1) {
-                group.addTask(operation: makeStep(next))
+            func launchNext() {
+                let (index, wanted) = toMatch[next]
                 next += 1
+                group.addTask { (index, await resolver.matchStep(wanted, log: log)) }
             }
+            while next < toMatch.count, next < max(matchWindow, 1), !Task.isCancelled { launchNext() }
             while let (index, result) = await group.next() {
                 results[index] = result
                 if case let .halt(failure) = result, halt == nil {
                     halt = failure
                     group.cancelAll()
                 }
-                if case .match = work[index], case .rows = result {
+                if case .rows = result {
                     matched += 1
-                    session.emit(.progress(.matching(done: matched, total: matchTotal)))
+                    session.emit(.progress(.matching(done: matched, total: toMatch.count)))
                 }
-                if halt == nil, !Task.isCancelled, next < total {
-                    group.addTask(operation: makeStep(next))
-                    next += 1
-                }
-                while flushed < total, let ready = results[flushed] {
-                    if case let .rows(rows) = ready { await session.deliver(rows, processed: 1) }
-                    flushed += 1
-                }
+                if halt == nil, !Task.isCancelled, next < toMatch.count { launchNext() }
+                await flushFinished()
             }
         }
         // Stopped or halted: what finished after a gap still joins the queue,
@@ -405,46 +425,48 @@ public struct TrackResolver: Sendable {
         if let halt { throw halt }
     }
 
-    private func step(_ item: WorkItem, log: @Sendable (String) -> Void) async -> StepResult {
-        switch item {
-        case let .ready(rows):
-            return .rows(rows)
-        case let .match(wanted):
-            do {
-                return .rows([try await matchRow(wanted, priority: .matching, log: log)])
-            } catch let failure as ResolveFailure {
-                return .halt(failure)
-            } catch {
-                return .unfinished
-            }
+    private func matchStep(_ wanted: WantedTrack, log: @Sendable (String) -> Void) async -> StepResult {
+        do {
+            return .rows([try await matchRow(wanted, priority: .matching, log: log)])
+        } catch let failure as ResolveFailure {
+            return .halt(failure)
+        } catch {
+            return .unfinished
         }
     }
 
     /// Runs `count` jobs, at most `window` at once, returning their results
-    /// in order. The first error stops the rest.
+    /// in order. A job stopped by Cancel leaves a gap (nil) and nothing new
+    /// starts once the add is cancelled, so what finished before Cancel is
+    /// kept (D4 4.9). Any other error stops the rest and is thrown.
     private func ordered<T: Sendable>(
         _ count: Int, window: Int, onFinished: (Int) -> Void,
         _ job: @escaping @Sendable (Int) async throws -> T
-    ) async throws -> [T] {
-        try await withThrowingTaskGroup(of: (Int, T).self) { group in
+    ) async throws -> [T?] {
+        try await withThrowingTaskGroup(of: (Int, T?).self) { group in
             var results = [T?](repeating: nil, count: count)
             var next = 0, done = 0
-            while next < count, next < max(window, 1) {
+            func launchNext() {
                 let index = next
-                group.addTask { (index, try await job(index)) }
                 next += 1
-            }
-            while let (index, value) = try await group.next() {
-                results[index] = value
-                done += 1
-                onFinished(done)
-                if next < count {
-                    let index = next
-                    group.addTask { (index, try await job(index)) }
-                    next += 1
+                group.addTask {
+                    do {
+                        return (index, try await job(index))
+                    } catch is CancellationError {
+                        return (index, nil)
+                    }
                 }
             }
-            return results.compactMap { $0 }
+            while next < count, next < max(window, 1), !Task.isCancelled { launchNext() }
+            while let (index, value) = try await group.next() {
+                results[index] = value
+                if value != nil {
+                    done += 1
+                    onFinished(done)
+                }
+                if !Task.isCancelled, next < count { launchNext() }
+            }
+            return results
         }
     }
 }

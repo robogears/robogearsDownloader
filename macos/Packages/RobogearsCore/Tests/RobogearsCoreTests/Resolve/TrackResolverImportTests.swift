@@ -45,6 +45,14 @@ struct TrackResolverImportTests {
         #expect(row?.hiRes == true)
         #expect(row?.originalTitle == nil)
         #expect(events.summary?.sourceName == "pasted text")
+
+        // A comma works as the separator too (D4 4.7: "now also for a comma").
+        harness.backend.search("Copper Sky Late Ferry Band", [
+            ResolveJSON.track(900900002, "Copper Sky", artists: ["Late Ferry Band"]),
+        ])
+        let comma = await harness.run(.line("Copper Sky, Late Ferry Band"))
+        #expect(comma.rows.map(\.tidalID) == [900900002])
+        #expect(comma.rows.first?.match == .matched)
     }
 
     @Test func pastingLinksAndUnusableLinksIsRoutedBeforeAnythingIsSent() {
@@ -289,6 +297,67 @@ struct TrackResolverImportTests {
         #expect(await resolveEventually { cancelled.count == 7 })
         #expect(Set(cancelled.all) == Set(4...10))
         #expect(harness.server.requests.count == 10)
+    }
+
+    @Test func cancelWhileAListsLinksLoadKeepsTheLinksAlreadyRead() async {
+        let harness = ResolveHarness()
+        let album = (0..<3).map { ResolveJSON.track(900_120_000 + Int64($0), "Track \($0)", artists: ["Placeholder Artist"]) }
+        harness.backend.setUp {
+            $0.albums[8100001] = ResolveJSON.data(["id": 8100001, "title": "Harbour Lights"])
+            $0.albumPages[8100001] = [ResolveJSON.itemsPage(album, offset: 0, total: 3)]
+        }
+        // The second album never answers; only Cancel ends its request.
+        harness.backend.intercept { request, _ in
+            request.url.path.hasPrefix("/v1/albums/8100002") ? .hang : nil
+        }
+        let text = "https://tidal.com/browse/album/8100001\nhttps://tidal.com/browse/album/8100002\nSong 1 - Placeholder Artist"
+        let job = harness.resolver.add(.tracklist(text: text, name: nil))
+        var events: [ResolveEvent] = []
+        var stopped = false
+        let begun = ContinuousClock.now
+        for await event in job {
+            events.append(event)
+            if !stopped, case .progress(.loading(done: 1, total: 2)) = event {
+                stopped = true
+                job.stop()
+            }
+        }
+        #expect(ContinuousClock.now - begun < .seconds(5))
+        // The album already read stays; the one still loading and the line
+        // behind it are dropped, and nothing more is sent.
+        #expect(events.rows.map(\.tidalID) == (0..<3).map { 900_120_000 + Int64($0) })
+        #expect(events.summary?.stopped == true)
+        #expect(events.summary?.message == "Stopped after 3 of 4. Added 3 tracks. The other 1 track wasn't added.")
+        #expect(harness.searchQueries.isEmpty)
+    }
+
+    @Test func cancelDuringMatchingKeepsTracksAlreadyReadFromALink() async {
+        let harness = ResolveHarness()
+        // One match at a time, so the album's rows sit behind the line.
+        var resolver = harness.resolver
+        resolver.matchWindow = 1
+        let album = (0..<2).map { ResolveJSON.track(900_130_000 + Int64($0), "Track \($0)", artists: ["Placeholder Artist"]) }
+        harness.backend.setUp {
+            $0.albums[8100003] = ResolveJSON.data(["id": 8100003, "title": "Harbour Lights"])
+            $0.albumPages[8100003] = [ResolveJSON.itemsPage(album, offset: 0, total: 2)]
+        }
+        harness.backend.intercept { request, _ in Self.songNumber(request) != nil ? .hang : nil }
+        let job = resolver.add(.tracklist(text: "Song 1 - Placeholder Artist\nhttps://tidal.com/browse/album/8100003", name: nil))
+        var events: [ResolveEvent] = []
+        var stopped = false
+        for await event in job {
+            events.append(event)
+            if !stopped, case .progress(.matching(done: 0, total: 1)) = event {
+                stopped = true
+                _ = await resolveEventually { harness.searchQueries.count == 1 }
+                job.stop()
+            }
+        }
+        // The line still being matched is dropped; the album's tracks were
+        // already read, so they join the queue in the list's order.
+        #expect(events.rows.map(\.tidalID) == [900_130_000, 900_130_001])
+        #expect(events.summary?.stopped == true)
+        #expect(events.summary?.message == "Stopped after 2 of 3. Added 2 tracks. The other 1 track wasn't added.")
     }
 
     // MARK: Offline and signed out (D4 1.7, 1.1)

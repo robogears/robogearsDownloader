@@ -98,10 +98,13 @@ enum ResolveMessages {
     // MARK: Spotify's 100-track cap (D4 4.4)
 
     /// Nil when Spotify's page says the playlist isn't longer than what it
-    /// listed: then nothing was left out and nothing should be claimed.
+    /// listed: then nothing was left out and nothing should be claimed
+    /// (D4 4.4 A: with a real count, "the message appears only for longer
+    /// playlists").
     static func spotifyCap(playlistName: String, listed: Int, total: Int?) -> String? {
         let name = playlistName.isEmpty ? "the playlist" : playlistName
         if let total {
+            guard total > listed else { return nil }
             return "Added the first \(number(listed)) of \(number(total)) tracks. "
                 + "To get the other \(number(total - listed)), export the playlist with Exportify and drop the CSV here."
         }
