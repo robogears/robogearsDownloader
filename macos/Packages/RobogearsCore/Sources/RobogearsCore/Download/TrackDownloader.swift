@@ -307,7 +307,8 @@ public struct TrackDownloader: TrackDownloading {
         //    cancels the other (2.15 keeps a failed cover from being silent).
         progress.update(0)
         let fetcher = AudioFetcher(client: audioClient, retry: retry)
-        let covers = CoverFetcher(client: audioClient, retry: retry, log: log)
+        let log = self.log, title = request.title
+        let covers = CoverFetcher(client: audioClient, retry: retry, log: { log("“\(title)”: \($0)") })
         // The album details' cover first; the track's own album when the
         // details are missing (limited tags) still lists it.
         let coverAlbum = (album?.cover?.isEmpty == false) ? album : track.album

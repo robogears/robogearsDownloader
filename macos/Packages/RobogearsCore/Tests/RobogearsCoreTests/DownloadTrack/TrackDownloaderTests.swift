@@ -275,7 +275,7 @@ struct TrackDownloaderTests {
 
         guard case let .saved(_, _, notes) = outcome else { Issue.record("not saved: \(outcome)"); return }
         #expect(notes == [.withoutCoverArt])
-        #expect(world.log.lines.contains { $0.contains("isn't a JPEG") })
+        #expect(world.log.lines.contains { $0.hasPrefix("“Blue Lantern”: ") && $0.contains("isn't a JPEG") })
     }
 
     @Test func aCoverThatStaysBusyPastTheRetriesFailsTheTrackAndSavesNothing() async throws {
