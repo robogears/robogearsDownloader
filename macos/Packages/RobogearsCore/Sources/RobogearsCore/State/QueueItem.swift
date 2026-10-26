@@ -54,6 +54,12 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
     /// line when it differs from what TIDAL will save (decision 4, item 4.14).
     public var originalTitle: String?
     public var originalArtist: String?
+    /// The length the source gave (Spotify's, or a CSV's duration column) for
+    /// a row matched to a TIDAL track, shown with the second line so a big
+    /// gap from TIDAL's length hints at a different version (decision 4,
+    /// item 4.14). Nil for TIDAL's own rows, for rows not found (their
+    /// `durationSeconds` is already the source's), and in older saved queues.
+    public var originalDurationSeconds: Int?
     public var match: Match
     public var libraryMatch: LibraryMatch?
     /// Exact library matches start left out; the person can + Add them.
@@ -68,6 +74,15 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
     /// Save As… (2.6) or Move the old .m4a to Trash (2.10). Nil until a batch
     /// finishes the row, and again once the row goes back to waiting.
     public var lastOutcome: TrackDownloadOutcome?
+    /// True while the row waits for the library index to finish (D4 4.20):
+    /// it shows "Checking library…", and Download All holds it until the
+    /// mark is filled in, so no row is ever sent unchecked (rule 4). Nil
+    /// (or false) once checked. Optional so queues saved before this field
+    /// existed load unchanged.
+    public var libraryCheckPending: Bool?
+
+    /// Whether the row still waits for its library check (D4 4.20).
+    public var isLibraryCheckPending: Bool { libraryCheckPending == true }
 
     public init(id: UUID = UUID(), tidalID: Int64?, title: String, version: String? = nil, artist: String,
                 album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil, hiRes: Bool = false,
@@ -97,9 +112,11 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
         self.lastOutcome = lastOutcome
     }
 
-    /// Rows that Download All sends: matched, included, not already done.
+    /// Rows that Download All sends: matched, included, not already done,
+    /// and library-checked; a row still waiting for its check is held so
+    /// nothing goes out unchecked (D4 4.20, rule 4).
     public var isDownloadable: Bool {
-        guard tidalID != nil, case .matched = match, included else { return false }
+        guard tidalID != nil, case .matched = match, included, !isLibraryCheckPending else { return false }
         switch state {
         case .waiting, .failed: return true
         default: return false

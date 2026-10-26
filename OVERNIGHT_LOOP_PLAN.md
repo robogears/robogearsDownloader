@@ -1,7 +1,7 @@
 # Overnight Loop Plan — 2026-10-26
 
 <!-- run metadata — recovery reads this first; update it at the end of every turn -->
-STATE: LOOPING              # LOOPING | PAUSED (<why>) | STOPPED
+STATE: PAUSED (usage limit)
 PROJECT_PATH: ~/Developer/swiftRobotDownloader
 SKILL_PATH: ~/.claude/skills/overnightprotocol/SKILL.md
 START_EPOCH: 1793004557

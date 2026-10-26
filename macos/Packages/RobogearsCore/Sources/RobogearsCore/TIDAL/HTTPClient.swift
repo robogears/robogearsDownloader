@@ -367,6 +367,12 @@ public final class HTTPClient: Sendable {
 
     public let limits: Limits
     public let clock: any NetworkClock
+    /// The shared TIDAL pace, when this client talks to TIDAL (D4 1.4). Every
+    /// try of `send` waits while the pace holds requests back, and every 429
+    /// is reported to it, so one "too many requests" pauses every caller
+    /// instead of each one finding out on its own. Nil leaves `send` exactly
+    /// as it was (sign-in, Spotify pages).
+    public let pacing: (any RequestPacing)?
     private let session: URLSession
 
     /// `sessionConfiguration` is copied; pass one only to change transport
@@ -375,10 +381,12 @@ public final class HTTPClient: Sendable {
     public init(
         limits: Limits = .api,
         clock: any NetworkClock = SystemNetworkClock(),
-        sessionConfiguration: URLSessionConfiguration = .ephemeral
+        sessionConfiguration: URLSessionConfiguration = .ephemeral,
+        pacing: (any RequestPacing)? = nil
     ) {
         self.limits = limits
         self.clock = clock
+        self.pacing = pacing
         let configuration = sessionConfiguration.copy() as! URLSessionConfiguration
         configuration.timeoutIntervalForRequest = limits.inactivity.timeInterval
         configuration.timeoutIntervalForResource = limits.total?.timeInterval ?? Self.noTotalLimit
@@ -422,6 +430,15 @@ public final class HTTPClient: Sendable {
         var retriesSoFar = 0
         var lastError: RequestError?
         while true {
+            if let pacing {
+                // Waiting out another caller's 429 is TIDAL asking for a pause,
+                // not a stall, so it doesn't count against the total limit
+                // either (see Limits).
+                let started = clock.now()
+                try await pacing.beforeTry()
+                let waited = clock.now().timeIntervalSince(started)
+                if waited > 0 { deadline = deadline?.addingTimeInterval(waited) }
+            }
             let timeLeft = deadline.map { Duration.seconds(max($0.timeIntervalSince(clock.now()), 0)) }
             // A real sleep can overrun by a hair; never start a try with no time.
             if let timeLeft, timeLeft <= .zero, let lastError { throw lastError }
@@ -441,7 +458,12 @@ public final class HTTPClient: Sendable {
                 finalError = .offline(detail: RequestError.offlineDetail(for: error.code))
             }
             lastError = finalError
-            switch retry.decision(after: failure, retriesSoFar: retriesSoFar) {
+            let decision = retry.decision(after: failure, retriesSoFar: retriesSoFar)
+            if let pacing, case let .status(429, retryAfter) = failure {
+                let pause: Duration? = if case let .retry(after: wait) = decision { wait } else { nil }
+                await pacing.tooManyRequests(retryAfter: retryAfter, pause: pause)
+            }
+            switch decision {
             case let .retry(after: wait):
                 if case .status(429, retryAfter: .some(_)) = failure {
                     // The server asked for this pause; it isn't a stall (see Limits).

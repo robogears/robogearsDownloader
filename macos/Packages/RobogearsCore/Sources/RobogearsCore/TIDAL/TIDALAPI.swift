@@ -209,3 +209,29 @@ private struct ItemsPage: Decodable {
         init(from decoder: any Decoder) throws {}
     }
 }
+
+// MARK: - One page at a time (resolver lane)
+
+extension TIDALAPI {
+    /// `GET /v1/albums/{id}/items?countryCode=&limit=100&offset=N`, one page.
+    /// The resolver pages itself so a long list can show "Loading 300 of
+    /// 1,250 tracks…" (D4 4.21), stop between pages when cancelled (D4 1.11),
+    /// and free its slot in the shared pace between pages (D4 1.4).
+    public func albumItemsPage(id: Int, offset: Int) async throws -> Data {
+        try await itemsPage("/v1/albums/\(id)/items", offset: offset)
+    }
+
+    /// `GET /v1/playlists/{uuid}/items?countryCode=&limit=100&offset=N`, one page.
+    public func playlistItemsPage(id: String, offset: Int) async throws -> Data {
+        try await itemsPage("/v1/playlists/\(URIComponent.encode(id))/items", offset: offset)
+    }
+
+    private func itemsPage(_ path: String, offset: Int) async throws -> Data {
+        let country = try await keeper.country().code
+        return try await get(path, [
+            (name: "countryCode", value: country),
+            (name: "limit", value: String(Self.pageSize)),
+            (name: "offset", value: String(offset)),
+        ])
+    }
+}
