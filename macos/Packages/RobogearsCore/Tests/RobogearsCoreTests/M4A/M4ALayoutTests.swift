@@ -125,6 +125,15 @@ struct M4ALayoutTests {
         #expect(layout.durationSeconds == 3000 * 1024 / 44100.0)
     }
 
+    @Test("the sample limit keeps the largest table, stts with every duration different, under a 32-bit box size")
+    func sampleLimitFitsTheTables() {
+        // stts: box header, version and flags, the run count, then 8 bytes per run.
+        let worstStts = 16 + 8 * UInt64(M4AWriter.maximumSampleCount)
+        #expect(worstStts < UInt64(UInt32.max) - (1 << 20))
+        // The limit is still far beyond any real track: a month of 44.1 kHz AAC.
+        #expect(M4AWriter.maximumSampleCount > 30 * 24 * 3600 * 44100 / 1024)
+    }
+
     @Test("a file past 4 GB gets 64-bit chunk offsets and a 64-bit mdat size")
     func past4GB() throws {
         let size = 1_200_000_000

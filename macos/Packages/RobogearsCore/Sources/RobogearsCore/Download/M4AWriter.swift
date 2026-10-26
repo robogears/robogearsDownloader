@@ -235,14 +235,20 @@ public struct M4AWriter: M4AWriting {
 
     static let maximumChunkBytes = 1 << 20
 
+    /// The most samples one file can list while its largest table (stts at
+    /// 8 bytes per sample) still fits a 32-bit box size, with room for the
+    /// box headers.
+    static let maximumSampleCount = 500_000_000
+
     static func layout(_ track: MP4AudioTrack, tags: FLACTags, coverJPEG: Data?, toolName: String) throws(M4AFormatError) -> Layout {
         if let coverJPEG, !(coverJPEG.count >= 2 && coverJPEG.first == 0xFF && coverJPEG.dropFirst().first == 0xD8) {
             throw .coverIsNotJPEG
         }
-        // Every table counts samples in 32 bits. Only a corrupt file of more
-        // than 4 GB of one-byte samples could pass this; refusing it keeps
-        // the tables below from overflowing.
-        guard track.samples.count <= Int(UInt32.max) else { throw .unsupportedMP4("more than 4 billion samples") }
+        // Every table box has a 32-bit size, and stts can need 8 bytes per
+        // sample (when every duration differs). No real track comes near
+        // this (it's months of audio); only a corrupt file of several GB
+        // could, and refusing it keeps every table box below 4 GB.
+        guard track.samples.count <= maximumSampleCount else { throw .unsupportedMP4("more than 500 million samples") }
         let timing = try timing(track)
         let chunks = chunkSampleCounts(track.samples)
         // Where each chunk starts, counted from the first sample byte.
