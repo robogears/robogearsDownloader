@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-26
 
-STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN · last: kickoff — the shelved lanes are being finished in the background
+STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (1181) · last: five of six lanes merged; UI fix round resumed
 
 ## Run
 - Started: 12:49 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -16,6 +16,7 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN · last: kickoff — t
 - 💡 Untrack `.claude/settings.local.json` (`git rm --cached .claude/settings.local.json` and add it to .gitignore) — why: then the loop's push safety rules can be installed — how: one commit by you
 
 ## Progress log (last 20; older lines roll into the tally)
+- 15:40 Five of the six lanes are merged into the loop branch, one at a time, each passing its gate (clean working copy, no leftover breakage edits) and the full suite: download folder (847 tests), track download (960), batch runner (1071), resolver (1141) and the AAC writer (1181). The resolver merge conflicted in QueueItem.swift: both lanes' new fields are kept, the row copier now copies them all, every new TIDAL row records whether TIDAL has a lossless version (D4 2.10), and Download All holds rows still waiting for their library check (D4 4.20), each with a test. The UI lane's fix round was cut off by the usage limit; its partial work is saved and the round resumed.
 - 13:15 Integration plan for wiring the real services written to docs/INTEGRATION_PLAN.md (read-only research across all six lanes): which core type backs each of the app's services, every mismatch and which side changes, the object graph at launch, what previews still need (including preview in search), the sign-in mapping, a 13-step build order, and the risks for the merges. It found mutation-check edits left in two lanes' working copies, so each merge now waits for a clean copy and a search of its diff.
 - 12:49 Kickoff. Mission: finish and merge the six shelved lanes (already running in the background), a cleaner UI, song preview in search, then the real TIDAL services wired into the app. Baseline green: 748 core tests pass, the app builds.
 
@@ -41,9 +42,10 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN · last: kickoff — t
 
 ## Test status
 - Baseline (26 Oct 12:50, 4c9a893): RobogearsCore 748/748 tests pass (47 suites), no build warnings; the app target builds (Debug). Full output in .overnight-loop/baseline.txt
-- Latest: same as baseline
+- Latest (15:40, a24fbfe): RobogearsCore 1181/1181 tests pass (67 suites), no warnings
 
 ## Usage-limit waits
+- LIMIT ~14:35 → resumed ~15:35 (you, "Try again") — WIP b1b6d56 (the resolver merge; verified on resume, 1141 tests); the UI fix agent was cut off too (its WIP 92a7f8b on loop/ui)
 
 ## Morning merge — for YOU (the loop never runs these)
 ```sh
