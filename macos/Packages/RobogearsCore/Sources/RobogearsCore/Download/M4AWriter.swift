@@ -239,6 +239,10 @@ public struct M4AWriter: M4AWriting {
         if let coverJPEG, !(coverJPEG.count >= 2 && coverJPEG.first == 0xFF && coverJPEG.dropFirst().first == 0xD8) {
             throw .coverIsNotJPEG
         }
+        // Every table counts samples in 32 bits. Only a corrupt file of more
+        // than 4 GB of one-byte samples could pass this; refusing it keeps
+        // the tables below from overflowing.
+        guard track.samples.count <= Int(UInt32.max) else { throw .unsupportedMP4("more than 4 billion samples") }
         let timing = try timing(track)
         let chunks = chunkSampleCounts(track.samples)
         // Where each chunk starts, counted from the first sample byte.
@@ -258,18 +262,21 @@ public struct M4AWriter: M4AWriting {
 
         // The chunk offsets count from the file's start, so they depend on
         // the moov's size, which depends on whether they need 64 bits. The
-        // size doesn't depend on the values, so measure first, then fill in.
-        func moov(firstSampleAt base: UInt64, wide: Bool) -> Data {
-            movie(track, timing: timing, chunks: chunks, chunkOffsets: chunkStarts.map { base + $0 }, wide: wide, ilst: ilst)
+        // size doesn't depend on the values, so measure with zeros (real
+        // offsets past 4 GB wouldn't fit the 32-bit table being measured),
+        // then fill in.
+        func moov(_ offsets: [UInt64], wide: Bool) -> Data {
+            movie(track, timing: timing, chunks: chunks, chunkOffsets: offsets, wide: wide, ilst: ilst)
         }
+        let zeros = [UInt64](repeating: 0, count: chunkStarts.count)
         var wide = false
-        var base = UInt64(ftyp.count + moov(firstSampleAt: 0, wide: false).count + mdatHeader.count)
+        var base = UInt64(ftyp.count + moov(zeros, wide: false).count + mdatHeader.count)
         if base + (chunkStarts.last ?? 0) > UInt64(UInt32.max) {
             wide = true
-            base = UInt64(ftyp.count + moov(firstSampleAt: 0, wide: true).count + mdatHeader.count)
+            base = UInt64(ftyp.count + moov(zeros, wide: true).count + mdatHeader.count)
         }
         return Layout(
-            header: ftyp + moov(firstSampleAt: base, wide: wide) + mdatHeader,
+            header: ftyp + moov(chunkStarts.map { base + $0 }, wide: wide) + mdatHeader,
             durationSeconds: Double(timing.presentedMedia) / Double(track.timescale)
         )
     }
