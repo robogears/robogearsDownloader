@@ -248,9 +248,9 @@ struct M4AWriterTests {
         #expect(tool.type == 1 && String(decoding: tool.bytes, as: UTF8.self) == FLACWriter.defaultToolName)
 
         // The ISRC is a freeform atom: mean, name, then the text value.
-        let isrc = try #require(ours.last).bytes
+        let isrc = try #require(ours.last { $0.name == "----" }).bytes
         let parts = try MP4Inspector.boxes(isrc, in: 8..<isrc.count)
-        #expect(parts.map(\.type) == ["mean", "name", "data"])
+        try #require(parts.map(\.type) == ["mean", "name", "data"])
         #expect(isrc.subdata(in: (parts[0].bodyStart + 4)..<parts[0].end) == Data("com.apple.iTunes".utf8))
         #expect(isrc.subdata(in: (parts[1].bodyStart + 4)..<parts[1].end) == Data("ISRC".utf8))
         let value = try MP4Inspector.value(of: isrc)
