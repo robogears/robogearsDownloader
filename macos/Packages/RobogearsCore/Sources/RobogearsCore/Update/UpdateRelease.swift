@@ -119,7 +119,8 @@ public enum UpdateAssets {
 
 /// Version comparison for release tags (§3): leading v stripped in any case,
 /// numeric segments compared left to right, missing segments are 0, and a
-/// pre-release never outranks its own release.
+/// pre-release never outranks its own release. The comparing itself is
+/// `VersionNumber`'s, so there is one rule in the app.
 public enum UpdateVersion {
     public static func stripPrefix(_ s: String) -> String {
         var v = s.trimmingCharacters(in: .whitespaces)
@@ -134,19 +135,11 @@ public enum UpdateVersion {
             .allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
+    /// One comparison serves the updater and everything else: the port of
+    /// the Electron rule in VersionCompare.swift, after the case-insensitive
+    /// prefix strip above. Pre-releases order by their identifiers, so
+    /// "0.2.1-rc.2" is newer than "0.2.1-rc.1".
     public static func isNewer(_ candidate: String, than current: String) -> Bool {
-        func split(_ s: String) -> (nums: [Int], pre: String?) {
-            let halves = stripPrefix(s).split(separator: "-", maxSplits: 1)
-            let nums = (halves.first ?? "").split(separator: ".").map { Int($0) ?? 0 }
-            return (nums, halves.count > 1 ? String(halves[1]) : nil)
-        }
-        let a = split(candidate), b = split(current)
-        for i in 0..<max(a.nums.count, b.nums.count) {
-            let x = i < a.nums.count ? a.nums[i] : 0
-            let y = i < b.nums.count ? b.nums[i] : 0
-            if x != y { return x > y }
-        }
-        if case (nil, .some) = (a.pre, b.pre) { return true }
-        return false
+        VersionCompare.isNewer(stripPrefix(candidate), than: stripPrefix(current))
     }
 }

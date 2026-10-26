@@ -1,0 +1,32 @@
+{
+    "limit": 100,
+    "offset": 0,
+    "totalNumberOfItems": 3,
+    "items": [
+        {
+            "id": 900000301,
+            "title": "Night/Day",
+            "duration": 222,
+            "audioQuality": "HI_RES_LOSSLESS",
+            "mediaMetadata": { "tags": ["LOSSLESS", "HIRES_LOSSLESS"] },
+            "artists": [ { "id": 7000003, "name": "Third Placeholder" } ],
+            "album": { "id": 800000300, "title": "Crossing" }
+        },
+        {
+            "id": 900000302,
+            "title": "Crossing (Live)",
+            "type": "video",
+            "artists": [ { "id": 7000003, "name": "Third Placeholder" } ]
+        },
+        {
+            "id": 900000303,
+            "title": "Paper Harbour",
+            "duration": 210,
+            "audioQuality": "HIGH",
+            "mediaMetadata": { "tags": [] },
+            "artist": { "id": 7000003, "name": "Third Placeholder" },
+            "artists": [],
+            "album": { "id": 800000301, "title": "Paper Harbour" }
+        }
+    ]
+}

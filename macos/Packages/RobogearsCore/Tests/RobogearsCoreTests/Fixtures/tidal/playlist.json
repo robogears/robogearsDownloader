@@ -1,0 +1,17 @@
+{
+    "uuid": "0f1e2d3c-4b5a-4968-8776-655443322110",
+    "title": "Late Ferry",
+    "numberOfTracks": 2,
+    "numberOfVideos": 0,
+    "creator": { "id": 0 },
+    "description": "Synthetic playlist for tests",
+    "duration": 432,
+    "lastUpdated": "2026-10-01T10:00:00.000+0000",
+    "created": "2026-09-01T10:00:00.000+0000",
+    "type": "USER",
+    "publicPlaylist": false,
+    "url": "http://www.tidal.example.test/playlist/0f1e2d3c-4b5a-4968-8776-655443322110",
+    "image": "2b3c4d5e-0000-4000-8000-00000000beef",
+    "popularity": 0,
+    "squareImage": "3c4d5e6f-0000-4000-8000-00000000cafe"
+}

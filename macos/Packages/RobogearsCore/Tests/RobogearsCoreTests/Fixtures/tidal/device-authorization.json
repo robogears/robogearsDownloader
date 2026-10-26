@@ -1,0 +1,8 @@
+{
+    "deviceCode": "synthetic-device-code-0001",
+    "userCode": "ABCDE",
+    "verificationUri": "link.tidal.example.test",
+    "verificationUriComplete": "link.tidal.example.test/ABCDE",
+    "expiresIn": 300,
+    "interval": 2
+}

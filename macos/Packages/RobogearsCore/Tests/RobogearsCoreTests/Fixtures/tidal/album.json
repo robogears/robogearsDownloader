@@ -1,0 +1,23 @@
+{
+    "id": 800000100,
+    "title": "Harbour Lights",
+    "duration": 2710,
+    "streamReady": true,
+    "allowStreaming": true,
+    "numberOfTracks": 11,
+    "numberOfVideos": 1,
+    "numberOfVolumes": 1,
+    "releaseDate": "2011-05-02",
+    "copyright": "(P) 2011 Placeholder Records",
+    "type": "ALBUM",
+    "version": null,
+    "url": "http://www.tidal.example.test/album/800000100",
+    "cover": "1a2b3c4d-0000-4000-8000-00000000abcd",
+    "explicit": false,
+    "upc": "000000000017",
+    "audioQuality": "LOSSLESS",
+    "audioModes": ["STEREO"],
+    "mediaMetadata": { "tags": ["LOSSLESS", "HIRES_LOSSLESS"] },
+    "artist": { "id": 7000001, "name": "Placeholder Artist", "type": "MAIN" },
+    "artists": [ { "id": 7000001, "name": "Placeholder Artist", "type": "MAIN" } ]
+}

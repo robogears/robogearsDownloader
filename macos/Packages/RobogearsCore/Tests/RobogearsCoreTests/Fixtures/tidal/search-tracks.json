@@ -1,0 +1,28 @@
+{
+    "limit": 10,
+    "offset": 0,
+    "totalNumberOfItems": 2,
+    "items": [
+        {
+            "id": 900000101,
+            "title": "Blue Lantern",
+            "version": "Extended Mix",
+            "duration": 245,
+            "explicit": false,
+            "audioQuality": "LOSSLESS",
+            "mediaMetadata": { "tags": ["LOSSLESS", "HIRES_LOSSLESS"] },
+            "artists": [ { "id": 7000001, "name": "Placeholder Artist" } ],
+            "album": { "id": 800000100, "title": "Harbour Lights", "cover": "1a2b3c4d-0000-4000-8000-00000000abcd" }
+        },
+        {
+            "id": 900000104,
+            "title": "Blue Lantern",
+            "duration": 201,
+            "explicit": false,
+            "audioQuality": "LOSSLESS",
+            "mediaMetadata": { "tags": ["LOSSLESS"] },
+            "artists": [ { "id": 7000001, "name": "Placeholder Artist" } ],
+            "album": { "id": 800000101, "title": "Blue Lantern (Single)" }
+        }
+    ]
+}
