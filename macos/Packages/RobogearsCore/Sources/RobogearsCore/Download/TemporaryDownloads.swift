@@ -1,0 +1,171 @@
+// Where a track lives while it downloads, and the list that makes sure
+// nothing is left behind.
+//
+// Decision 4, item 2.2: each track is downloaded and tagged in macOS's
+// temporary folder on the same disk as the download folder, so nothing
+// half-done ever appears in the download folder, and the finished file
+// moves in with one rename. "The app keeps a list of the temporary files it
+// made and deletes them after a failure or cancel, and any leftovers at the
+// next launch." The Electron app wrote "<Title>.tmp.flac" into the download
+// folder itself and left it there when a download broke
+// (download-pipeline.md bug 10).
+import Foundation
+import Synchronization
+
+public final class TemporaryDownloads: Sendable {
+    /// Why a temporary folder couldn't be made.
+    public enum Failure: Error, Sendable, Equatable {
+        /// macOS gave no temporary folder on the download folder's disk, or
+        /// only one inside the download folder, as it does when the
+        /// download folder is the top level of a drive (its hidden
+        /// ".TemporaryItems" sits there), or one on another disk. Whether
+        /// some disks refuse, or get one elsewhere (exFAT, network shares),
+        /// needs a live check (2.2). D4's fallback for such disks, a hidden
+        /// ".Blue Lantern.flac.part" in the download folder, isn't built:
+        /// it waits for that check, and the download folder's own checks
+        /// would first have to ignore such files.
+        case noTemporaryFolder(detail: String)
+        /// The list of temporary folders couldn't be saved, so a crash
+        /// could leave this one behind unnoticed; nothing is downloaded.
+        case listNotSaved(detail: String)
+    }
+
+    /// Written into every folder the app makes. A leftover is deleted only
+    /// when it carries this file, so a damaged or edited list can never
+    /// send the clean-up after anything the app didn't make.
+    static let markerName = ".robogears-download"
+
+    private let store: JSONFileStore<[String]>
+    private let entries: Mutex<[String]>
+    private let systemFolderNear: @Sendable (URL) throws -> URL
+    private let sameDisk: @Sendable (URL, URL) -> Bool
+
+    /// `registryFile` is where the list is kept (Application Support in
+    /// the app, a temporary folder in tests). A list left by an earlier
+    /// launch is read, so `sweepLeftovers()` can find its folders.
+    public convenience init(registryFile: URL) {
+        self.init(registryFile: registryFile) { folder in
+            try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+        }
+    }
+
+    /// `systemFolderNear` stands in for macOS's per-disk temporary folder,
+    /// so tests can offer none, or one inside the download folder;
+    /// `sameDisk` for the disk check, so they can offer one on another disk.
+    init(
+        registryFile: URL, systemFolderNear: @escaping @Sendable (URL) throws -> URL,
+        sameDisk: @escaping @Sendable (URL, URL) -> Bool = TemporaryDownloads.onSameDisk
+    ) {
+        store = JSONFileStore(file: registryFile, permissions: 0o600)
+        switch store.load() {
+        case let .loaded(paths): entries = Mutex(paths)
+        case .missing, .unreadable: entries = Mutex([])
+        }
+        self.systemFolderNear = systemFolderNear
+        self.sameDisk = sameDisk
+    }
+
+    /// True when both are on one disk, by the disk's own identity. False
+    /// when either can't say: the space check (2.20) and the final move as
+    /// one rename (2.2) both rest on it, so it's never assumed.
+    @Sendable
+    static func onSameDisk(_ item: URL, _ folder: URL) -> Bool {
+        func disk(_ url: URL) -> NSObject? {
+            var url = url
+            url.removeAllCachedResourceValues()
+            return (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
+        }
+        guard let itemDisk = disk(item), let folderDisk = disk(folder) else { return false }
+        return itemDisk == folderDisk
+    }
+
+    /// The temporary folders listed and not yet removed.
+    public var registered: [URL] {
+        entries.withLock { $0.map { URL(fileURLWithPath: $0, isDirectory: true) } }
+    }
+
+    /// A new, empty folder on the same disk as `folder`, listed before it
+    /// is used. It is never inside `folder` (rule 2: downloads land flat,
+    /// and nothing half-done may look like a download there), and never on
+    /// another disk, where the space check would measure the wrong disk and
+    /// the final move would become a copy that can break halfway (2.2).
+    public func makeFolder(near folder: URL) throws(Failure) -> URL {
+        let fm = FileManager.default
+        let made: URL
+        do {
+            made = try systemFolderNear(folder)
+        } catch {
+            throw .noTemporaryFolder(detail: String(describing: error))
+        }
+        guard Folders.relationship(of: made, to: folder) == .other else {
+            try? fm.removeItem(at: made)
+            throw .noTemporaryFolder(detail: "macOS offered a temporary folder inside the download folder")
+        }
+        guard sameDisk(made, folder) else {
+            try? fm.removeItem(at: made)
+            throw .noTemporaryFolder(detail: "macOS offered a temporary folder on another disk")
+        }
+        do {
+            guard fm.createFile(atPath: made.appendingPathComponent(Self.markerName).path, contents: Data()) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            try entries.withLock { list in
+                var updated = list
+                updated.append(made.path)
+                try store.save(updated)
+                list = updated
+            }
+        } catch {
+            try? fm.removeItem(at: made)
+            throw .listNotSaved(detail: String(describing: error))
+        }
+        return made
+    }
+
+    /// Deletes a folder this registry made, with everything in it, and
+    /// takes it off the list once it is gone. If it can't be deleted it
+    /// stays listed for the next launch's sweep.
+    public func remove(_ folder: URL) {
+        let path = folder.path
+        guard entries.withLock({ $0.contains(path) }) else { return }
+        try? FileManager.default.removeItem(at: folder)
+        guard !FileManager.default.fileExists(atPath: path) else { return }
+        entries.withLock { list in
+            var updated = list
+            updated.removeAll { $0 == path }
+            // A list that can't be saved still forgets the folder for this
+            // launch; the next sweep finds the path gone and drops it.
+            try? store.save(updated)
+            list = updated
+        }
+    }
+
+    /// Deletes every listed folder still on disk, for the next launch after
+    /// a crash or a forced quit. A listed path that is gone is dropped; one
+    /// that exists without the app's marker is dropped without deleting it.
+    /// Returns how many folders were deleted. Call it before any download
+    /// starts.
+    @discardableResult
+    public func sweepLeftovers() -> Int {
+        let fm = FileManager.default
+        return entries.withLock { list in
+            var kept: [String] = []
+            var deleted = 0
+            for path in list {
+                guard fm.fileExists(atPath: path) else { continue }
+                let marker = (path as NSString).appendingPathComponent(Self.markerName)
+                guard fm.fileExists(atPath: marker) else { continue }
+                if (try? fm.removeItem(atPath: path)) != nil, !fm.fileExists(atPath: path) {
+                    deleted += 1
+                } else {
+                    kept.append(path)
+                }
+            }
+            if kept != list {
+                try? store.save(kept)
+                list = kept
+            }
+            return deleted
+        }
+    }
+}

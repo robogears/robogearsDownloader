@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // MARK: - Request and response
 
@@ -22,6 +23,18 @@ public struct HTTPRequest: Sendable, Equatable, CustomStringConvertible, CustomR
         /// portal page answering with 200 can't be told apart here, so the
         /// page's own parser has to notice the content it needs is missing.
         case webPage
+        /// Audio or a cover image from TIDAL's CDN, at a signed https link
+        /// that carries no sign-in. Over https only the CDN itself can
+        /// answer with a status (a captive portal fails the secure
+        /// connection instead), so an error answer is judged by its status
+        /// whatever its body, such as an HTML "Not Found" or an XML "Access
+        /// Denied"; only a 200 that is a web page (a proxy's block page) or
+        /// a 511 means the network is in the way. Redirects are followed,
+        /// up to five, https to https, as the Electron app's
+        /// `downloadDirect` and `fetchBuffer` did (download-pipeline.md,
+        /// constants): with no sign-in on the request, nothing secret can
+        /// travel to the new host.
+        case media
     }
 
     public var method: Method
@@ -113,7 +126,9 @@ public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
     /// 5xx after the retries ran out.
     case server(status: Int)
     /// Any other status. A redirect is not one of them: redirects are not
-    /// followed and read as `offline`, the network being in the way.
+    /// followed and read as `offline`, the network being in the way. The
+    /// one exception is a `.media` request, which follows up to five
+    /// secure redirects; one it won't follow is the CDN's own answer.
     case unexpectedStatus(Int, subStatus: Int?)
     /// The answer arrived but wasn't the data expected.
     case decoding(detail: String)
@@ -161,7 +176,8 @@ extension HTTPResponse {
     /// The body when the status is 200, otherwise the matching
     /// `RequestError`. 200 exactly, as every Electron caller checked.
     /// Pass `.webPage` for a page that is HTML by design (the Spotify embed
-    /// page), so the page itself isn't read as a captive portal.
+    /// page), so the page itself isn't read as a captive portal, and
+    /// `.media` for the CDN, whose error answers count by status alone.
     public func requireOK(expecting expected: HTTPRequest.ExpectedBody = .data) throws(RequestError) -> Data {
         if let interference = networkInterference(expecting: expected) { throw interference }
         switch status {
@@ -190,8 +206,18 @@ extension HTTPResponse {
     /// required", or, where data was expected, a web page instead of an
     /// error body. That is a captive portal or a proxy, which is a network
     /// problem, never "not found", "refused" or a parse error (G1-9
-    /// skeptic note 3).
+    /// skeptic note 3). For `.media`, only a 511 or a 200 whose body starts
+    /// like a web page counts (see `ExpectedBody.media`). The body alone
+    /// decides that 200, not its Content-Type: audio and JPEG never start
+    /// with "<", and a CDN that labels audio as text/html must not pause
+    /// every batch.
     public func networkInterference(expecting expected: HTTPRequest.ExpectedBody = .data) -> RequestError? {
+        if expected == .media {
+            if status == 511 || (status == 200 && bodyStartsLikeWebPage) {
+                return .offline(detail: Self.webPageDetail)
+            }
+            return nil
+        }
         if (300...399).contains(status) {
             return .offline(detail: "the request was redirected (a network sign-in page may be in the way)")
         }
@@ -209,8 +235,11 @@ extension HTTPResponse {
     }
 
     private var isWebPage: Bool {
-        let first = body.first { !Self.isJSONWhitespace($0) }
-        return first == UInt8(ascii: "<") || (header("Content-Type")?.lowercased().contains("text/html") ?? false)
+        bodyStartsLikeWebPage || (header("Content-Type")?.lowercased().contains("text/html") ?? false)
+    }
+
+    private var bodyStartsLikeWebPage: Bool {
+        body.first { !Self.isJSONWhitespace($0) } == UInt8(ascii: "<")
     }
 
     /// TIDAL's own error number: `subStatus` on api.tidal.com, `sub_status`
@@ -449,7 +478,9 @@ public final class HTTPClient: Sendable {
         let session = tryLimits == limits ? self.session : Self.session(like: self.session, limits: tryLimits)
         defer { if session !== self.session { session.finishTasksAndInvalidate() } }
         do {
-            let (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirects.shared)
+            let redirects: any URLSessionTaskDelegate = request.expectedBody == .media
+                ? FollowMediaRedirects() : RefuseRedirects.shared
+            let (data, response) = try await session.data(for: urlRequest, delegate: redirects)
             guard let http = response as? HTTPURLResponse else {
                 throw URLError(.badServerResponse)
             }
@@ -477,6 +508,7 @@ public final class HTTPClient: Sendable {
 /// carry the Bearer or Basic header toward a host nobody checked. The 3xx
 /// is returned as the answer, and `networkInterference` reads it as
 /// offline: TIDAL's hosts never redirect, so something on the network did.
+/// `.media` requests use `FollowMediaRedirects` instead.
 private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = RefuseRedirects()
 
@@ -487,5 +519,309 @@ private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecke
         newRequest request: URLRequest
     ) async -> URLRequest? {
         nil
+    }
+}
+
+/// The redirect rule for `.media` requests (see `ExpectedBody.media`):
+/// up to five hops, each to an https address. The Electron app followed
+/// up to five on both CDN paths (download-pipeline.md, constants); a
+/// redirect to plain http is refused here, which ATS would refuse in the
+/// app anyway. A refused redirect comes back as the answer, and its status
+/// decides what it means.
+enum MediaRedirects {
+    static let limit = 5
+
+    static func follows(_ request: URLRequest, afterHops hops: Int) -> Bool {
+        hops < limit && request.url?.scheme?.lowercased() == "https"
+    }
+}
+
+/// One `.media` request's redirects, counted for that request alone.
+private final class FollowMediaRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    private let hops = Mutex(0)
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        hops.withLock { hops in
+            guard MediaRedirects.follows(request, afterHops: hops) else { return nil }
+            hops += 1
+            return request
+        }
+    }
+}
+
+// MARK: - Streaming download
+
+extension HTTPClient {
+    /// Streams a GET's body straight into a new file at `file` as it
+    /// arrives, so a 150 MB Hi-Res track is never held whole in memory
+    /// (decision 4, item 2.20; the Electron app buffered DASH tracks whole).
+    ///
+    /// The same retry rule as `send`: a 429, a 5xx, a timeout or a dropped
+    /// connection tries again from the start (the file is emptied first),
+    /// and gives up as `busy`, `server` or `offline`. A body that ends
+    /// before its `Content-Length` counts as a dropped connection, so a
+    /// cut-off transfer is never mistaken for a whole file (reference
+    /// download-pipeline.md bug 10). Redirects follow the same rule as in
+    /// `send`: refused, except up to five secure ones for `.media`.
+    ///
+    /// `file` must not exist yet: it is created exclusively, never
+    /// replacing anything. It is removed again unless the answer is a
+    /// complete 200, so a failure never leaves a partial file behind.
+    ///
+    /// Returns the response. For a 200 the body holds only the first bytes
+    /// that arrived (up to 512), enough for `networkInterference` to tell a
+    /// sign-in page from audio; the rest is in the file. For any other
+    /// status the body is the server's answer (up to 64 KiB) and no file is
+    /// kept. `progress` gets the bytes received so far in this try and the
+    /// `Content-Length`, when the server sent one. Cancelling the task stops
+    /// the transfer at once and throws `CancellationError`.
+    public func download(
+        _ request: HTTPRequest,
+        to file: URL,
+        retry: RetryPolicy = .standard,
+        progress: @escaping @Sendable (_ received: Int64, _ expected: Int64?) -> Void = { _, _ in }
+    ) async throws -> HTTPResponse {
+        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var keepFile = false
+        defer {
+            try? handle.close()
+            if !keepFile { try? FileManager.default.removeItem(at: file) }
+        }
+
+        var deadline = limits.total.map { clock.now().addingTimeInterval($0.timeInterval) }
+        var retriesSoFar = 0
+        var lastError: RequestError?
+        while true {
+            let timeLeft = deadline.map { Duration.seconds(max($0.timeIntervalSince(clock.now()), 0)) }
+            if let timeLeft, timeLeft <= .zero, let lastError { throw lastError }
+            try handle.truncate(atOffset: 0)
+            let failure: RetryPolicy.Failure
+            let finalError: RequestError
+            do {
+                let attempt = try await streamOnce(
+                    request, into: handle, limits: limits.forTry(after: retriesSoFar, timeLeft: timeLeft), progress: progress
+                )
+                let status = attempt.response.status
+                if status == 200 && attempt.isComplete {
+                    try handle.synchronize()
+                    keepFile = true
+                    return attempt.response
+                }
+                if status == 200 {
+                    failure = .transport(.networkConnectionLost)
+                    finalError = .offline(detail: RequestError.offlineDetail(for: .networkConnectionLost))
+                } else {
+                    guard RetryPolicy.isRetryable(status: status) else { return attempt.response }
+                    let retryAfter = attempt.response.header("Retry-After")
+                        .flatMap { RetryPolicy.parseRetryAfter($0, now: clock.now()) }
+                    failure = .status(status, retryAfter: retryAfter)
+                    finalError = status == 429
+                        ? .busy(retryAfter: retryAfter)
+                        : attempt.response.networkInterference(expecting: request.expectedBody) ?? .server(status: status)
+                }
+            } catch let error as URLError {
+                failure = .transport(error.code)
+                finalError = .offline(detail: RequestError.offlineDetail(for: error.code))
+            }
+            lastError = finalError
+            switch retry.decision(after: failure, retriesSoFar: retriesSoFar) {
+            case let .retry(after: wait):
+                if case .status(429, retryAfter: .some(_)) = failure {
+                    deadline = deadline?.addingTimeInterval(wait.timeInterval)
+                }
+                if let deadline, clock.now().addingTimeInterval(wait.timeInterval) >= deadline {
+                    throw finalError
+                }
+                try await clock.sleep(for: wait)
+                retriesSoFar += 1
+            case .giveUp:
+                throw finalError
+            }
+        }
+    }
+
+    /// One try of `download`. Throws `URLError` for transport failures,
+    /// `CancellationError` when the calling task was cancelled, and the
+    /// file system's error when writing fails (a full disk is not retried).
+    private func streamOnce(
+        _ request: HTTPRequest,
+        into handle: FileHandle,
+        limits tryLimits: Limits,
+        progress: @escaping @Sendable (Int64, Int64?) -> Void
+    ) async throws -> (response: HTTPResponse, isComplete: Bool) {
+        try Task.checkCancellation()
+        var urlRequest = URLRequest(url: request.url)
+        urlRequest.httpMethod = request.method.rawValue
+        urlRequest.timeoutInterval = tryLimits.inactivity.timeInterval
+        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
+        for (name, value) in request.headers {
+            urlRequest.setValue(value, forHTTPHeaderField: name)
+        }
+        urlRequest.httpBody = request.body
+
+        // A session of its own per try: data arrives through a delegate,
+        // which URLSession only takes per session. The serial queue keeps
+        // the file writes in order.
+        let configuration = session.configuration
+        configuration.timeoutIntervalForRequest = tryLimits.inactivity.timeInterval
+        configuration.timeoutIntervalForResource = tryLimits.total?.timeInterval ?? Self.noTotalLimit
+        let receiver = StreamingReceiver(handle: handle, followsRedirects: request.expectedBody == .media, progress: progress)
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        let streamingSession = URLSession(configuration: configuration, delegate: receiver, delegateQueue: queue)
+        defer { streamingSession.finishTasksAndInvalidate() }
+        let task = streamingSession.dataTask(with: urlRequest)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if receiver.begin(continuation) { task.resume() }
+            }
+        } onCancel: {
+            receiver.markCancelled()
+            task.cancel()
+        }
+    }
+}
+
+/// Receives one streamed body: writes a 200's bytes to the file as they
+/// arrive, keeps any other answer's (short) body for the caller, and
+/// resumes the waiting download once the transfer ends. Its callbacks run
+/// on a serial queue; the lock covers the state the cancelling task also
+/// touches.
+private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    typealias Outcome = (response: HTTPResponse, isComplete: Bool)
+
+    private struct State {
+        var continuation: CheckedContinuation<Outcome, any Error>?
+        var cancelled = false
+        var status = 0
+        var headers: [String: String] = [:]
+        var expected: Int64?
+        var received: Int64 = 0
+        var kept = Data()
+        var writeError: (any Error)?
+        var redirects = 0
+    }
+
+    /// For a 200, enough of the start to recognise a web page.
+    static let sniffBytes = 512
+    /// For an error answer: TIDAL's error bodies are small JSON.
+    static let errorBodyBytes = 64 * 1024
+
+    private let state = Mutex(State())
+    private let handle: FileHandle
+    private let followsRedirects: Bool
+    private let progress: @Sendable (Int64, Int64?) -> Void
+
+    init(handle: FileHandle, followsRedirects: Bool, progress: @escaping @Sendable (Int64, Int64?) -> Void) {
+        self.handle = handle
+        self.followsRedirects = followsRedirects
+        self.progress = progress
+    }
+
+    /// Installs the continuation. False when the caller was cancelled
+    /// before the transfer started; the continuation is resumed here then.
+    func begin(_ continuation: CheckedContinuation<Outcome, any Error>) -> Bool {
+        let alreadyCancelled = state.withLock { state -> Bool in
+            if state.cancelled { return true }
+            state.continuation = continuation
+            return false
+        }
+        if alreadyCancelled { continuation.resume(throwing: CancellationError()) }
+        return !alreadyCancelled
+    }
+
+    func markCancelled() {
+        state.withLock { $0.cancelled = true }
+    }
+
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            return
+        }
+        var headers: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            if let key = key as? String { headers[key] = "\(value)" }
+        }
+        // A compressed body arrives decoded, so its length can't be held
+        // against the Content-Length; only an uncompressed one is checked.
+        let encoding = http.value(forHTTPHeaderField: "Content-Encoding")?.lowercased()
+        let isEncoded = encoding.map { !$0.isEmpty && $0 != "identity" } ?? false
+        let expected = !isEncoded && http.expectedContentLength >= 0 ? http.expectedContentLength : nil
+        state.withLock { state in
+            state.status = http.statusCode
+            state.headers = headers
+            state.expected = expected
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let status = state.withLock { $0.status }
+        guard status == 200 else {
+            state.withLock { state in
+                let room = Self.errorBodyBytes - state.kept.count
+                if room > 0 { state.kept.append(data.prefix(room)) }
+            }
+            return
+        }
+        do {
+            try handle.write(contentsOf: data)
+        } catch {
+            state.withLock { $0.writeError = error }
+            dataTask.cancel()
+            return
+        }
+        let (received, expected) = state.withLock { state -> (Int64, Int64?) in
+            state.received += Int64(data.count)
+            let room = Self.sniffBytes - state.kept.count
+            if room > 0 { state.kept.append(data.prefix(room)) }
+            return (state.received, state.expected)
+        }
+        progress(received, expected)
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        // The same rule as `send`: a refused redirect's 3xx is the answer.
+        let follow = followsRedirects && state.withLock { state -> Bool in
+            guard MediaRedirects.follows(request, afterHops: state.redirects) else { return false }
+            state.redirects += 1
+            return true
+        }
+        completionHandler(follow ? request : nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        let (continuation, result) = state.withLock { state -> (CheckedContinuation<Outcome, any Error>?, Result<Outcome, any Error>) in
+            let continuation = state.continuation
+            state.continuation = nil
+            let result: Result<Outcome, any Error>
+            if state.cancelled {
+                result = .failure(CancellationError())
+            } else if let writeError = state.writeError {
+                result = .failure(writeError)
+            } else if let error {
+                result = .failure((error as? URLError) ?? URLError(.unknown))
+            } else {
+                let response = HTTPResponse(status: state.status, headers: state.headers, body: state.kept)
+                let complete = state.status != 200 || state.expected.map { $0 == state.received } ?? true
+                result = .success((response, complete))
+            }
+            return (continuation, result)
+        }
+        continuation?.resume(with: result)
     }
 }
