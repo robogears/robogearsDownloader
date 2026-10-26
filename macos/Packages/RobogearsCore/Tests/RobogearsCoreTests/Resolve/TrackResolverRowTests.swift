@@ -65,6 +65,18 @@ struct TrackResolverRowTests {
         }
     }
 
+    @Test func aSignedOutSearchAsksForSignInInWordsAboutSearching() async {
+        let harness = ResolveHarness(credential: nil)
+        await #expect(throws: ResolveFailure(kind: .signInNeeded, message: "Sign in to TIDAL to search.")) {
+            try await harness.resolver.search("Blue Lantern")
+        }
+        let row = QueueItem(tidalID: nil, title: "Blue Lantern", artist: "Placeholder Artist", source: .importList, match: .notOnTIDAL)
+        await #expect(throws: ResolveFailure(kind: .signInNeeded, message: "Sign in to TIDAL to search.")) {
+            try await harness.resolver.search(forRow: row)
+        }
+        #expect(harness.server.requests.isEmpty)
+    }
+
     // MARK: Fixing a row (D4 4.10, 1.4)
 
     @Test func matchAgainReplacesANotFoundRowInPlace() async {
@@ -97,6 +109,8 @@ struct TrackResolverRowTests {
         #expect(replaced.artist == "Northbound Choir, Second Guest")
         #expect(replaced.originalTitle == "Paper Harbour")
         #expect(replaced.originalArtist == "Northbound Choir")
+        // Spotify's length stays beside TIDAL's (D4 4.14).
+        #expect(replaced.originalDurationSeconds == 210)
     }
 
     @Test func matchAgainLeavesMatchedRowsAloneAndSaysWhyItCouldntCheck() async {
@@ -120,7 +134,7 @@ struct TrackResolverRowTests {
             ResolveJSON.track(900400004, "Glass Orchard", artists: ["Northbound Choir Ensemble"]),
         ])
         let row = QueueItem(id: Self.rowID, tidalID: nil, title: "Glass Orchard", artist: "Northbound Choir",
-                            source: .spotify, match: .notOnTIDAL)
+                            durationSeconds: 233, source: .spotify, match: .notOnTIDAL)
         #expect(harness.resolver.searchQuery(for: row) == "Glass Orchard Northbound Choir")
         let results = try await harness.resolver.search(forRow: row)
         let pick = try #require(results.hits.first)
@@ -129,9 +143,42 @@ struct TrackResolverRowTests {
         #expect(replaced.tidalID == 900400004)
         #expect(replaced.source == .spotify)
         #expect(replaced.originalArtist == "Northbound Choir")
+        #expect(replaced.originalDurationSeconds == 233)
         // The library check still applies to the pick (rule 4).
         #expect(replaced.libraryMatch?.kind == .exact)
         #expect(!replaced.included)
+    }
+
+    /// `withID` rebuilds the row field by field (`id` is a `let`). Every
+    /// optional field is set here, so a field added to QueueItem later starts
+    /// nil and fails this test until it is set here and copied in `withID`;
+    /// otherwise Match Again and Search… would quietly drop it.
+    @Test func aRowUnderANewIDKeepsEveryOtherField() {
+        var row = QueueItem(
+            id: UUID(), tidalID: 900400009, title: "Blue Lantern", version: "Radio Edit", artist: "Placeholder Artist",
+            album: "Glass Orchard", durationSeconds: 201, isrc: "ZZRES2600009", hiRes: true, explicit: true,
+            source: .spotify, originalTitle: "Blue Lantern - Radio Edit", originalArtist: "Placeholder Artists",
+            match: .differentArtist(tidalArtist: "Placeholder Artist"),
+            libraryMatch: .init(kind: .similar, path: "/Music/Library/Blue Lantern.flac", libraryTitle: "Blue Lantern"),
+            included: false, state: .failed(reason: "TIDAL is busy")
+        )
+        row.originalDurationSeconds = 245
+        row.libraryCheckPending = true
+
+        let fields = Array(Mirror(reflecting: row).children)
+        let unset = fields.filter { field in
+            let value = Mirror(reflecting: field.value)
+            return value.displayStyle == .optional && value.children.isEmpty
+        }.compactMap(\.label)
+        #expect(unset.isEmpty, "Set \(unset) in this test and copy it in QueueItem.withID")
+
+        let copy = row.withID(Self.rowID)
+        #expect(copy.id == Self.rowID)
+        let copied = Array(Mirror(reflecting: copy).children)
+        #expect(copied.count == fields.count)
+        for (field, kept) in zip(fields, copied) where field.label != "id" {
+            #expect(String(describing: kept.value) == String(describing: field.value), "withID dropped \(field.label ?? "a field")")
+        }
     }
 
     // MARK: Checking library (D4 4.20)
@@ -194,6 +241,59 @@ struct TrackResolverRowTests {
         #expect(NoLibrary().mark(for: query) == .checked(nil))
     }
 
+    @Test func aLibraryThatCantBeReadOnlyMarksRowsFromASavedIndex() {
+        // D4 4.20 and 3.9: an unreadable library with no saved index has
+        // checked nothing, so rows wait instead of passing as new.
+        #expect(!LibraryMarks.indexIsUsable(status: .unavailable(lastScanned: nil), hasIndex: false))
+        #expect(!LibraryMarks.indexIsUsable(status: .failed("refused"), hasIndex: false))
+        #expect(LibraryMarks.indexIsUsable(status: .unavailable(lastScanned: Date()), hasIndex: true))
+        #expect(LibraryMarks.indexIsUsable(status: .failed("refused"), hasIndex: true))
+        #expect(!LibraryMarks.indexIsUsable(status: .scanning(done: 0, total: 0), hasIndex: true))
+        #expect(LibraryMarks.indexIsUsable(status: .ready(fileCount: 0), hasIndex: true))
+        #expect(LibraryMarks.indexIsUsable(status: .off, hasIndex: false))
+    }
+
+    @Test func aMissingLibraryDriveWithNoSavedIndexHoldsRowsAsCheckingAndASavedIndexStillMarks() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("resolve-unplugged-\(UUID().uuidString)")
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("resolve-index-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.removeItem(at: cache)
+        }
+        let gate = TIDALGate()
+        await gate.open()
+        let reader = ResolveBlockingTagReader(gate: gate, tags: AudioTags(title: "Blue Lantern", artists: ["Placeholder Artist"],
+                                                                          durationSeconds: 200))
+        let query = LibraryMatcher.Query(title: "Blue Lantern", artists: .names(["Placeholder Artist"]), durationSeconds: 200)
+
+        // The drive isn't there and nothing was ever read: not "not in library".
+        let fresh = LibraryIndexService(cacheFile: cache, reader: reader, isOnlineOnly: { _ in false })
+        await fresh.scan(folder)
+        guard case .unavailable = await fresh.status else {
+            Issue.record("Expected the library to be unavailable, got \(await fresh.status)")
+            return
+        }
+        #expect(await fresh.mark(for: query) == .pending)
+
+        // Read once, then unplugged: the saved index keeps marking (D4 3.9).
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data([0]).write(to: folder.appendingPathComponent("Blue Lantern.flac"))
+        let service = LibraryIndexService(cacheFile: cache, reader: reader, isOnlineOnly: { _ in false })
+        await service.scan(folder)
+        await service.waitForScan()
+        try FileManager.default.removeItem(at: folder)
+        await service.scan(folder)
+        guard case .unavailable = await service.status else {
+            Issue.record("Expected the library to be unavailable, got \(await service.status)")
+            return
+        }
+        guard case let .checked(match?) = await service.mark(for: query) else {
+            Issue.record("Expected the saved index to mark the row")
+            return
+        }
+        #expect(match.kind == .exact)
+    }
+
     @Test func oldSavedQueuesLoadAndTheCheckingMarkIsSaved() throws {
         let old = """
         {"id":"00000000-0000-4000-8000-0000000000AA","tidalID":900100001,"title":"Blue Lantern","artist":"Placeholder Artist",
@@ -202,11 +302,14 @@ struct TrackResolverRowTests {
         let decoded = try JSONDecoder().decode(QueueItem.self, from: Data(old.utf8))
         #expect(!decoded.isLibraryCheckPending)
         #expect(decoded.libraryCheckPending == nil)
+        #expect(decoded.originalDurationSeconds == nil)
 
         var pending = decoded
         pending.libraryCheckPending = true
+        pending.originalDurationSeconds = 199
         let again = try JSONDecoder().decode(QueueItem.self, from: JSONEncoder().encode(pending))
         #expect(again.isLibraryCheckPending)
+        #expect(again.originalDurationSeconds == 199)
     }
 
     // MARK: Summaries (D4 4.2, 4.9)
@@ -224,7 +327,8 @@ struct TrackResolverRowTests {
         stopped.stopped = true
         stopped.processed = 120
         stopped.total = 500
-        stopped.added = 112
+        stopped.added = 120
+        stopped.found = 112
         stopped.notOnTIDAL = 8
         #expect(stopped.message == "Stopped after 120 of 500. Added 112 tracks, 8 not found. The other 380 lines weren't added.")
 

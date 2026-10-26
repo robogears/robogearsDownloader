@@ -191,13 +191,27 @@ struct TIDALPaceTests {
     @Test func aRetryAfterOverSixtySecondsFailsLookupsAtOnceAsBusy() async throws {
         let clock = ResolveManualClock()
         let pace = TIDALPace(clock: clock)
-        await pace.tooManyRequests(retryAfter: .seconds(120), pause: nil)
-        #expect(await pace.status == .busy(until: Self.start.addingTimeInterval(120)))
-        await #expect(throws: RequestError.busy(retryAfter: .seconds(120))) { try await pace.beforeTry() }
+        await pace.tooManyRequests(retryAfter: .seconds(90), pause: nil)
+        #expect(await pace.status == .busy(until: Self.start.addingTimeInterval(60)))
+        await #expect(throws: RequestError.busy(retryAfter: .seconds(60))) { try await pace.beforeTry() }
 
-        clock.advance(by: .seconds(120))
+        clock.advance(by: .seconds(60))
         try await pace.beforeTry()
         #expect(await resolveEventually { await pace.status == .flowing })
+    }
+
+    /// One 429 saying "come back tomorrow" must not lock out every search,
+    /// link and download until then: after a minute, Try Again really asks
+    /// TIDAL again, as its message promises.
+    @Test func aDayLongRetryAfterLocksOutForAMinuteAtMost() async throws {
+        let clock = ResolveManualClock()
+        let pace = TIDALPace(clock: clock)
+        await pace.tooManyRequests(retryAfter: .seconds(86_400), pause: nil)
+        #expect(await pace.status == .busy(until: Self.start.addingTimeInterval(60)))
+        clock.advance(by: .seconds(59))
+        await #expect(throws: RequestError.busy(retryAfter: .seconds(1))) { try await pace.beforeTry() }
+        clock.advance(by: .seconds(1))
+        try await pace.beforeTry()
     }
 
     @Test func statusChangesPublishTheWaitForTheBatchBar() async throws {

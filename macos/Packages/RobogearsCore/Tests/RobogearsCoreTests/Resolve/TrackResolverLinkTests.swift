@@ -170,11 +170,16 @@ struct TrackResolverLinkTests {
         #expect(rows[2].match == .differentArtist(tidalArtist: "Another Band"))
         #expect(!rows[2].included)
         #expect(rows[2].originalArtist == "Northbound Choir")
+        // Spotify's 2:00 beside TIDAL's 2:21 hints at another version (D4 4.14).
+        #expect(rows[2].durationSeconds == 141)
+        #expect(rows[2].originalDurationSeconds == 120)
+        #expect(rows[0].originalDurationSeconds == 245)
         // Not on TIDAL: Spotify's own text.
         #expect(rows[3].match == .notOnTIDAL)
         #expect(rows[3].title == "Copper Sky")
         #expect(rows[3].artist == "Late Ferry Band")
         #expect(rows[3].durationSeconds == 199)
+        #expect(rows[3].originalDurationSeconds == nil)
 
         #expect(events.progress.first == .matching(done: 0, total: 4))
         #expect(events.progress.last == .matching(done: 4, total: 4))

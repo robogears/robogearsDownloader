@@ -24,6 +24,13 @@ extension TrackResolver {
                 try await tidal.searchTracks(query: trimmed, limit: TIDALAPI.defaultSearchLimit)
             }
         } catch {
+            // A search isn't an add: "Sign in to TIDAL to search.", not the
+            // add's "to add tracks from …".
+            if !Task.isCancelled, let token = error as? TokenError {
+                var failure = Self.signInFailure(token, sourceName: "")
+                if failure.kind == .signInNeeded { failure.message = ResolveMessages.signInToSearch }
+                throw failure
+            }
             try Self.rethrowIfStopping(error)
             switch error as? RequestError {
             case .busy, .server: throw ResolveFailure(kind: .busy, message: ResolveMessages.tidalBusy)
@@ -72,9 +79,11 @@ extension TrackResolver {
     public func replace(_ item: QueueItem, with hit: SearchHit) -> QueueItem {
         var row = hit.item.withID(item.id)
         row.source = item.source
-        let wanted = WantedTrack(row: item).readings[0]
+        let wantedTrack = WantedTrack(row: item)
+        let wanted = wantedTrack.readings[0]
         row.originalTitle = nil
         row.originalArtist = nil
+        row.originalDurationSeconds = nil
         if let tidalID = row.tidalID {
             let track = TIDALQueueTrack(tidalId: tidalID, title: row.title, version: row.version,
                                         artists: [row.artist], album: row.album)
@@ -82,6 +91,7 @@ extension TrackResolver {
                 row.originalTitle = wanted.title
                 row.originalArtist = wanted.artistLine.isEmpty ? nil : wanted.artistLine
             }
+            row.originalDurationSeconds = wantedTrack.durationSeconds.map { Int($0.rounded()) }
         }
         row.state = .waiting
         return row

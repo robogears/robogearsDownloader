@@ -80,6 +80,12 @@ struct TrackResolverImportTests {
         ])
         let events = await harness.run(.tracklist(text: ResolveFixtures.text("pasted-mixed.txt"), name: nil))
         #expect(events.rows.map(\.tidalID) == [900600002, 900600001, 900600003])
+        // The two links are counted as links while they are read, then the
+        // two song lines as tracks being matched (D4 4.21).
+        #expect(events.progress.first == .readingLinks(done: 0, total: 2))
+        #expect(events.progress.contains(.readingLinks(done: 2, total: 2)))
+        #expect(!events.progress.contains { if case .loading = $0 { true } else { false } })
+        #expect(events.progress.last == .matching(done: 2, total: 2))
         #expect(events.rows.map(\.source) == [.importList, .tidal, .importList])
         #expect(!harness.searchQueries.contains { $0.contains("http") })
         let summary = events.summary
@@ -108,7 +114,10 @@ struct TrackResolverImportTests {
         #expect(harness.searchQueries == ["Paper Harbour Northbound Choir"])
         #expect(events.summary?.sourceName == "Exportify CSV")
         #expect(events.summary?.columns?.title == "Track Name")
-        #expect(events.summary?.message == "Added 2 tracks from Exportify CSV.")
+        #expect(events.summary?.message == "Added 2 tracks from Exportify CSV. "
+            + "Columns: Track Name → title, Artist Name(s) → artist, ISRC → recording code, Duration (ms) → length.")
+        // The CSV's own lengths stay with the rows, beside TIDAL's (D4 4.14).
+        #expect(events.rows.map(\.originalDurationSeconds) == [245, 210])
     }
 
     @Test func aRefusedISRCLookupFallsBackToTheSearch() async {
@@ -260,7 +269,7 @@ struct TrackResolverImportTests {
 
     // MARK: Cancel (D4 4.9, 1.11)
 
-    @Test func cancelKeepsFinishedRowsAndStopsTheRequestsInFlight() async {
+    @Test(.timeLimit(.minutes(1))) func cancelKeepsFinishedRowsAndStopsTheRequestsInFlight() async {
         let harness = ResolveHarness()
         let cancelled = ResolveLog<Int>()
         harness.backend.intercept { request, _ in
@@ -299,7 +308,38 @@ struct TrackResolverImportTests {
         #expect(harness.server.requests.count == 10)
     }
 
-    @Test func cancelWhileAListsLinksLoadKeepsTheLinksAlreadyRead() async {
+    /// D4 4.9 A: "Stopped after 120 of 500. Added 112 tracks, 8 not found."
+    /// The parts add up to the lines processed.
+    @Test(.timeLimit(.minutes(1))) func aStoppedImportsSummaryAddsUpToTheLinesProcessed() async {
+        let harness = ResolveHarness()
+        harness.backend.intercept { request, _ in
+            switch Self.songNumber(request) {
+            case 1: Self.songReply(1)
+            case 2: .json(200, ResolveJSON.results([]))   // not on TIDAL
+            case 3: .json(503, "{}")                      // busy after the retries
+            case .some: .hang
+            case nil: nil
+            }
+        }
+        let job = harness.resolver.add(.tracklist(text: Self.lines(5), name: nil))
+        var events: [ResolveEvent] = []
+        var stopped = false
+        for await event in job {
+            events.append(event)
+            if !stopped, events.rows.count == 3 {
+                stopped = true
+                job.stop()
+            }
+        }
+        #expect(events.rows.map(\.match) == [.matched, .notOnTIDAL, .couldNotCheck(reason: "Couldn't check: TIDAL was busy")])
+        let summary = events.summary
+        #expect(summary?.added == 3)
+        #expect(summary?.found == 1)
+        #expect(summary?.message
+            == "Stopped after 3 of 5. Added 1 track, 1 not found, 1 couldn't be checked. The other 2 lines weren't added.")
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancelWhileAListsLinksLoadKeepsTheLinksAlreadyRead() async {
         let harness = ResolveHarness()
         let album = (0..<3).map { ResolveJSON.track(900_120_000 + Int64($0), "Track \($0)", artists: ["Placeholder Artist"]) }
         harness.backend.setUp {
@@ -317,7 +357,7 @@ struct TrackResolverImportTests {
         let begun = ContinuousClock.now
         for await event in job {
             events.append(event)
-            if !stopped, case .progress(.loading(done: 1, total: 2)) = event {
+            if !stopped, case .progress(.readingLinks(done: 1, total: 2)) = event {
                 stopped = true
                 job.stop()
             }
@@ -331,7 +371,7 @@ struct TrackResolverImportTests {
         #expect(harness.searchQueries.isEmpty)
     }
 
-    @Test func cancelDuringMatchingKeepsTracksAlreadyReadFromALink() async {
+    @Test(.timeLimit(.minutes(1))) func cancelDuringMatchingKeepsTracksAlreadyReadFromALink() async {
         let harness = ResolveHarness()
         // One match at a time, so the album's rows sit behind the line.
         var resolver = harness.resolver

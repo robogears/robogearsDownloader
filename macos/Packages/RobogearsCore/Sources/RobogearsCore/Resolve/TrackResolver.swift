@@ -254,10 +254,10 @@ public struct TrackResolver: Sendable {
         let linkIndices = parsed.items.indices.filter { if case .link = parsed.items[$0] { true } else { false } }
         var expansions: [Int: Expansion] = [:]
         if !linkIndices.isEmpty {
-            session.emit(.progress(.loading(done: 0, total: linkIndices.count)))
+            session.emit(.progress(.readingLinks(done: 0, total: linkIndices.count)))
             let resolver = self
             let results = try await ordered(linkIndices.count, window: linkWindow, onFinished: { done in
-                session.emit(.progress(.loading(done: done, total: linkIndices.count)))
+                session.emit(.progress(.readingLinks(done: done, total: linkIndices.count)))
             }) { position in
                 guard case let .link(link) = parsed.items[linkIndices[position]] else { return Expansion() }
                 return try await resolver.expand(link)

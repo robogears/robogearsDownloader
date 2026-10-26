@@ -2,9 +2,9 @@ import Foundation
 
 /// The library verdict for a new row (product rule 4, D4 area 3).
 public enum LibraryMark: Sendable, Equatable {
-    /// The library index isn't ready yet (a scan is running): the row is
-    /// added at once, marked "Checking library…", and filled in later
-    /// (D4 4.20).
+    /// The library index isn't ready yet (a scan is running, or the library
+    /// can't be read and no index was saved): the row is added at once,
+    /// marked "Checking library…", and filled in later (D4 4.20).
     case pending
     /// Checked: nil when nothing in the library matches, or when there is no
     /// library to check.
@@ -18,13 +18,10 @@ public protocol LibraryMarking: Sendable {
 }
 
 extension LibraryIndexService: LibraryMarking {
-    /// Pending while a scan runs, whether it is the launch scan, a Refresh or
-    /// a new folder (D4 4.20), so no row is checked against a half-read
-    /// index. Otherwise the current index decides; an unavailable or failed
-    /// library keeps its last saved index (D4 3.9), and no folder means no
-    /// mark.
+    /// Pending while the index can't be trusted (`LibraryMarks.indexIsUsable`);
+    /// otherwise the current index decides, and no folder means no mark.
     public func mark(for query: LibraryMatcher.Query) -> LibraryMark {
-        if case .scanning = status { return .pending }
+        guard LibraryMarks.indexIsUsable(status: status, hasIndex: matcherIndex != nil) else { return .pending }
         return .checked(match(query).map(QueueItem.LibraryMatch.init))
     }
 }
@@ -36,6 +33,25 @@ public struct NoLibrary: LibraryMarking {
 }
 
 public enum LibraryMarks {
+    /// Whether the library service's index can mark a new row now.
+    ///
+    /// - A scan is running (the launch scan, a Refresh or a new folder): no,
+    ///   so no row is checked against a half-read index (D4 4.20).
+    /// - A folder is chosen but can't be read (a missing drive, refused
+    ///   access, a failed scan): only with a saved index, whose marks stand
+    ///   (D4 3.9). With none, nothing has been checked, so the row waits as
+    ///   "Checking library…" and Download All holds it, rather than passing as
+    ///   "not in your library" and downloading a song you own (rule 4; D4 3.8:
+    ///   "a missing drive … so every row looks new").
+    /// - No folder, or a finished scan: yes.
+    static func indexIsUsable(status: LibraryIndexService.Status, hasIndex: Bool) -> Bool {
+        switch status {
+        case .scanning: false
+        case .unavailable, .failed: hasIndex
+        case .off, .ready: true
+        }
+    }
+
     /// What the library check compares for a TIDAL track: what will be saved,
     /// with TIDAL's artist list kept whole (D4 4.14, 3.3).
     static func query(for track: TIDALQueueTrack) -> LibraryMatcher.Query {

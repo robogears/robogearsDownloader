@@ -54,6 +54,12 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
     /// line when it differs from what TIDAL will save (decision 4, item 4.14).
     public var originalTitle: String?
     public var originalArtist: String?
+    /// The length the source gave (Spotify's, or a CSV's duration column) for
+    /// a row matched to a TIDAL track, shown with the second line so a big
+    /// gap from TIDAL's length hints at a different version (decision 4,
+    /// item 4.14). Nil for TIDAL's own rows, for rows not found (their
+    /// `durationSeconds` is already the source's), and in older saved queues.
+    public var originalDurationSeconds: Int?
     public var match: Match
     public var libraryMatch: LibraryMatch?
     /// Exact library matches start left out; the person can + Add them.

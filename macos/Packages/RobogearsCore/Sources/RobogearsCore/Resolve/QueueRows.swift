@@ -13,7 +13,7 @@ struct NewRow: Sendable, Equatable {
     /// TIDAL" (D4 3.2).
     static func tidal(
         _ track: TIDALQueueTrack, source: QueueItem.Source,
-        original: (title: String, artist: String)? = nil, leftOut: Bool = false
+        original: (title: String, artist: String)? = nil, originalDuration: Double? = nil, leftOut: Bool = false
     ) -> NewRow {
         var item = QueueItem(
             tidalID: track.tidalId, title: track.title, version: track.version, artist: track.artistLine,
@@ -24,6 +24,9 @@ struct NewRow: Sendable, Equatable {
             item.originalTitle = original.title
             item.originalArtist = original.artist.isEmpty ? nil : original.artist
         }
+        // Kept even when the words agree: the same words with a very
+        // different length is exactly the other-version case (D4 4.14).
+        item.originalDurationSeconds = originalDuration.map { Int($0.rounded()) }
         if leftOut {
             item.match = .differentArtist(tidalArtist: track.artistLine)
             item.included = false
@@ -60,7 +63,9 @@ struct NewRow: Sendable, Equatable {
 
 extension QueueItem {
     /// The same row under another id, so a Match Again or a search pick
-    /// replaces a row in place (D4 4.10).
+    /// replaces a row in place (D4 4.10). `id` is a `let`, so the row is
+    /// rebuilt: every stored field must be copied here, and
+    /// `aRowUnderANewIDKeepsEveryOtherField` fails when a new one isn't.
     func withID(_ id: UUID) -> QueueItem {
         var copy = QueueItem(
             id: id, tidalID: tidalID, title: title, version: version, artist: artist, album: album,
@@ -68,6 +73,7 @@ extension QueueItem {
             originalTitle: originalTitle, originalArtist: originalArtist, match: match,
             libraryMatch: libraryMatch, included: included, state: state
         )
+        copy.originalDurationSeconds = originalDurationSeconds
         copy.libraryCheckPending = libraryCheckPending
         return copy
     }

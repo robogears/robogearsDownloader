@@ -16,6 +16,8 @@ enum ResolveMessages {
         "Sign in to TIDAL to add tracks from \(sourceName(for: name))."
     }
 
+    static let signInToSearch = "Sign in to TIDAL to search."
+
     /// The reasons a row shows when its lookup failed rather than found
     /// nothing. They look different from the red "not found" (D4 1.4).
     enum CouldNotCheck {
@@ -133,9 +135,13 @@ enum ResolveMessages {
             var head = "Stopped"
             if let total = s.total, total > 0 { head += " after \(number(s.processed)) of \(number(total))" }
             sentences.append(head + ".")
-            var added = "Added \(count(s.added, "track"))"
-            if s.notOnTIDAL > 0 { added += ", \(number(s.notOnTIDAL)) not found" }
-            sentences.append(added + ".")
+            // D4 4.9 A: "Stopped after 120 of 500. Added 112 tracks, 8 not
+            // found." The tracks counted are the ones found on TIDAL, so the
+            // parts add up to the lines processed.
+            var parts = ["Added \(count(s.found, "track"))"]
+            if s.notOnTIDAL > 0 { parts.append("\(number(s.notOnTIDAL)) not found") }
+            if s.couldNotCheck > 0 { parts.append("\(number(s.couldNotCheck)) couldn't be checked") }
+            sentences.append(parts.joined(separator: ", ") + ".")
             if let total = s.total, total > s.processed {
                 let rest = total - s.processed
                 sentences.append("The other \(count(rest, unitWord)) \(rest == 1 ? "wasn't" : "weren't") added.")
@@ -177,7 +183,18 @@ enum ResolveMessages {
             if reasons.count == 1, let reason = reasons.first { text += ": " + reason } else { text += "." }
             sentences.append(text)
         }
+        if let columns = s.columns { sentences.append(columnsSentence(columns)) }
         return sentences.joined(separator: " ")
+    }
+
+    /// "Columns: Track Name → title, Artist Name(s) → artist" (D4 4.5 A), so a
+    /// CSV read with the wrong columns shows it at once.
+    static func columnsSentence(_ columns: ParsedTracklist.Columns) -> String {
+        var parts = ["\(columns.title) → title"]
+        if let artist = columns.artist { parts.append("\(artist) → artist") }
+        if let isrc = columns.isrc { parts.append("\(isrc) → recording code") }
+        if let duration = columns.duration { parts.append("\(duration) → length") }
+        return "Columns: " + parts.joined(separator: ", ") + "."
     }
 
     /// "the link" reads better than "link" inside a sentence.

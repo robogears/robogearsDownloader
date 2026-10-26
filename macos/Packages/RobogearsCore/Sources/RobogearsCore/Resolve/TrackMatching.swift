@@ -68,7 +68,7 @@ struct WantedTrack: Sendable, Hashable {
         self.readings = readings
         searchText = Self.searchText(title, artist)
         isrc = row.isrc
-        durationSeconds = row.durationSeconds.map(Double.init)
+        durationSeconds = (row.originalDurationSeconds ?? row.durationSeconds).map(Double.init)
         album = nil
         source = row.source
     }
@@ -152,7 +152,8 @@ extension TrackResolver {
         if sameRecordingOnly, best.match.confirmation != .sameRecordingCode { return nil }
         let reading = wanted.readings[best.reading]
         return .tidal(tracks[best.match.index], source: wanted.source,
-                      original: (reading.title, reading.artistLine), leftOut: best.match.startsLeftOut)
+                      original: (reading.title, reading.artistLine), originalDuration: wanted.durationSeconds,
+                      leftOut: best.match.startsLeftOut)
     }
 
     /// One TIDAL call through the shared pace, with its failure sorted:

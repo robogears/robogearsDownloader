@@ -104,9 +104,11 @@ public struct QueueContents: Sendable, Hashable {
 /// How far an add has got.
 public enum ResolveProgress: Sendable, Equatable {
     /// "Loading 300 of 1,250 tracks…": a TIDAL album or playlist arriving
-    /// page by page, or the links of a pasted list being read. `total` is nil
-    /// until known (D4 4.21).
+    /// page by page. Counts tracks; `total` is nil until known (D4 4.21).
     case loading(done: Int, total: Int?)
+    /// "Reading 3 of 10 links…": the links of a pasted or dropped list being
+    /// read, before their tracks are matched (D4 4.13). Counts links.
+    case readingLinks(done: Int, total: Int)
     /// "Matching 34 of 100 tracks on TIDAL…": Spotify tracks or tracklist
     /// lines being matched, counted as each finishes (D4 4.21).
     case matching(done: Int, total: Int)
@@ -152,7 +154,9 @@ public struct ResolveJob: AsyncSequence, Sendable {
     /// Cancel on the adding cover, Escape or ⌘. (D4 4.9, 4.18): requests in
     /// flight stop at once (D4 1.11), rows already finished are still sent,
     /// then `.finished` with `stopped` set. Ending the iteration instead (by
-    /// cancelling the task that reads it) stops everything without a summary.
+    /// cancelling the task that reads it) stops everything without a summary
+    /// and drops rows finished after a gap, so the app's Cancel calls `stop()`
+    /// and keeps reading until `.finished` ("Stopped after X of Y", D4 4.9).
     public func stop() { stopper() }
 }
 

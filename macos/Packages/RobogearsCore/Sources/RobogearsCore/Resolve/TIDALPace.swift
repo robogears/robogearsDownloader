@@ -43,9 +43,10 @@ public protocol RequestPacing: Sendable {
 /// - **One shared 429 pause.** When any request is answered 429, every try
 ///   of every caller waits as long as TIDAL asked (its `Retry-After`, or the
 ///   requester's backoff step when it didn't say). A request asking for more
-///   than about 60 s means TIDAL is busy: until that time passes, requests
-///   fail at once as busy rather than each asking again. `status` publishes
-///   the wait so the batch bar can show it.
+///   than about 60 s means TIDAL is busy: for up to a minute
+///   (`Limits.longestBusy`), requests fail at once as busy rather than each
+///   asking again; then they are sent again. `status` publishes the wait so
+///   the batch bar can show it.
 /// - 5xx answers, timeouts and dropped connections keep `RetryPolicy`'s 1, 2,
 ///   4, 8 s backoff inside `HTTPClient`; "not found" never retries. The pace
 ///   doesn't change either.
@@ -78,12 +79,19 @@ public actor TIDALPace: RequestPacing {
         /// The longest 429 pause the app waits through (RetryPolicy's 60 s);
         /// a longer `Retry-After` reads as "TIDAL is busy".
         public var longestWait: Duration
+        /// The longest "TIDAL is busy" lasts before requests are sent again,
+        /// whatever `Retry-After` said (it can say a day). One minute, so
+        /// "Wait a minute, then click Try Again" is true: Try Again then
+        /// really asks TIDAL, and a new 429 starts a new wait.
+        public var longestBusy: Duration
 
-        public init(shared: Int, interactiveExtra: Int, background: Int, longestWait: Duration) {
+        public init(shared: Int, interactiveExtra: Int, background: Int, longestWait: Duration,
+                    longestBusy: Duration = .seconds(60)) {
             self.shared = max(shared, 1)
             self.interactiveExtra = max(interactiveExtra, 0)
             self.background = max(background, 1)
             self.longestWait = longestWait
+            self.longestBusy = max(longestBusy, .zero)
         }
 
         public static let standard = Limits(
@@ -232,7 +240,7 @@ public actor TIDALPace: RequestPacing {
     public func tooManyRequests(retryAfter: Duration?, pause: Duration?) {
         let now = clock.now()
         if let retryAfter, retryAfter > limits.longestWait {
-            let until = now.addingTimeInterval(retryAfter.timeInterval)
+            let until = now.addingTimeInterval(min(retryAfter, limits.longestBusy).timeInterval)
             busyUntil = max(busyUntil ?? until, until)
         } else {
             // Without a Retry-After, everyone waits as long as the request
