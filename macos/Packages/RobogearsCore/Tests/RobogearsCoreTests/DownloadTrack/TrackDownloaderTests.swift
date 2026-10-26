@@ -692,6 +692,288 @@ struct TrackDownloaderTests {
         #expect(world.savedFiles.isEmpty)
     }
 
+    @Test func cancellingWhileSegmentsArriveStopsEveryRequestAndDeletesTheTemporaryFile() async throws {
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in .json(200, TrackDLFixtures.playbackJSON(manifest: .dash(segments: 40))) }
+        routes.audio = { path, _ in
+            path.hasSuffix("/dash/2.mp4")
+                ? .stall(headers: ["Content-Length": "1000"], body: Data(count: 1000), prefix: 10)
+                : .bytes(Data(count: 1000))
+        }
+        let made = TrackDLTemporaryFolders()
+        let world = try TrackDLWorld(routes, systemFolderNear: { try made.folder(near: $0) })
+        defer { world.cleanUp() }
+
+        let task = Task { try await world.download() }
+        #expect(try await world.server.stalled.wait(upTo: .seconds(20)))
+        let temporary = try #require(world.temporaries.registered.first)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).contains { $0.hasPrefix("download.") })
+
+        task.cancel()
+        let result = await task.result
+        let requestsByCancel = world.server.requests(matching: "audio.example.test").count
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(throws: CancellationError.self) { try result.get() }
+        // Segment 2 holds back the writing, so the read-ahead window caps
+        // what started, and nothing more starts once Cancel is pressed.
+        #expect(requestsByCancel <= 2 + AudioFetcher.readAhead)
+        #expect(world.server.requests(matching: "audio.example.test").count == requestsByCancel)
+        #expect(made.folders == [temporary])
+        #expect(!FileManager.default.fileExists(atPath: temporary.path))
+        #expect(world.temporaries.registered.isEmpty)
+        #expect(world.savedFiles.isEmpty)
+    }
+
+    @Test func cancellingWhileTheAACWriterIsBusyReturnsAtOnceAndLeavesNothing() async throws {
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in
+            .json(200, TrackDLFixtures.playbackJSON(
+                manifest: .bts(TrackDLFixtures.directURL, mimeType: "audio/mp4", codecs: "mp4a.40.2"),
+                audioQuality: "HIGH", bitDepth: nil, sampleRate: nil
+            ))
+        }
+        routes.audio = { _, _ in .bytes((try? AudioFixture.data("aac-320.m4a")) ?? Data()) }
+        let writer = TrackDLStubbornM4AWriter()
+        let world = try TrackDLWorld(routes, m4a: writer)
+        defer {
+            writer.release()
+            world.cleanUp()
+        }
+
+        let task = Task { try await world.download() }
+        #expect(try await writer.entered.wait(upTo: .seconds(20)))
+        let temporary = try #require(world.temporaries.registered.first)
+
+        // If Cancel waited for the writer, this lets the writer go after a
+        // while, so the test fails instead of hanging.
+        let watchdog = Task {
+            guard (try? await Task.sleep(for: .seconds(5))) != nil else { return }
+            writer.release()
+        }
+        task.cancel()
+        let result = await task.result
+        let returnedWhileWriting = !writer.isReleased
+        watchdog.cancel()
+
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(returnedWhileWriting)
+        #expect(!FileManager.default.fileExists(atPath: temporary.path))
+        #expect(world.temporaries.registered.isEmpty)
+
+        // The writer ends on its own later, and leaves nothing anywhere.
+        writer.release()
+        #expect(try await writer.finished.wait(upTo: .seconds(5)))
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    // MARK: The CDN's own answers (2.15, 1.7)
+
+    @Test func coverErrorPagesFromTheCDNTryTheNextSizeInsteadOfReadingAsOffline() async throws {
+        let jpeg = try AudioFixture.data("cover.jpg")
+        var routes = TrackDLRoutes()
+        routes.cover = { size, _ in
+            switch size {
+            case 1280: .htmlError(404)
+            case 640: .xmlError(403)
+            default: .data(status: 200, headers: ["Content-Type": "image/jpeg"], body: jpeg, chunks: 1)
+            }
+        }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        #expect(outcome == .saved(fileName: "Blue Lantern.flac", quality: .flac(bitDepth: 16, sampleRate: 44100), notes: []))
+        #expect(world.server.requests(matching: "resources.tidal.com").map(\.url.lastPathComponent)
+            == ["1280x1280.jpg", "640x640.jpg", "320x320.jpg"])
+        let saved = try Data(contentsOf: world.folder.appendingPathComponent("Blue Lantern.flac"))
+        #expect(try FLACMetadataReader.read(saved).pictures.first?.data == jpeg)
+    }
+
+    @Test func aCoverMissingAtEverySizeBehindErrorPagesSavesWithoutCoverArt() async throws {
+        var routes = TrackDLRoutes()
+        routes.cover = { size, _ in size == 640 ? .xmlError(404) : .htmlError(404) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        guard case let .saved(_, _, notes) = outcome else { Issue.record("not saved: \(outcome)"); return }
+        #expect(notes == [.withoutCoverArt])
+        #expect(world.server.requests(matching: "resources.tidal.com").count == 3)
+    }
+
+    @Test func anExpiredSegmentLinkAnsweredWithXMLFailsTheTrackInsteadOfPausing() async throws {
+        let parts = try TrackDLFixtures.dashSegments(of: AudioFixture.data("dash-24-96000.mp4"))
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in .json(200, TrackDLFixtures.playbackJSON(manifest: .dash(segments: 3))) }
+        routes.audio = { path, _ in
+            if path.hasSuffix("/init.mp4") { return .bytes(parts.initialization) }
+            if path.hasSuffix("/2.mp4") { return .xmlError(403) }
+            return .bytes(parts.media[0])
+        }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.notAvailable(reason: TrackDownloadFailures.streamLinkFailed)) {
+            _ = try await world.download()
+        }
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+    }
+
+    @Test func aStreamLinkAnsweredWithAnHTMLNotFoundFailsTheTrackInsteadOfPausing() async throws {
+        var routes = TrackDLRoutes()
+        routes.audio = { _, _ in .htmlError(404) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.notAvailable(reason: TrackDownloadFailures.streamLinkFailed)) {
+            _ = try await world.download()
+        }
+        #expect(world.server.requests(matching: "audio.example.test").count == 1)
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+    }
+
+    @Test func aStreamLinkTheCDNRedirectsIsFollowedToTheAudio() async throws {
+        let flac = try AudioFixture.data("bts-16-44100.flac")
+        var routes = TrackDLRoutes()
+        routes.audio = { path, _ in
+            path == "/mediatracks/direct.flac"
+                ? .redirect(status: 302, to: URL(string: "https://edge.example.test/cache/direct.flac?token=SECRET-TOKEN")!)
+                : .bytes(flac)
+        }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        #expect(outcome == .saved(fileName: "Blue Lantern.flac", quality: .flac(bitDepth: 16, sampleRate: 44100), notes: []))
+        let followed = world.server.requests(matching: "edge.example.test")
+        #expect(followed.count == 1)
+        // A CDN request carries no sign-in, so nothing secret moves with it.
+        #expect(followed.allSatisfy { $0.headers["Authorization"] == nil })
+        #expect(try AudioFixture.frames(ofFLAC: Data(contentsOf: world.folder.appendingPathComponent("Blue Lantern.flac")))
+            == AudioFixture.frames(ofFLAC: flac))
+    }
+
+    @Test func segmentsAndCoversTheCDNRedirectsAreFollowedToo() async throws {
+        let parts = try TrackDLFixtures.dashSegments(of: AudioFixture.data("dash-24-96000.mp4"))
+        let jpeg = try AudioFixture.data("cover.jpg")
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in
+            .json(200, TrackDLFixtures.playbackJSON(manifest: .dash(segments: 3), audioQuality: "HI_RES_LOSSLESS", bitDepth: 24, sampleRate: 96000))
+        }
+        routes.audio = { path, _ in
+            guard path.hasPrefix("/edge/") else {
+                return .redirect(status: 307, to: URL(string: "https://edge.example.test/edge\(path)?sig=abc")!)
+            }
+            if path == "/edge/cover.jpg" { return .data(status: 200, headers: ["Content-Type": "image/jpeg"], body: jpeg, chunks: 1) }
+            if path.hasSuffix("/init.mp4") { return .bytes(parts.initialization) }
+            let number = Int(path.split(separator: "/").last?.split(separator: ".").first ?? "") ?? 0
+            return (1...3).contains(number) ? .bytes(parts.media[number - 1]) : .status(404)
+        }
+        routes.cover = { _, _ in .redirect(status: 301, to: URL(string: "https://edge.example.test/edge/cover.jpg")!) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        #expect(outcome == .saved(fileName: "Blue Lantern.flac", quality: .flac(bitDepth: 24, sampleRate: 96000), notes: []))
+        let saved = try Data(contentsOf: world.folder.appendingPathComponent("Blue Lantern.flac"))
+        #expect(try AudioFixture.frames(ofFLAC: saved) == AudioFixture.frames(ofFLAC: AudioFixture.data("ffmpeg-dash-24-96000.flac")))
+        #expect(try FLACMetadataReader.read(saved).pictures.first?.data == jpeg)
+        #expect(world.server.requests(matching: "edge.example.test").count == 5)
+    }
+
+    @Test func aRedirectToAPlainHTTPAddressIsRefusedAndFailsOnlyThisTrack() async throws {
+        var routes = TrackDLRoutes()
+        routes.audio = { _, _ in .redirect(status: 302, to: URL(string: "http://edge.example.test/direct.flac")!) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.notAvailable(reason: TrackDownloadFailures.streamLinkFailed)) {
+            _ = try await world.download()
+        }
+        #expect(world.server.requests(matching: "edge.example.test").isEmpty)
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+    }
+
+    @Test func aCDNThatKeepsRedirectingIsGivenUpOnAfterFiveHops() async throws {
+        var routes = TrackDLRoutes()
+        routes.audio = { _, _ in .redirect(status: 302, to: URL(string: "https://edge.example.test/hop/\(UUID().uuidString)")!) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.notAvailable(reason: TrackDownloadFailures.streamLinkFailed)) {
+            _ = try await world.download()
+        }
+        // The stream link, then the five redirects followed; never retried.
+        #expect(world.server.requests(matching: "audio.example.test").count == 1)
+        #expect(world.server.requests(matching: "edge.example.test").count == MediaRedirects.limit)
+        #expect(world.savedFiles.isEmpty)
+    }
+
+    // MARK: Space and temporary folders while saving (2.20, 2.2)
+
+    @Test func aDiskThatFillsUpWhileTheAudioArrivesStopsTheBatchAsFull() async throws {
+        for full: any Error in [POSIXError(.ENOSPC), CocoaError(.fileWriteOutOfSpace)] {
+            let world = try TrackDLWorld()
+            defer { world.cleanUp() }
+            var downloader = world.downloader()
+            downloader.audioFetchOverride = { _, file, _, _ in
+                try Data(count: 4096).write(to: file)
+                throw full
+            }
+
+            // Not "the file couldn't be saved", which would let the next
+            // track start and fill the disk again.
+            await #expect(throws: TrackDownloadError.diskFull(bytesNeeded: 123_480)) {
+                _ = try await world.download(using: downloader)
+            }
+            #expect(world.savedFiles.isEmpty)
+            #expect(world.temporaries.registered.isEmpty)
+        }
+    }
+
+    @Test func aDiskWhoseTemporaryFolderWouldSitInsideTheDownloadFolderStopsTheBatchOnce() async throws {
+        let made = TrackDLTemporaryFolders { folder in
+            let inside = folder.appendingPathComponent(".TemporaryItems/folders.501/TemporaryItems/work", isDirectory: true)
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+            return inside
+        }
+        let world = try TrackDLWorld(systemFolderNear: { try made.folder(near: $0) })
+        defer { world.cleanUp() }
+
+        let refusal = TrackDownloadError.folderUnavailable(
+            message: "The disk with the download folder “TIDAL” doesn't allow the temporary files a download needs. Choose a folder on another disk."
+        )
+        await #expect(throws: refusal) { _ = try await world.download() }
+        #expect(refusal.stopsBatch)
+        #expect(world.server.requests(matching: "audio.example.test").isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+        let offered = try #require(made.folders.first)
+        #expect(!FileManager.default.fileExists(atPath: offered.path))
+    }
+
+    @Test func aDiskThatOffersNoTemporaryFolderStopsTheBatchOnce() async throws {
+        let world = try TrackDLWorld(systemFolderNear: { _ in throw CocoaError(.fileWriteVolumeReadOnly) })
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.folderUnavailable(
+            message: "The disk with the download folder “TIDAL” doesn't allow the temporary files a download needs. Choose a folder on another disk."
+        )) {
+            _ = try await world.download()
+        }
+        #expect(world.server.requests(matching: "audio.example.test").isEmpty)
+        #expect(world.log.lines.contains { $0.hasPrefix("No temporary folder on the download folder's disk") })
+    }
+
     // MARK: Privacy
 
     @Test func noSignedStreamLinkOrTokenReachesTheActivityLog() async throws {

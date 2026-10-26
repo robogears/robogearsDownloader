@@ -206,6 +206,70 @@ struct TrackDownloadPartsTests {
         #expect(!TrackDownloadFailures.isOutOfSpace(CocoaError(.fileWriteNoPermission)))
     }
 
+    @Test func aFullDiskKeepsItsMeaningThroughEveryStepSoItCanStopTheBatch() {
+        for step in [TrackDownloadStep.audio, .cover, .saving] {
+            #expect(TrackDownloadFailures.mapped(POSIXError(.ENOSPC), during: step) is POSIXError)
+            #expect(TrackDownloadFailures.isOutOfSpace(TrackDownloadFailures.mapped(CocoaError(.fileWriteOutOfSpace), during: step)))
+        }
+        // Any other write failure is this track's own.
+        guard case .writeFailed? = row(POSIXError(.EACCES), .audio) else {
+            Issue.record("a refused write wasn't a failed save")
+            return
+        }
+    }
+
+    // MARK: The CDN's answers (2.15, 1.7)
+
+    @Test func aCDNErrorAnswerIsJudgedByItsStatusWhateverItsBody() {
+        let notFound = HTTPResponse(status: 404, headers: ["Content-Type": "text/html"], body: Data("<html><body>Not Found</body></html>".utf8))
+        #expect(notFound.networkInterference(expecting: .media) == nil)
+        #expect(throws: RequestError.notFound(subStatus: nil)) { try notFound.requireOK(expecting: .media) }
+        let expired = HTTPResponse(
+            status: 403, headers: ["Content-Type": "application/xml"],
+            body: Data(#"<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>"#.utf8)
+        )
+        #expect(throws: RequestError.forbidden(subStatus: nil)) { try expired.requireOK(expecting: .media) }
+        // A redirect the client refused is the CDN's answer too.
+        let refused = HTTPResponse(status: 302, headers: ["Location": "http://edge.example.test/a"], body: Data())
+        #expect(throws: RequestError.unexpectedStatus(302, subStatus: nil)) { try refused.requireOK(expecting: .media) }
+        // TIDAL's API keeps its rule: a web page or a redirect there is the network.
+        #expect(notFound.networkInterference(expecting: .data) == .offline(detail: HTTPResponse.webPageDetail))
+        #expect(refused.networkInterference(expecting: .data) != nil)
+    }
+
+    @Test func aWebPageInsteadOfAudioOrA511StillReadsAsTheNetworkInTheWay() {
+        let portal = HTTPResponse(status: 200, headers: [:], body: Data("  <html>Log in to the Wi-Fi</html>".utf8))
+        #expect(portal.networkInterference(expecting: .media) == .offline(detail: HTTPResponse.webPageDetail))
+        let authenticate = HTTPResponse(status: 511, headers: [:], body: Data())
+        #expect(authenticate.networkInterference(expecting: .media) == .offline(detail: HTTPResponse.webPageDetail))
+        // Audio the CDN labels as a web page is still audio.
+        let audio = HTTPResponse(status: 200, headers: ["Content-Type": "text/html"], body: Data("fLaC".utf8))
+        #expect(audio.networkInterference(expecting: .media) == nil)
+    }
+
+    @Test func mediaRedirectsAreFollowedUpToFiveTimesAndOnlyToSecureAddresses() {
+        let secure = URLRequest(url: URL(string: "https://edge.example.test/a")!)
+        let plain = URLRequest(url: URL(string: "http://edge.example.test/a")!)
+        #expect(MediaRedirects.limit == 5)
+        #expect((0..<MediaRedirects.limit).allSatisfy { MediaRedirects.follows(secure, afterHops: $0) })
+        #expect(!MediaRedirects.follows(secure, afterHops: MediaRedirects.limit))
+        #expect(!MediaRedirects.follows(plain, afterHops: 0))
+        #expect(AudioFetcher.request(TrackDLFixtures.directURL).expectedBody == .media)
+    }
+
+    // MARK: Reading the download for tagging (2.19)
+
+    @Test func theDownloadIsMappedOnlyOnAFixedInternalDisk() {
+        #expect(TrackDownloader.readingOptions(isLocal: true, isInternal: true, isRemovable: false, isEjectable: false) == .alwaysMapped)
+        // An external drive, an SD card in the Mac's own slot, a disk
+        // image, a network share, and a disk that can't say.
+        #expect(TrackDownloader.readingOptions(isLocal: true, isInternal: false, isRemovable: false, isEjectable: true) == [])
+        #expect(TrackDownloader.readingOptions(isLocal: true, isInternal: true, isRemovable: true, isEjectable: true) == [])
+        #expect(TrackDownloader.readingOptions(isLocal: true, isInternal: true, isRemovable: false, isEjectable: true) == [])
+        #expect(TrackDownloader.readingOptions(isLocal: false, isInternal: false, isRemovable: false, isEjectable: false) == [])
+        #expect(TrackDownloader.readingOptions(isLocal: nil, isInternal: nil, isRemovable: nil, isEjectable: nil) == [])
+    }
+
     // MARK: Notes
 
     @Test func notesAppearOnceWithTheMovesNewNameReplacingThePlannedOne() {
@@ -262,6 +326,34 @@ struct TrackDownloadPartsTests {
         #expect(!FileManager.default.fileExists(atPath: leftover.path))
         #expect(nextLaunch.registered.isEmpty)
         #expect(TemporaryDownloads(registryFile: listFile).registered.isEmpty)
+    }
+
+    @Test func aTemporaryFolderOfferedInsideTheDownloadFolderIsRefusedAndRemoved() throws {
+        let base = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        // What macOS offers for a download folder at the top of a drive:
+        // the drive's own hidden temporary folder, inside it.
+        let inside = base.appendingPathComponent(".TemporaryItems/folders.501/TemporaryItems/work", isDirectory: true)
+        let registry = TemporaryDownloads(registryFile: base.appendingPathComponent("list.json")) { _ in
+            try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+            return inside
+        }
+
+        #expect(throws: TemporaryDownloads.Failure.noTemporaryFolder(detail: "macOS offered a temporary folder inside the download folder")) {
+            try registry.makeFolder(near: base)
+        }
+        #expect(!FileManager.default.fileExists(atPath: inside.path))
+        #expect(registry.registered.isEmpty)
+    }
+
+    @Test func aDownloadFolderAtTheTopOfADriveIsToldToChooseAFolderOnThatDrive() {
+        let drive = URL(fileURLWithPath: "/Volumes/Music SSD", isDirectory: true)
+        #expect(DownloadFolderCheck.noTemporaryFolderMessage(for: drive, isDriveRoot: true)
+            == "Downloads can't be saved at the top level of “Music SSD”. Create a folder on the drive and choose that instead.")
+        #expect(DownloadFolderCheck.noTemporaryFolderMessage(for: drive.appendingPathComponent("TIDAL"), isDriveRoot: false)
+            == "The disk with the download folder “TIDAL” doesn't allow the temporary files a download needs. Choose a folder on another disk.")
+        #expect(DownloadFolderCheck.isDriveRoot(URL(fileURLWithPath: "/", isDirectory: true)))
+        #expect(!DownloadFolderCheck.isDriveRoot(FileManager.default.temporaryDirectory))
     }
 
     @Test func theSweepNeverDeletesAFolderTheAppDidntMake() throws {

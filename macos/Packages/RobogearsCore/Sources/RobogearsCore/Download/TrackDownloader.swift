@@ -400,10 +400,15 @@ public struct TrackDownloader: TrackDownloading {
     /// from its first bytes) and writes the tagged copy with the native
     /// writer (docs/spikes/audio-and-tagging.md, part c).
     static func writeFLAC(from downloaded: URL, tags: FLACTags, coverJPEG: Data?, to tagged: URL) throws -> SavedQuality {
-        let disk = try? downloaded.resourceValues(forKeys: [.volumeIsLocalKey, .volumeIsInternalKey])
+        let disk = try? downloaded.resourceValues(forKeys: [
+            .volumeIsLocalKey, .volumeIsInternalKey, .volumeIsRemovableKey, .volumeIsEjectableKey,
+        ])
         let source = try Data(
             contentsOf: downloaded,
-            options: readingOptions(isLocal: disk?.volumeIsLocal, isInternal: disk?.volumeIsInternal)
+            options: readingOptions(
+                isLocal: disk?.volumeIsLocal, isInternal: disk?.volumeIsInternal,
+                isRemovable: disk?.volumeIsRemovable, isEjectable: disk?.volumeIsEjectable
+            )
         )
         let audio: FLACAudio
         do {
@@ -427,10 +432,12 @@ public struct TrackDownloader: TrackDownloading {
     /// instead of failing the save, and 2.19 asks for a drive that goes
     /// mid-batch to stop the batch once. The temporary folder sits on the
     /// download folder's disk, so the download is mapped only on a local,
-    /// internal disk, and read into memory everywhere else, or when the
-    /// disk can't say.
-    static func readingOptions(isLocal: Bool?, isInternal: Bool?) -> Data.ReadingOptions {
-        isLocal == true && isInternal == true ? .alwaysMapped : []
+    /// internal disk that can't be taken out (an SD card in the Mac's own
+    /// slot counts as internal but removable), and read into memory
+    /// everywhere else, or when the disk can't say.
+    static func readingOptions(isLocal: Bool?, isInternal: Bool?, isRemovable: Bool?, isEjectable: Bool?) -> Data.ReadingOptions {
+        let fixed = isLocal == true && isInternal == true && isRemovable == false && isEjectable == false
+        return fixed ? .alwaysMapped : []
     }
 
     enum LengthCheck: Equatable {

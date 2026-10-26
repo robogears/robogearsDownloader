@@ -39,6 +39,19 @@ enum TrackDLReply: Sendable {
     static func status(_ code: Int, _ text: String = "{}") -> TrackDLReply {
         json(code, text)
     }
+
+    /// The error page a web server or CDN sends with a 4xx, which starts
+    /// with "<" like a network sign-in page.
+    static func htmlError(_ code: Int) -> TrackDLReply {
+        .data(status: code, headers: ["Content-Type": "text/html"], body: Data("<html><body>Not Found</body></html>".utf8), chunks: 1)
+    }
+
+    /// The XML an S3 or CloudFront origin sends when a signed link has
+    /// expired or doesn't exist.
+    static func xmlError(_ code: Int) -> TrackDLReply {
+        let body = #"<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>"#
+        return .data(status: code, headers: ["Content-Type": "application/xml"], body: Data(body.utf8), chunks: 1)
+    }
 }
 
 /// What a test scripts: one answer per kind of request. `attempt` counts
@@ -402,6 +415,67 @@ final class TrackDLM4AWriter: M4AWriting {
             throw CocoaError(.fileWriteUnknown)
         }
         return M4AWriteResult(durationSeconds: 1.5)
+    }
+}
+
+/// An AAC writer that doesn't stop when cancelled, as one busy with a long
+/// file may not: it waits until the test lets it go, then writes its file.
+final class TrackDLStubbornM4AWriter: M4AWriting {
+    let entered = TIDALFlag()
+    let finished = TIDALFlag()
+    private let gate = Mutex<(open: Bool, waiters: [CheckedContinuation<Void, Never>])>((false, []))
+
+    var isReleased: Bool { gate.withLock { $0.open } }
+
+    func release() {
+        let waiters = gate.withLock { state -> [CheckedContinuation<Void, Never>] in
+            state.open = true
+            let waiting = state.waiters
+            state.waiters = []
+            return waiting
+        }
+        waiters.forEach { $0.resume() }
+    }
+
+    func writeM4A(from source: URL, tags: FLACTags, coverJPEG: Data?, to destination: URL) async throws -> M4AWriteResult {
+        defer { finished.set() }
+        entered.set()
+        // A plain continuation: cancelling the task doesn't end this wait.
+        await withCheckedContinuation { continuation in
+            let waiting = gate.withLock { state -> Bool in
+                if state.open { return false }
+                state.waiters.append(continuation)
+                return true
+            }
+            if !waiting { continuation.resume() }
+        }
+        let data = try Data(contentsOf: source)
+        guard FileManager.default.createFile(atPath: destination.path, contents: data) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return M4AWriteResult(durationSeconds: 1.5)
+    }
+}
+
+/// Stands in for macOS's per-disk temporary folder and remembers every
+/// folder it hands out, so a test can check each one is gone afterwards.
+final class TrackDLTemporaryFolders: Sendable {
+    private let made = Mutex<[URL]>([])
+    private let offer: @Sendable (URL) throws -> URL
+
+    /// By default, macOS's real one for the download folder's disk.
+    init(offer: @escaping @Sendable (URL) throws -> URL = { folder in
+        try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+    }) {
+        self.offer = offer
+    }
+
+    var folders: [URL] { made.withLock { $0 } }
+
+    func folder(near downloadFolder: URL) throws -> URL {
+        let folder = try offer(downloadFolder)
+        made.withLock { $0.append(folder) }
+        return folder
     }
 }
 
