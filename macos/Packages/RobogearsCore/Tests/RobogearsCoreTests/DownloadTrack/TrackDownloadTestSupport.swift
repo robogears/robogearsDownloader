@@ -97,6 +97,13 @@ final class TrackDLServer: Sendable {
 
     var requests: [TIDALRecordedRequest] { recorded.withLock { $0 } }
 
+    /// Called as loading starts, before the reply is worked out: a request
+    /// counts from the moment the client sent it, so one sent just before a
+    /// Cancel can't turn up later, whenever its reply task gets to run.
+    func record(_ request: TIDALRecordedRequest) {
+        recorded.withLock { $0.append(request) }
+    }
+
     /// The requests whose path contains `fragment`.
     func requests(matching fragment: String) -> [TIDALRecordedRequest] {
         requests.filter { $0.url.absoluteString.contains(fragment) }
@@ -119,7 +126,6 @@ final class TrackDLServer: Sendable {
     }
 
     func reply(to request: TIDALRecordedRequest) -> TrackDLReply {
-        recorded.withLock { $0.append(request) }
         let url = request.url
         let host = url.host ?? ""
         let path = url.path
@@ -174,6 +180,7 @@ final class TrackDLURLProtocol: URLProtocol, @unchecked Sendable {
             method: request.httpMethod ?? "GET", url: url, headers: headers,
             body: request.httpBody ?? Data(), timeoutInterval: request.timeoutInterval
         )
+        server.record(recorded)
         let target = Delivery(target: self)
         let task = Task {
             // Hop off the loader's thread, as a real server answers later.

@@ -711,8 +711,10 @@ struct TrackDownloaderTests {
 
         task.cancel()
         let result = await task.result
-        // A request already on its way when Cancel came may still be
-        // recorded by the stand-in server; after that, nothing new starts.
+        // The stand-in counts a request as soon as it starts loading, so one
+        // sent just before Cancel is already counted however late its reply
+        // task runs; the short wait only lets the session settle. After
+        // that, nothing new may start.
         try await Task.sleep(for: .milliseconds(100))
         let requestsByCancel = world.server.requests(matching: "audio.example.test").count
         try await Task.sleep(for: .milliseconds(300))
@@ -840,6 +842,32 @@ struct TrackDownloaderTests {
         #expect(world.server.requests(matching: "audio.example.test").count == 1)
         #expect(world.savedFiles.isEmpty)
         #expect(world.temporaries.registered.isEmpty)
+    }
+
+    @Test func aStreamLinkTheCDNAnswers401FailsOnlyThisTrackAndLeavesTheSignInAlone() async throws {
+        let parts = try TrackDLFixtures.dashSegments(of: AudioFixture.data("dash-24-96000.mp4"))
+        var direct = TrackDLRoutes()
+        direct.audio = { _, _ in .xmlError(401) }
+        var dash = TrackDLRoutes()
+        dash.playback = { _, _ in .json(200, TrackDLFixtures.playbackJSON(manifest: .dash(segments: 3))) }
+        dash.audio = { path, _ in
+            if path.hasSuffix("/init.mp4") { return .bytes(parts.initialization) }
+            if path.hasSuffix("/2.mp4") { return .xmlError(401) }
+            return .bytes(parts.media[0])
+        }
+        for routes in [direct, dash] {
+            let world = try TrackDLWorld(routes)
+            defer { world.cleanUp() }
+
+            // Not "your TIDAL sign-in is no longer valid", which would stop
+            // the batch, and stop it again after signing in.
+            let failure = TrackDownloadError.notAvailable(reason: TrackDownloadFailures.streamLinkFailed)
+            await #expect(throws: failure) { _ = try await world.download() }
+            #expect(!failure.stopsBatch)
+            #expect(world.server.requests(matching: "auth.tidal.com").isEmpty)
+            #expect(world.savedFiles.isEmpty)
+            #expect(world.temporaries.registered.isEmpty)
+        }
     }
 
     @Test func aStreamLinkTheCDNRedirectsIsFollowedToTheAudio() async throws {

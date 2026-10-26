@@ -269,7 +269,10 @@ public protocol M4AWriting: Sendable {
     /// Creates `destination` exclusively (never replaces a file) and removes
     /// its own partial file if writing fails. Tags use the same fields as
     /// the FLAC writer. When its task is cancelled it should stop early and
-    /// throw `CancellationError`; the track downloader returns at once
-    /// either way and deletes the temporary folder once the write ends (2.4).
+    /// throw `CancellationError`. Either way the track downloader returns at
+    /// once and deletes the temporary folder holding `source` and
+    /// `destination` straight away, while the write may still be running,
+    /// then once more after it ends (2.4). So both files can disappear
+    /// mid-write, and the writer must fail cleanly when they do.
     func writeM4A(from source: URL, tags: FLACTags, coverJPEG: Data?, to destination: URL) async throws -> M4AWriteResult
 }

@@ -79,7 +79,15 @@ enum TrackDownloadFailures {
             }
             return .offline
         case .unauthorized:
-            return .signInRejected
+            // The CDN's audio and cover links carry no sign-in, so a 401
+            // from them is a link that stopped working, never TIDAL refusing
+            // the sign-in: only TIDAL's own refusal marks it invalid (1.6),
+            // and a false one would stop the next Download All again.
+            switch step {
+            case .audio: return .notAvailable(reason: streamLinkFailed)
+            case .cover: return .coverUnavailable
+            default: return .signInRejected
+            }
         case .notFound:
             switch step {
             case .details: return .notAvailable(reason: trackGone)

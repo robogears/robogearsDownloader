@@ -177,6 +177,16 @@ struct TrackDownloadPartsTests {
         #expect(row(RequestError.unauthorized(subStatus: 11002), .playback) == .signInRejected)
     }
 
+    @Test func aCDNThatAnswers401IsALinkThatStoppedWorkingNotTheSignIn() {
+        let refused = RequestError.unauthorized(subStatus: nil)
+        #expect(row(refused, .audio) == .notAvailable(reason: TrackDownloadFailures.streamLinkFailed))
+        #expect(row(refused, .cover) == .coverUnavailable)
+        // TIDAL's own calls keep the rule: a 401 there is the sign-in (1.6).
+        for step in [TrackDownloadStep.details, .album, .playback] {
+            #expect(row(refused, step) == .signInRejected)
+        }
+    }
+
     @Test func cancellationAndRowErrorsPassThroughUnchanged() {
         #expect(TrackDownloadFailures.mapped(CancellationError(), during: .audio) is CancellationError)
         #expect(row(TrackDownloadError.previewOnly, .saving) == .previewOnly)
@@ -344,6 +354,43 @@ struct TrackDownloadPartsTests {
         }
         #expect(!FileManager.default.fileExists(atPath: inside.path))
         #expect(registry.registered.isEmpty)
+    }
+
+    @Test func aTemporaryFolderOfferedOnAnotherDiskIsRefusedAndRemoved() throws {
+        let base = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let download = base.appendingPathComponent("TIDAL", isDirectory: true)
+        let elsewhere = base.appendingPathComponent("Startup disk/TemporaryItems/work", isDirectory: true)
+        try FileManager.default.createDirectory(at: download, withIntermediateDirectories: true)
+        // macOS handing back a folder on the startup disk for a download
+        // folder on an exFAT or network drive.
+        let registry = TemporaryDownloads(
+            registryFile: base.appendingPathComponent("list.json"),
+            systemFolderNear: { _ in
+                try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+                return elsewhere
+            },
+            sameDisk: { _, _ in false }
+        )
+
+        #expect(throws: TemporaryDownloads.Failure.noTemporaryFolder(detail: "macOS offered a temporary folder on another disk")) {
+            try registry.makeFolder(near: download)
+        }
+        #expect(!FileManager.default.fileExists(atPath: elsewhere.path))
+        #expect(registry.registered.isEmpty)
+    }
+
+    @Test func twoFoldersCountAsOneDiskOnlyWhenBothSaySo() throws {
+        let base = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let inner = base.appendingPathComponent("inner", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+
+        #expect(TemporaryDownloads.onSameDisk(inner, base))
+        // A disk that can't say (here, a folder that isn't there) is never
+        // assumed to be the same one.
+        #expect(!TemporaryDownloads.onSameDisk(base.appendingPathComponent("gone", isDirectory: true), base))
+        #expect(!TemporaryDownloads.onSameDisk(inner, base.appendingPathComponent("gone", isDirectory: true)))
     }
 
     @Test func aDownloadFolderAtTheTopOfADriveIsToldToChooseAFolderOnThatDrive() {

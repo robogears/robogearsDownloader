@@ -18,11 +18,12 @@ public final class TemporaryDownloads: Sendable {
         /// macOS gave no temporary folder on the download folder's disk, or
         /// only one inside the download folder, as it does when the
         /// download folder is the top level of a drive (its hidden
-        /// ".TemporaryItems" sits there). Whether some disks refuse (exFAT,
-        /// network shares) needs a live check (2.2). D4's fallback for such
-        /// disks, a hidden ".Blue Lantern.flac.part" in the download
-        /// folder, isn't built: it waits for that check, and the download
-        /// folder's own checks would first have to ignore such files.
+        /// ".TemporaryItems" sits there), or one on another disk. Whether
+        /// some disks refuse, or get one elsewhere (exFAT, network shares),
+        /// needs a live check (2.2). D4's fallback for such disks, a hidden
+        /// ".Blue Lantern.flac.part" in the download folder, isn't built:
+        /// it waits for that check, and the download folder's own checks
+        /// would first have to ignore such files.
         case noTemporaryFolder(detail: String)
         /// The list of temporary folders couldn't be saved, so a crash
         /// could leave this one behind unnoticed; nothing is downloaded.
@@ -37,6 +38,7 @@ public final class TemporaryDownloads: Sendable {
     private let store: JSONFileStore<[String]>
     private let entries: Mutex<[String]>
     private let systemFolderNear: @Sendable (URL) throws -> URL
+    private let sameDisk: @Sendable (URL, URL) -> Bool
 
     /// `registryFile` is where the list is kept (Application Support in
     /// the app, a temporary folder in tests). A list left by an earlier
@@ -48,14 +50,33 @@ public final class TemporaryDownloads: Sendable {
     }
 
     /// `systemFolderNear` stands in for macOS's per-disk temporary folder,
-    /// so tests can offer none, or one inside the download folder.
-    init(registryFile: URL, systemFolderNear: @escaping @Sendable (URL) throws -> URL) {
+    /// so tests can offer none, or one inside the download folder;
+    /// `sameDisk` for the disk check, so they can offer one on another disk.
+    init(
+        registryFile: URL, systemFolderNear: @escaping @Sendable (URL) throws -> URL,
+        sameDisk: @escaping @Sendable (URL, URL) -> Bool = TemporaryDownloads.onSameDisk
+    ) {
         store = JSONFileStore(file: registryFile, permissions: 0o600)
         switch store.load() {
         case let .loaded(paths): entries = Mutex(paths)
         case .missing, .unreadable: entries = Mutex([])
         }
         self.systemFolderNear = systemFolderNear
+        self.sameDisk = sameDisk
+    }
+
+    /// True when both are on one disk, by the disk's own identity. False
+    /// when either can't say: the space check (2.20) and the final move as
+    /// one rename (2.2) both rest on it, so it's never assumed.
+    @Sendable
+    static func onSameDisk(_ item: URL, _ folder: URL) -> Bool {
+        func disk(_ url: URL) -> NSObject? {
+            var url = url
+            url.removeAllCachedResourceValues()
+            return (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
+        }
+        guard let itemDisk = disk(item), let folderDisk = disk(folder) else { return false }
+        return itemDisk == folderDisk
     }
 
     /// The temporary folders listed and not yet removed.
@@ -65,7 +86,9 @@ public final class TemporaryDownloads: Sendable {
 
     /// A new, empty folder on the same disk as `folder`, listed before it
     /// is used. It is never inside `folder` (rule 2: downloads land flat,
-    /// and nothing half-done may look like a download there).
+    /// and nothing half-done may look like a download there), and never on
+    /// another disk, where the space check would measure the wrong disk and
+    /// the final move would become a copy that can break halfway (2.2).
     public func makeFolder(near folder: URL) throws(Failure) -> URL {
         let fm = FileManager.default
         let made: URL
@@ -77,6 +100,10 @@ public final class TemporaryDownloads: Sendable {
         guard Folders.relationship(of: made, to: folder) == .other else {
             try? fm.removeItem(at: made)
             throw .noTemporaryFolder(detail: "macOS offered a temporary folder inside the download folder")
+        }
+        guard sameDisk(made, folder) else {
+            try? fm.removeItem(at: made)
+            throw .noTemporaryFolder(detail: "macOS offered a temporary folder on another disk")
         }
         do {
             guard fm.createFile(atPath: made.appendingPathComponent(Self.markerName).path, contents: Data()) else {
