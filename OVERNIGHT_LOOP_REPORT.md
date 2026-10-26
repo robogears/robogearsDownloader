@@ -16,6 +16,7 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN · last: kickoff — t
 - 💡 Untrack `.claude/settings.local.json` (`git rm --cached .claude/settings.local.json` and add it to .gitignore) — why: then the loop's push safety rules can be installed — how: one commit by you
 
 ## Progress log (last 20; older lines roll into the tally)
+- 13:15 Integration plan for wiring the real services written to docs/INTEGRATION_PLAN.md (read-only research across all six lanes): which core type backs each of the app's services, every mismatch and which side changes, the object graph at launch, what previews still need (including preview in search), the sign-in mapping, a 13-step build order, and the risks for the merges. It found mutation-check edits left in two lanes' working copies, so each merge now waits for a clean copy and a search of its diff.
 - 12:49 Kickoff. Mission: finish and merge the six shelved lanes (already running in the background), a cleaner UI, song preview in search, then the real TIDAL services wired into the app. Baseline green: 748 core tests pass, the app builds.
 
 ## Cycle log
