@@ -23,6 +23,18 @@ public struct HTTPRequest: Sendable, Equatable, CustomStringConvertible, CustomR
         /// portal page answering with 200 can't be told apart here, so the
         /// page's own parser has to notice the content it needs is missing.
         case webPage
+        /// Audio or a cover image from TIDAL's CDN, at a signed https link
+        /// that carries no sign-in. Over https only the CDN itself can
+        /// answer with a status (a captive portal fails the secure
+        /// connection instead), so an error answer is judged by its status
+        /// whatever its body, such as an HTML "Not Found" or an XML "Access
+        /// Denied"; only a 200 that is a web page (a proxy's block page) or
+        /// a 511 means the network is in the way. Redirects are followed,
+        /// up to five, https to https, as the Electron app's
+        /// `downloadDirect` and `fetchBuffer` did (download-pipeline.md,
+        /// constants): with no sign-in on the request, nothing secret can
+        /// travel to the new host.
+        case media
     }
 
     public var method: Method
@@ -114,7 +126,9 @@ public enum RequestError: Error, Sendable, Equatable, CustomStringConvertible {
     /// 5xx after the retries ran out.
     case server(status: Int)
     /// Any other status. A redirect is not one of them: redirects are not
-    /// followed and read as `offline`, the network being in the way.
+    /// followed and read as `offline`, the network being in the way. The
+    /// one exception is a `.media` request, which follows up to five
+    /// secure redirects; one it won't follow is the CDN's own answer.
     case unexpectedStatus(Int, subStatus: Int?)
     /// The answer arrived but wasn't the data expected.
     case decoding(detail: String)
@@ -162,7 +176,8 @@ extension HTTPResponse {
     /// The body when the status is 200, otherwise the matching
     /// `RequestError`. 200 exactly, as every Electron caller checked.
     /// Pass `.webPage` for a page that is HTML by design (the Spotify embed
-    /// page), so the page itself isn't read as a captive portal.
+    /// page), so the page itself isn't read as a captive portal, and
+    /// `.media` for the CDN, whose error answers count by status alone.
     public func requireOK(expecting expected: HTTPRequest.ExpectedBody = .data) throws(RequestError) -> Data {
         if let interference = networkInterference(expecting: expected) { throw interference }
         switch status {
@@ -191,8 +206,18 @@ extension HTTPResponse {
     /// required", or, where data was expected, a web page instead of an
     /// error body. That is a captive portal or a proxy, which is a network
     /// problem, never "not found", "refused" or a parse error (G1-9
-    /// skeptic note 3).
+    /// skeptic note 3). For `.media`, only a 511 or a 200 whose body starts
+    /// like a web page counts (see `ExpectedBody.media`). The body alone
+    /// decides that 200, not its Content-Type: audio and JPEG never start
+    /// with "<", and a CDN that labels audio as text/html must not pause
+    /// every batch.
     public func networkInterference(expecting expected: HTTPRequest.ExpectedBody = .data) -> RequestError? {
+        if expected == .media {
+            if status == 511 || (status == 200 && bodyStartsLikeWebPage) {
+                return .offline(detail: Self.webPageDetail)
+            }
+            return nil
+        }
         if (300...399).contains(status) {
             return .offline(detail: "the request was redirected (a network sign-in page may be in the way)")
         }
@@ -210,8 +235,11 @@ extension HTTPResponse {
     }
 
     private var isWebPage: Bool {
-        let first = body.first { !Self.isJSONWhitespace($0) }
-        return first == UInt8(ascii: "<") || (header("Content-Type")?.lowercased().contains("text/html") ?? false)
+        bodyStartsLikeWebPage || (header("Content-Type")?.lowercased().contains("text/html") ?? false)
+    }
+
+    private var bodyStartsLikeWebPage: Bool {
+        body.first { !Self.isJSONWhitespace($0) } == UInt8(ascii: "<")
     }
 
     /// TIDAL's own error number: `subStatus` on api.tidal.com, `sub_status`
@@ -450,7 +478,9 @@ public final class HTTPClient: Sendable {
         let session = tryLimits == limits ? self.session : Self.session(like: self.session, limits: tryLimits)
         defer { if session !== self.session { session.finishTasksAndInvalidate() } }
         do {
-            let (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirects.shared)
+            let redirects: any URLSessionTaskDelegate = request.expectedBody == .media
+                ? FollowMediaRedirects() : RefuseRedirects.shared
+            let (data, response) = try await session.data(for: urlRequest, delegate: redirects)
             guard let http = response as? HTTPURLResponse else {
                 throw URLError(.badServerResponse)
             }
@@ -478,6 +508,7 @@ public final class HTTPClient: Sendable {
 /// carry the Bearer or Basic header toward a host nobody checked. The 3xx
 /// is returned as the answer, and `networkInterference` reads it as
 /// offline: TIDAL's hosts never redirect, so something on the network did.
+/// `.media` requests use `FollowMediaRedirects` instead.
 private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = RefuseRedirects()
 
@@ -488,6 +519,38 @@ private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecke
         newRequest request: URLRequest
     ) async -> URLRequest? {
         nil
+    }
+}
+
+/// The redirect rule for `.media` requests (see `ExpectedBody.media`):
+/// up to five hops, each to an https address. The Electron app followed
+/// up to five on both CDN paths (download-pipeline.md, constants); a
+/// redirect to plain http is refused here, which ATS would refuse in the
+/// app anyway. A refused redirect comes back as the answer, and its status
+/// decides what it means.
+enum MediaRedirects {
+    static let limit = 5
+
+    static func follows(_ request: URLRequest, afterHops hops: Int) -> Bool {
+        hops < limit && request.url?.scheme?.lowercased() == "https"
+    }
+}
+
+/// One `.media` request's redirects, counted for that request alone.
+private final class FollowMediaRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    private let hops = Mutex(0)
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        hops.withLock { hops in
+            guard MediaRedirects.follows(request, afterHops: hops) else { return nil }
+            hops += 1
+            return request
+        }
     }
 }
 
@@ -503,7 +566,8 @@ extension HTTPClient {
     /// and gives up as `busy`, `server` or `offline`. A body that ends
     /// before its `Content-Length` counts as a dropped connection, so a
     /// cut-off transfer is never mistaken for a whole file (reference
-    /// download-pipeline.md bug 10). Redirects are refused, as in `send`.
+    /// download-pipeline.md bug 10). Redirects follow the same rule as in
+    /// `send`: refused, except up to five secure ones for `.media`.
     ///
     /// `file` must not exist yet: it is created exclusively, never
     /// replacing anything. It is removed again unless the answer is a
@@ -608,7 +672,7 @@ extension HTTPClient {
         let configuration = session.configuration
         configuration.timeoutIntervalForRequest = tryLimits.inactivity.timeInterval
         configuration.timeoutIntervalForResource = tryLimits.total?.timeInterval ?? Self.noTotalLimit
-        let receiver = StreamingReceiver(handle: handle, progress: progress)
+        let receiver = StreamingReceiver(handle: handle, followsRedirects: request.expectedBody == .media, progress: progress)
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 1
         let streamingSession = URLSession(configuration: configuration, delegate: receiver, delegateQueue: queue)
@@ -642,6 +706,7 @@ private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchec
         var received: Int64 = 0
         var kept = Data()
         var writeError: (any Error)?
+        var redirects = 0
     }
 
     /// For a 200, enough of the start to recognise a web page.
@@ -651,10 +716,12 @@ private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchec
 
     private let state = Mutex(State())
     private let handle: FileHandle
+    private let followsRedirects: Bool
     private let progress: @Sendable (Int64, Int64?) -> Void
 
-    init(handle: FileHandle, progress: @escaping @Sendable (Int64, Int64?) -> Void) {
+    init(handle: FileHandle, followsRedirects: Bool, progress: @escaping @Sendable (Int64, Int64?) -> Void) {
         self.handle = handle
+        self.followsRedirects = followsRedirects
         self.progress = progress
     }
 
@@ -728,8 +795,13 @@ private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchec
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
-        // Never followed, as in `send`: the 3xx itself is the answer.
-        completionHandler(nil)
+        // The same rule as `send`: a refused redirect's 3xx is the answer.
+        let follow = followsRedirects && state.withLock { state -> Bool in
+            guard MediaRedirects.follows(request, afterHops: state.redirects) else { return false }
+            state.redirects += 1
+            return true
+        }
+        completionHandler(follow ? request : nil)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {

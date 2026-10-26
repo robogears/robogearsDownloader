@@ -36,6 +36,23 @@ enum DownloadFolderCheck {
     /// external or network disks may not). Every remaining track would hit
     /// it, so it stops the batch once, like the other folder problems.
     static func noTemporaryFolderMessage(for folder: URL) -> String {
-        "The disk with the download folder “\(folder.lastPathComponent)” doesn't allow the temporary files a download needs. Choose a folder on another disk."
+        noTemporaryFolderMessage(for: folder, isDriveRoot: isDriveRoot(folder))
+    }
+
+    /// A download folder at the top level of a drive gets macOS's temporary
+    /// folder for that drive inside it, which 2.2 refuses (nothing half-done
+    /// may sit in the download folder or below it). A folder on the same
+    /// drive works, so the message says that rather than "another disk".
+    static func noTemporaryFolderMessage(for folder: URL, isDriveRoot: Bool) -> String {
+        let name = "“\(folder.lastPathComponent)”"
+        if isDriveRoot {
+            return "Downloads can't be saved at the top level of \(name). Create a folder on the drive and choose that instead."
+        }
+        return "The disk with the download folder \(name) doesn't allow the temporary files a download needs. Choose a folder on another disk."
+    }
+
+    /// True when `folder` is the top level of a disk.
+    static func isDriveRoot(_ folder: URL) -> Bool {
+        (try? folder.resourceValues(forKeys: [.isVolumeKey]))?.isVolume == true
     }
 }

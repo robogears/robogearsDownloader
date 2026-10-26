@@ -26,10 +26,15 @@ enum TrackDownloadFailures {
     static let noUsableStream = "TIDAL didn't send a usable stream"
     static let unsupportedStream = "TIDAL sent a stream format the app can't read"
 
-    /// The error to throw for `error`, raised during `step`. Cancellation
-    /// and errors already in the row's terms pass through unchanged.
+    /// The error to throw for `error`, raised during `step`. Cancellation,
+    /// errors already in the row's terms and a full disk pass through
+    /// unchanged: the downloader turns a full disk into `diskFull` with the
+    /// room still needed, which stops the batch once (2.20). Mapped here, a
+    /// disk that fills while the audio arrives would read as an ordinary
+    /// failed save, and the next track would start and fill it again.
     static func mapped(_ error: any Error, during step: TrackDownloadStep) -> any Error {
         if error is CancellationError { return error }
+        if isOutOfSpace(error) { return error }
         if let error = error as? TrackDownloadError { return error }
         if let error = error as? TokenError { return mapped(error) }
         if let error = error as? RequestError { return mapped(error, during: step) }
@@ -45,8 +50,13 @@ enum TrackDownloadFailures {
     }
 
     /// Every sign-in problem stops the batch once (1.6). A sign-in store
-    /// that can't be read also lands here: every remaining track would hit
-    /// it, and signing in again replaces the unreadable item (1.5).
+    /// that can't be read also lands here, because every remaining track
+    /// would hit it. That fits the private file 0.1.31 keeps (1.5 A):
+    /// signing in again replaces a damaged file. It won't fit the Keychain
+    /// stage, where a locked keychain or a Deny click must never read as
+    /// signed out: that stage needs its own batch-stopping error with 1.5's
+    /// words ("Can't read your TIDAL sign-in from the Keychain. Unlock your
+    /// keychain, then click Try Again.").
     static func mapped(_ error: TokenError) -> TrackDownloadError {
         .signInRejected
     }

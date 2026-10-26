@@ -15,9 +15,14 @@ import Synchronization
 public final class TemporaryDownloads: Sendable {
     /// Why a temporary folder couldn't be made.
     public enum Failure: Error, Sendable, Equatable {
-        /// macOS gave no temporary folder on the download folder's disk.
-        /// Whether some disks refuse (exFAT, network shares) needs a live
-        /// check (2.2).
+        /// macOS gave no temporary folder on the download folder's disk, or
+        /// only one inside the download folder, as it does when the
+        /// download folder is the top level of a drive (its hidden
+        /// ".TemporaryItems" sits there). Whether some disks refuse (exFAT,
+        /// network shares) needs a live check (2.2). D4's fallback for such
+        /// disks, a hidden ".Blue Lantern.flac.part" in the download
+        /// folder, isn't built: it waits for that check, and the download
+        /// folder's own checks would first have to ignore such files.
         case noTemporaryFolder(detail: String)
         /// The list of temporary folders couldn't be saved, so a crash
         /// could leave this one behind unnoticed; nothing is downloaded.
@@ -31,16 +36,26 @@ public final class TemporaryDownloads: Sendable {
 
     private let store: JSONFileStore<[String]>
     private let entries: Mutex<[String]>
+    private let systemFolderNear: @Sendable (URL) throws -> URL
 
     /// `registryFile` is where the list is kept (Application Support in
     /// the app, a temporary folder in tests). A list left by an earlier
     /// launch is read, so `sweepLeftovers()` can find its folders.
-    public init(registryFile: URL) {
+    public convenience init(registryFile: URL) {
+        self.init(registryFile: registryFile) { folder in
+            try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+        }
+    }
+
+    /// `systemFolderNear` stands in for macOS's per-disk temporary folder,
+    /// so tests can offer none, or one inside the download folder.
+    init(registryFile: URL, systemFolderNear: @escaping @Sendable (URL) throws -> URL) {
         store = JSONFileStore(file: registryFile, permissions: 0o600)
         switch store.load() {
         case let .loaded(paths): entries = Mutex(paths)
         case .missing, .unreadable: entries = Mutex([])
         }
+        self.systemFolderNear = systemFolderNear
     }
 
     /// The temporary folders listed and not yet removed.
@@ -55,7 +70,7 @@ public final class TemporaryDownloads: Sendable {
         let fm = FileManager.default
         let made: URL
         do {
-            made = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+            made = try systemFolderNear(folder)
         } catch {
             throw .noTemporaryFolder(detail: String(describing: error))
         }

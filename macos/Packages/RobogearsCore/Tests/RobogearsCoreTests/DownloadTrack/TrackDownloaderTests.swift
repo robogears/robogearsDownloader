@@ -81,7 +81,7 @@ struct TrackDownloaderTests {
         #expect(outcome == .saved(fileName: "Blue Lantern.m4a", quality: .aac, notes: [.savedAsAAC]))
         #expect(world.savedFiles == ["Blue Lantern.m4a"])
         #expect(world.planner.decideCalls == [nil, .m4a])
-        let call = try #require(world.m4a.calls.first)
+        let call = try #require((world.m4a as? TrackDLM4AWriter)?.calls.first)
         #expect(call.tags.title == "Blue Lantern")
         #expect(call.coverJPEG == (try AudioFixture.data("cover.jpg")))
         #expect(world.temporariesAreGone)

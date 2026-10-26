@@ -16,6 +16,9 @@ enum TrackDLReply: Sendable {
     case failure(URLError.Code)
     /// The head and the first `prefix` bytes, then nothing until cancelled.
     case stall(headers: [String: String], body: Data, prefix: Int)
+    /// A redirect to `location`, sent the way a server sends one; when the
+    /// client refuses it, the 3xx itself is the answer.
+    case redirect(status: Int, to: URL)
 
     static func json(_ status: Int, _ body: Data, headers: [String: String] = [:]) -> TrackDLReply {
         var all = ["Content-Type": "application/json"]
@@ -198,6 +201,15 @@ final class TrackDLURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: body.prefix(prefix))
             server.stalled.set()
+        case let .redirect(status, target):
+            let response = HTTPURLResponse(
+                url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Location": target.absoluteString]
+            )!
+            var next = request
+            next.url = target
+            client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
         }
     }
 }
@@ -421,13 +433,16 @@ final class TrackDLWorld: Sendable {
     let folder: URL
     let temporaries: TemporaryDownloads
     let planner: TrackDLFolderPlanner
-    let m4a: TrackDLM4AWriter
+    let m4a: any M4AWriting
     let log = TrackDLLog()
     let progress = TrackDLProgress()
 
+    /// `systemFolderNear`, when given, stands in for macOS's per-disk
+    /// temporary folder (2.2).
     init(
         _ routes: TrackDLRoutes = TrackDLRoutes(), planner: TrackDLFolderPlanner = TrackDLFolderPlanner(),
-        m4a: TrackDLM4AWriter = TrackDLM4AWriter()
+        m4a: any M4AWriting = TrackDLM4AWriter(),
+        systemFolderNear: (@Sendable (URL) throws -> URL)? = nil
     ) throws {
         server = TrackDLServer(routes)
         store = TIDALMemoryStore(TIDALClientFixtures.credential())
@@ -438,7 +453,9 @@ final class TrackDLWorld: Sendable {
         base = try AudioFixture.temporaryFolder()
         folder = base.appendingPathComponent("TIDAL", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        temporaries = TemporaryDownloads(registryFile: base.appendingPathComponent("temporary-downloads.json"))
+        let registry = base.appendingPathComponent("temporary-downloads.json")
+        temporaries = systemFolderNear.map { TemporaryDownloads(registryFile: registry, systemFolderNear: $0) }
+            ?? TemporaryDownloads(registryFile: registry)
         self.planner = planner
         self.m4a = m4a
     }

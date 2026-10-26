@@ -25,12 +25,14 @@ struct AudioFetcher: Sendable {
     /// (reference C2), and asks for the body uncompressed. Node sent no
     /// Accept-Encoding, which means exactly that; URLSession would otherwise
     /// offer gzip on its own, and a compressed body can't be measured
-    /// against its Content-Length to catch a cut-off transfer.
+    /// against its Content-Length to catch a cut-off transfer. As `.media`,
+    /// redirects are followed as today, and an error answer is judged by
+    /// its status, whatever its body.
     static func request(_ url: URL) -> HTTPRequest {
         HTTPRequest(method: .get, url: url, headers: [
             "User-Agent": TIDALHeaders.userAgent,
             "Accept-Encoding": "identity",
-        ])
+        ], expectedBody: .media)
     }
 
     /// Writes the audio at `location` to a new file at `file`. `progress`
@@ -65,10 +67,12 @@ struct AudioFetcher: Sendable {
     }
 
     /// A 200 that is audio, or the error saying why not. A web page where
-    /// audio was expected is a network sign-in page (1.7).
+    /// audio was expected is a network sign-in page (1.7). An error answer
+    /// is the CDN's own, so an expired link answered with an XML 403 or an
+    /// HTML 404 fails the track as a stream link that stopped working,
+    /// never as offline, which would pause the batch for good while online.
     static func requireAudio(_ response: HTTPResponse) throws {
-        if let interference = response.networkInterference(expecting: .data) { throw interference }
-        _ = try response.requireOK()
+        _ = try response.requireOK(expecting: .media)
     }
 
     /// Fetches up to eight segments at once and writes them strictly in

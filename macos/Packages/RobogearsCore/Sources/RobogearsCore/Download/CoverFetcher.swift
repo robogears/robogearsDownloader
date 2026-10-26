@@ -30,7 +30,10 @@ struct CoverFetcher: Sendable {
             let response: HTTPResponse
             do {
                 response = try await client.send(AudioFetcher.request(url), retry: retry)
-                if let interference = response.networkInterference(expecting: .data) { throw interference }
+                // Only a 200 web page is the network in the way: an HTML
+                // "Not Found" or an XML "Access Denied" is the CDN's answer,
+                // judged by its status below (`ExpectedBody.media`).
+                if let interference = response.networkInterference(expecting: .media) { throw interference }
             } catch {
                 throw TrackDownloadFailures.mapped(error, during: .cover)
             }

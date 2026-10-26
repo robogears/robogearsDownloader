@@ -1,5 +1,5 @@
-// Long file work (writing a 150 MB FLAC, decoding it for the length check)
-// that Cancel must not wait for.
+// Long file work (writing a 150 MB FLAC or the AAC file, decoding it for the
+// length check) that Cancel must not wait for.
 //
 // Decision 4, item 2.4: "Cancel stops the current track at once, download
 // and tagging". The FLAC writer and Apple's decoder can't be interrupted
@@ -29,6 +29,60 @@ enum BackgroundWork {
             }
         } onCancel: {
             slot.abandon()
+        }
+    }
+
+    /// The same promise for async work that may not stop when cancelled,
+    /// such as the AAC writer, which another part of the app provides and
+    /// whose contract can't make it stop halfway. The work runs in a task of
+    /// its own that is cancelled too, so it stops early if it can; either
+    /// way the caller gets `CancellationError` at once, and `afterAbandon`
+    /// runs once the work has really ended.
+    static func run<T: Sendable>(
+        async work: @escaping @Sendable () async throws -> T,
+        afterAbandon: @escaping @Sendable () -> Void = {}
+    ) async throws -> T {
+        let slot = Slot<T>()
+        let worker = Worker()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard slot.install(continuation) else { return }
+                worker.start {
+                    let result: Result<T, any Error>
+                    do {
+                        result = .success(try await work())
+                    } catch {
+                        result = .failure(error)
+                    }
+                    if slot.finish(with: result) { afterAbandon() }
+                }
+            }
+        } onCancel: {
+            slot.abandon()
+            worker.cancel()
+        }
+    }
+
+    /// The task running async work, cancelled with its caller even when
+    /// the cancellation arrives before the task exists.
+    private final class Worker: Sendable {
+        private let state = Mutex<(task: Task<Void, Never>?, cancelled: Bool)>((nil, false))
+
+        func start(_ body: @escaping @Sendable () async -> Void) {
+            let task = Task { await body() }
+            let cancelledFirst = state.withLock { state -> Bool in
+                state.task = task
+                return state.cancelled
+            }
+            if cancelledFirst { task.cancel() }
+        }
+
+        func cancel() {
+            let task = state.withLock { state -> Task<Void, Never>? in
+                state.cancelled = true
+                return state.task
+            }
+            task?.cancel()
         }
     }
 

@@ -52,6 +52,16 @@ public struct TrackDownloader: TrackDownloading {
     let retry: RetryPolicy
     let log: @Sendable (String) -> Void
 
+    /// Writes the audio at a location into a new file, reporting 0…1.
+    typealias AudioFetch = @Sendable (
+        _ location: TIDALManifest.Location, _ file: URL, _ estimatedBytes: Int64,
+        _ progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> Void
+
+    /// Stands in for `AudioFetcher` when set, so a test can make the disk
+    /// fill up while the audio arrives (2.20), which no mock server can.
+    var audioFetchOverride: AudioFetch?
+
     /// - Parameters:
     ///   - api: TIDAL's API (`TIDALAPI` in the app).
     ///   - audioClient: an `HTTPClient` with `.audio` limits, for the stream
@@ -307,6 +317,9 @@ public struct TrackDownloader: TrackDownloading {
         //    cancels the other (2.15 keeps a failed cover from being silent).
         progress.update(0)
         let fetcher = AudioFetcher(client: audioClient, retry: retry)
+        let fetchAudio: AudioFetch = audioFetchOverride ?? { location, file, estimatedBytes, progress in
+            try await fetcher.fetch(location, to: file, estimatedBytes: estimatedBytes, progress: progress)
+        }
         let log = self.log, title = request.title
         let covers = CoverFetcher(client: audioClient, retry: retry, log: { log("“\(title)”: \($0)") })
         // The album details' cover first; the track's own album when the
@@ -315,7 +328,7 @@ public struct TrackDownloader: TrackDownloading {
         let cover = try await withThrowingTaskGroup(of: FetchedPart.self) { group in
             group.addTask {
                 do {
-                    try await fetcher.fetch(manifest.location, to: downloaded, estimatedBytes: estimatedBytes) { progress.update($0) }
+                    try await fetchAudio(manifest.location, downloaded, estimatedBytes) { progress.update($0) }
                 } catch {
                     throw TrackDownloadFailures.mapped(error, during: .audio)
                 }
@@ -341,7 +354,12 @@ public struct TrackDownloader: TrackDownloading {
                 try Self.writeFLAC(from: downloaded, tags: tags, coverJPEG: cover.jpeg, to: tagged)
             }, afterAbandon: cleanUpLater)
         case .m4a:
-            _ = try await m4aWriter.writeM4A(from: downloaded, tags: tags, coverJPEG: cover.jpeg, to: tagged)
+            // Run apart, like the FLAC writer, so Cancel returns at once
+            // even if the AAC writer finishes its file first (2.4).
+            let writer = m4aWriter, coverJPEG = cover.jpeg
+            _ = try await BackgroundWork.run(async: {
+                try await writer.writeM4A(from: downloaded, tags: tags, coverJPEG: coverJPEG, to: tagged)
+            }, afterAbandon: cleanUpLater)
             quality = .aac
         }
 
@@ -379,10 +397,14 @@ public struct TrackDownloader: TrackDownloading {
     }
 
     /// Reads the download (native FLAC or FLAC in fragmented MP4, sniffed
-    /// from its first bytes) memory-mapped, and writes the tagged copy with
-    /// the native writer (docs/spikes/audio-and-tagging.md, part c).
+    /// from its first bytes) and writes the tagged copy with the native
+    /// writer (docs/spikes/audio-and-tagging.md, part c).
     static func writeFLAC(from downloaded: URL, tags: FLACTags, coverJPEG: Data?, to tagged: URL) throws -> SavedQuality {
-        let source = try Data(contentsOf: downloaded, options: .alwaysMapped)
+        let disk = try? downloaded.resourceValues(forKeys: [.volumeIsLocalKey, .volumeIsInternalKey])
+        let source = try Data(
+            contentsOf: downloaded,
+            options: readingOptions(isLocal: disk?.volumeIsLocal, isInternal: disk?.volumeIsInternal)
+        )
         let audio: FLACAudio
         do {
             audio = try FLACAudio(downloaded: source)
@@ -398,6 +420,18 @@ public struct TrackDownloader: TrackDownloading {
     }
 
     // MARK: - Rules
+
+    /// How to read the download for tagging. Mapping it saves holding a
+    /// 150 MB track in memory, but a mapped page that can no longer be read
+    /// in (the drive was unplugged, the share dropped) crashes the app
+    /// instead of failing the save, and 2.19 asks for a drive that goes
+    /// mid-batch to stop the batch once. The temporary folder sits on the
+    /// download folder's disk, so the download is mapped only on a local,
+    /// internal disk, and read into memory everywhere else, or when the
+    /// disk can't say.
+    static func readingOptions(isLocal: Bool?, isInternal: Bool?) -> Data.ReadingOptions {
+        isLocal == true && isInternal == true ? .alwaysMapped : []
+    }
 
     enum LengthCheck: Equatable {
         case fine
