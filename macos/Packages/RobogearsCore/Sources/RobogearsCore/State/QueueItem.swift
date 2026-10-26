@@ -59,12 +59,21 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
     /// Exact library matches start left out; the person can + Add them.
     public var included: Bool
     public var state: DownloadState
+    /// Whether TIDAL's track details list a lossless version: false shows the
+    /// AAC badge before downloading (decision 4, item 2.10). Nil when unknown,
+    /// and in queues saved before the field existed.
+    public var losslessOnTIDAL: Bool?
+    /// What the row's latest download did, beside `state`'s words: the file
+    /// it concerns, so the row can offer Show in Finder, Replace (2.3),
+    /// Save As… (2.6) or Move the old .m4a to Trash (2.10). Nil until a batch
+    /// finishes the row, and again once the row goes back to waiting.
+    public var lastOutcome: TrackDownloadOutcome?
 
     public init(id: UUID = UUID(), tidalID: Int64?, title: String, version: String? = nil, artist: String,
                 album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil, hiRes: Bool = false,
                 explicit: Bool = false, source: Source, originalTitle: String? = nil, originalArtist: String? = nil,
                 match: Match = .matched, libraryMatch: LibraryMatch? = nil, included: Bool? = nil,
-                state: DownloadState = .waiting) {
+                state: DownloadState = .waiting, losslessOnTIDAL: Bool? = nil, lastOutcome: TrackDownloadOutcome? = nil) {
         self.id = id
         self.tidalID = tidalID
         self.title = title
@@ -84,6 +93,8 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
         // starts greyed out; a similar one stays included with a warning.
         self.included = included ?? (libraryMatch?.kind != .exact)
         self.state = state
+        self.losslessOnTIDAL = losslessOnTIDAL
+        self.lastOutcome = lastOutcome
     }
 
     /// Rows that Download All sends: matched, included, not already done.
@@ -104,5 +115,30 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
         default: break
         }
         return copy
+    }
+
+    /// What a download of this row asks for, copied now so later edits to
+    /// the row can't change a download in flight. Nil without a TIDAL track.
+    /// `folder` is the batch's folder, kept to the end of the batch (2.17).
+    public func downloadRequest(folder: URL, replaceExisting: Bool = false) -> TrackDownloadRequest? {
+        guard let tidalID else { return nil }
+        return TrackDownloadRequest(rowID: id, tidalID: tidalID, title: title, version: version, artist: artist,
+                                    album: album, durationSeconds: durationSeconds, isrc: isrc, expectsHiRes: hiRes,
+                                    losslessOnTIDAL: losslessOnTIDAL, folder: folder, replaceExisting: replaceExisting)
+    }
+
+    /// The row's download line in plain words (2.9): "Saved Blue Lantern.flac,
+    /// 24-bit / 96 kHz", "Already in your download folder", a failure's
+    /// reason. Nil while the row waits or downloads; the UI labels those.
+    public var downloadMessage: String? {
+        switch state {
+        case .waiting, .queued, .downloading:
+            return nil
+        case .done(let quality):
+            if let lastOutcome { return DownloadBatch.message(for: lastOutcome) }
+            return "Saved, \(quality)"
+        case .skipped(let reason), .failed(let reason):
+            return reason
+        }
     }
 }

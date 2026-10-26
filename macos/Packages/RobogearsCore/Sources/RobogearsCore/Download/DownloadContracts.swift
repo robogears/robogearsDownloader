@@ -96,8 +96,9 @@ public enum SaveNote: Codable, Sendable, Equatable, Hashable {
     case savedNextToAAC(aacName: String)
 }
 
-/// How a track download ended without an error.
-public enum TrackDownloadOutcome: Sendable, Equatable {
+/// How a track download ended without an error. Codable so a queue row can
+/// keep it across a restart (the file names behind Replace and Save As…).
+public enum TrackDownloadOutcome: Codable, Sendable, Equatable {
     case saved(fileName: String, quality: SavedQuality, notes: [SaveNote])
     /// The same recording is already in the download folder and looks
     /// healthy (2.3, 2.6, 2.16).
