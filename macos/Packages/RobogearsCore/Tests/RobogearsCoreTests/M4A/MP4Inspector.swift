@@ -79,6 +79,40 @@ enum MP4Inspector {
         return (frames, reader.status)
     }
 
+    /// The file's AAC packets as Apple's own reader hands them over without
+    /// decoding (passthrough), so the check doesn't depend on the writer's
+    /// reader. Read straight from a joined DASH file, this reader applies the
+    /// edit list and drops packets (spike, "AAC .m4a output"); from a
+    /// progressive file it hands over every one.
+    static func passthroughPackets(_ url: URL) async throws -> [Data] {
+        let asset = AVURLAsset(url: url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var packets: [Data] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            // Marker buffers (no samples, no data) carry only timing notes.
+            guard CMSampleBufferGetNumSamples(buffer) > 0 else { continue }
+            let block = try #require(CMSampleBufferGetDataBuffer(buffer))
+            var bytes = Data(count: CMBlockBufferGetDataLength(block))
+            let status = bytes.withUnsafeMutableBytes {
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!)
+            }
+            #expect(status == kCMBlockBufferNoErr)
+            var offset = 0
+            for index in 0..<CMSampleBufferGetNumSamples(buffer) {
+                let size = CMSampleBufferGetSampleSize(buffer, at: index)
+                packets.append(bytes.subdata(in: offset..<(offset + size)))
+                offset += size
+            }
+            #expect(offset == bytes.count)
+        }
+        #expect(reader.status == .completed)
+        return packets
+    }
+
     /// `data` with the first occurrence of `find` (after `from`) replaced.
     static func patch(_ data: Data, replacing find: [UInt8], with replacement: [UInt8], from: Int = 0) throws -> Data {
         let range = try #require(data.range(of: Data(find), in: from..<data.count))

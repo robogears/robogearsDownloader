@@ -78,6 +78,18 @@ struct M4AWriterTests {
         #expect(try MP4Inspector.topLevelTypes(written) == ["ftyp", "moov", "mdat"])
     }
 
+    @Test("Apple's own reader finds all 45 packets in the saved file, byte for byte the plain source's",
+          arguments: ["aac-320.m4a", "dash-aac.mp4"])
+    func applesReaderSeesEveryPacket(fixture: String) async throws {
+        let folder = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (url, _) = try await convert(fixture, in: folder)
+        // The plain fixture holds the same 45 packets as the DASH one.
+        let reference = try await MP4Inspector.passthroughPackets(AudioFixture.url("aac-320.m4a"))
+        #expect(reference.count == 45)
+        #expect(try await MP4Inspector.passthroughPackets(url) == reference)
+    }
+
     @Test("the sample tables, edit list and headers match FFmpeg's box for box",
           arguments: ["aac-320.m4a", "dash-aac.mp4"])
     func tablesMatchFFmpeg(fixture: String) async throws {
@@ -91,7 +103,8 @@ struct M4AWriterTests {
                      ["moov", "trak", "mdia", "mdhd"], ["moov", "trak", "mdia", "hdlr"],
                      stbl + ["stts"], stbl + ["stsc"], stbl + ["stsz"], stbl + ["sgpd"], stbl + ["sbgp"]] {
             let ours = try MP4Inspector.box(written, path)
-            #expect(ours != nil && ours == (try MP4Inspector.box(ffmpeg, path)), "\(path.joined(separator: "/"))")
+            let theirs = try MP4Inspector.box(ffmpeg, path)
+            #expect(ours != nil && ours == theirs, "\(path.joined(separator: "/"))")
         }
         // The sample description is the source's own, unchanged (the DASH
         // one keeps its btrt box, which FFmpeg dropped).
