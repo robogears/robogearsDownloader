@@ -1,18 +1,8 @@
-Baseline 2026-10-21 22:36 — branch overnight-loop/2026-10-21-2235 at b60576d
-node: v20.20.2
-bulk_runner.js: ok
-electron-main.js: ok
-electron-preload.js: ok
-extension-server.js: ok
-tidal_auth_node.js: ok
-tidal_check_quality.js: ok
-tidal_download.js: ok
-tidal_lib.js: ok
-tidal_search.js: ok
-renderer/app.js: ok
-build/after-pack.js: ok
-npm test: none defined in package.json (no test suite exists)
-node_modules: absent — Electron app cannot be built or run here
-Swift: swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
-Xcode: Xcode 27.1
-Swift project: none yet (the port starts in this run)
+# Baseline — 26 Oct 2026 12:50, branch overnight-loop/2026-10-21-2235 at 4c9a893
+
+## swift test (macos/Packages/RobogearsCore)
+◇ Test run started.
+✔ Test run with 748 tests in 47 suites passed after 5.727 seconds.
+
+## xcodebuild Debug (app target)
+** BUILD SUCCEEDED **
