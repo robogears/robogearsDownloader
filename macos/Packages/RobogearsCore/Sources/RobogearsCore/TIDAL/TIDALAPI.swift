@@ -18,6 +18,10 @@ public struct TIDALAPI: Sendable {
     public enum Quality: String, Sendable, CaseIterable {
         case hiResLossless = "HI_RES_LOSSLESS"
         case lossless = "LOSSLESS"
+        /// 320 kbps AAC, asked for only after TIDAL clearly refused both
+        /// lossless tiers: the last step of rule 5's chain (Hi-Res, then
+        /// lossless, then .m4a; decision 4, items 2.10 and 2.21).
+        case high = "HIGH"
     }
 
     static let base = "https://api.tidal.com"
@@ -83,6 +87,36 @@ public struct TIDALAPI: Sendable {
             (name: "playbackmode", value: "STREAM"),
             (name: "assetpresentation", value: "FULL"),
         ])
+    }
+
+    /// The same playback request, answered with TIDAL's reply as it came
+    /// instead of an error for every status other than 200. The download
+    /// needs the refusal itself: a 4xx for one quality means "step down to
+    /// the next", while a 429, a 5xx or a timeout must never cause a step
+    /// down (decision 4, item 2.21), and a refusal's sub-status and message
+    /// tell "not in your country" from "not at this quality" (1.4).
+    ///
+    /// As with every call: the shared retry rule runs first (so a 429 or
+    /// 5xx that outlasts it throws `busy` or `server`), a 401 renews the
+    /// sign-in once and retries once (a second 401 throws `unauthorized`),
+    /// and a web page or redirect instead of TIDAL throws `offline`.
+    public func playbackInfoResponse(trackID: Int, quality: Quality) async throws -> HTTPResponse {
+        let country = try await keeper.country().code
+        let client = self.client, retry = self.retry
+        let path = "/v1/tracks/\(trackID)/playbackinfopostpaywall"
+        let parameters = [
+            (name: "countryCode", value: country),
+            (name: "audioquality", value: quality.rawValue),
+            (name: "playbackmode", value: "STREAM"),
+            (name: "assetpresentation", value: "FULL"),
+        ]
+        return try await keeper.withAuthorizedRequest { token in
+            let response = try await client.send(Self.request(path: path, parameters: parameters, bearer: token), retry: retry)
+            if let interference = response.networkInterference() { throw interference }
+            if response.status == 401 { throw RequestError.unauthorized(subStatus: response.subStatus) }
+            if response.status == 200 { _ = try response.requireJSONBody() }
+            return response
+        }
     }
 
     /// `GET /v1/search/tracks?query=&limit=&countryCode=`, in that order.

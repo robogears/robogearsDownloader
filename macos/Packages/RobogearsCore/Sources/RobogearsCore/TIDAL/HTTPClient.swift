@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // MARK: - Request and response
 
@@ -487,5 +488,264 @@ private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecke
         newRequest request: URLRequest
     ) async -> URLRequest? {
         nil
+    }
+}
+
+// MARK: - Streaming download
+
+extension HTTPClient {
+    /// Streams a GET's body straight into a new file at `file` as it
+    /// arrives, so a 150 MB Hi-Res track is never held whole in memory
+    /// (decision 4, item 2.20; the Electron app buffered DASH tracks whole).
+    ///
+    /// The same retry rule as `send`: a 429, a 5xx, a timeout or a dropped
+    /// connection tries again from the start (the file is emptied first),
+    /// and gives up as `busy`, `server` or `offline`. A body that ends
+    /// before its `Content-Length` counts as a dropped connection, so a
+    /// cut-off transfer is never mistaken for a whole file (reference
+    /// download-pipeline.md bug 10). Redirects are refused, as in `send`.
+    ///
+    /// `file` must not exist yet: it is created exclusively, never
+    /// replacing anything. It is removed again unless the answer is a
+    /// complete 200, so a failure never leaves a partial file behind.
+    ///
+    /// Returns the response. For a 200 the body holds only the first bytes
+    /// that arrived (up to 512), enough for `networkInterference` to tell a
+    /// sign-in page from audio; the rest is in the file. For any other
+    /// status the body is the server's answer (up to 64 KiB) and no file is
+    /// kept. `progress` gets the bytes received so far in this try and the
+    /// `Content-Length`, when the server sent one. Cancelling the task stops
+    /// the transfer at once and throws `CancellationError`.
+    public func download(
+        _ request: HTTPRequest,
+        to file: URL,
+        retry: RetryPolicy = .standard,
+        progress: @escaping @Sendable (_ received: Int64, _ expected: Int64?) -> Void = { _, _ in }
+    ) async throws -> HTTPResponse {
+        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var keepFile = false
+        defer {
+            try? handle.close()
+            if !keepFile { try? FileManager.default.removeItem(at: file) }
+        }
+
+        var deadline = limits.total.map { clock.now().addingTimeInterval($0.timeInterval) }
+        var retriesSoFar = 0
+        var lastError: RequestError?
+        while true {
+            let timeLeft = deadline.map { Duration.seconds(max($0.timeIntervalSince(clock.now()), 0)) }
+            if let timeLeft, timeLeft <= .zero, let lastError { throw lastError }
+            try handle.truncate(atOffset: 0)
+            let failure: RetryPolicy.Failure
+            let finalError: RequestError
+            do {
+                let attempt = try await streamOnce(
+                    request, into: handle, limits: limits.forTry(after: retriesSoFar, timeLeft: timeLeft), progress: progress
+                )
+                let status = attempt.response.status
+                if status == 200 && attempt.isComplete {
+                    try handle.synchronize()
+                    keepFile = true
+                    return attempt.response
+                }
+                if status == 200 {
+                    failure = .transport(.networkConnectionLost)
+                    finalError = .offline(detail: RequestError.offlineDetail(for: .networkConnectionLost))
+                } else {
+                    guard RetryPolicy.isRetryable(status: status) else { return attempt.response }
+                    let retryAfter = attempt.response.header("Retry-After")
+                        .flatMap { RetryPolicy.parseRetryAfter($0, now: clock.now()) }
+                    failure = .status(status, retryAfter: retryAfter)
+                    finalError = status == 429
+                        ? .busy(retryAfter: retryAfter)
+                        : attempt.response.networkInterference(expecting: request.expectedBody) ?? .server(status: status)
+                }
+            } catch let error as URLError {
+                failure = .transport(error.code)
+                finalError = .offline(detail: RequestError.offlineDetail(for: error.code))
+            }
+            lastError = finalError
+            switch retry.decision(after: failure, retriesSoFar: retriesSoFar) {
+            case let .retry(after: wait):
+                if case .status(429, retryAfter: .some(_)) = failure {
+                    deadline = deadline?.addingTimeInterval(wait.timeInterval)
+                }
+                if let deadline, clock.now().addingTimeInterval(wait.timeInterval) >= deadline {
+                    throw finalError
+                }
+                try await clock.sleep(for: wait)
+                retriesSoFar += 1
+            case .giveUp:
+                throw finalError
+            }
+        }
+    }
+
+    /// One try of `download`. Throws `URLError` for transport failures,
+    /// `CancellationError` when the calling task was cancelled, and the
+    /// file system's error when writing fails (a full disk is not retried).
+    private func streamOnce(
+        _ request: HTTPRequest,
+        into handle: FileHandle,
+        limits tryLimits: Limits,
+        progress: @escaping @Sendable (Int64, Int64?) -> Void
+    ) async throws -> (response: HTTPResponse, isComplete: Bool) {
+        try Task.checkCancellation()
+        var urlRequest = URLRequest(url: request.url)
+        urlRequest.httpMethod = request.method.rawValue
+        urlRequest.timeoutInterval = tryLimits.inactivity.timeInterval
+        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
+        for (name, value) in request.headers {
+            urlRequest.setValue(value, forHTTPHeaderField: name)
+        }
+        urlRequest.httpBody = request.body
+
+        // A session of its own per try: data arrives through a delegate,
+        // which URLSession only takes per session. The serial queue keeps
+        // the file writes in order.
+        let configuration = session.configuration
+        configuration.timeoutIntervalForRequest = tryLimits.inactivity.timeInterval
+        configuration.timeoutIntervalForResource = tryLimits.total?.timeInterval ?? Self.noTotalLimit
+        let receiver = StreamingReceiver(handle: handle, progress: progress)
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        let streamingSession = URLSession(configuration: configuration, delegate: receiver, delegateQueue: queue)
+        defer { streamingSession.finishTasksAndInvalidate() }
+        let task = streamingSession.dataTask(with: urlRequest)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if receiver.begin(continuation) { task.resume() }
+            }
+        } onCancel: {
+            receiver.markCancelled()
+            task.cancel()
+        }
+    }
+}
+
+/// Receives one streamed body: writes a 200's bytes to the file as they
+/// arrive, keeps any other answer's (short) body for the caller, and
+/// resumes the waiting download once the transfer ends. Its callbacks run
+/// on a serial queue; the lock covers the state the cancelling task also
+/// touches.
+private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    typealias Outcome = (response: HTTPResponse, isComplete: Bool)
+
+    private struct State {
+        var continuation: CheckedContinuation<Outcome, any Error>?
+        var cancelled = false
+        var status = 0
+        var headers: [String: String] = [:]
+        var expected: Int64?
+        var received: Int64 = 0
+        var kept = Data()
+        var writeError: (any Error)?
+    }
+
+    /// For a 200, enough of the start to recognise a web page.
+    static let sniffBytes = 512
+    /// For an error answer: TIDAL's error bodies are small JSON.
+    static let errorBodyBytes = 64 * 1024
+
+    private let state = Mutex(State())
+    private let handle: FileHandle
+    private let progress: @Sendable (Int64, Int64?) -> Void
+
+    init(handle: FileHandle, progress: @escaping @Sendable (Int64, Int64?) -> Void) {
+        self.handle = handle
+        self.progress = progress
+    }
+
+    /// Installs the continuation. False when the caller was cancelled
+    /// before the transfer started; the continuation is resumed here then.
+    func begin(_ continuation: CheckedContinuation<Outcome, any Error>) -> Bool {
+        let alreadyCancelled = state.withLock { state -> Bool in
+            if state.cancelled { return true }
+            state.continuation = continuation
+            return false
+        }
+        if alreadyCancelled { continuation.resume(throwing: CancellationError()) }
+        return !alreadyCancelled
+    }
+
+    func markCancelled() {
+        state.withLock { $0.cancelled = true }
+    }
+
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            return
+        }
+        var headers: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            if let key = key as? String { headers[key] = "\(value)" }
+        }
+        let expected = http.expectedContentLength >= 0 ? http.expectedContentLength : nil
+        state.withLock { state in
+            state.status = http.statusCode
+            state.headers = headers
+            state.expected = expected
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let status = state.withLock { $0.status }
+        guard status == 200 else {
+            state.withLock { state in
+                let room = Self.errorBodyBytes - state.kept.count
+                if room > 0 { state.kept.append(data.prefix(room)) }
+            }
+            return
+        }
+        do {
+            try handle.write(contentsOf: data)
+        } catch {
+            state.withLock { $0.writeError = error }
+            dataTask.cancel()
+            return
+        }
+        let (received, expected) = state.withLock { state -> (Int64, Int64?) in
+            state.received += Int64(data.count)
+            let room = Self.sniffBytes - state.kept.count
+            if room > 0 { state.kept.append(data.prefix(room)) }
+            return (state.received, state.expected)
+        }
+        progress(received, expected)
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        // Never followed, as in `send`: the 3xx itself is the answer.
+        completionHandler(nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        let (continuation, result) = state.withLock { state -> (CheckedContinuation<Outcome, any Error>?, Result<Outcome, any Error>) in
+            let continuation = state.continuation
+            state.continuation = nil
+            let result: Result<Outcome, any Error>
+            if state.cancelled {
+                result = .failure(CancellationError())
+            } else if let writeError = state.writeError {
+                result = .failure(writeError)
+            } else if let error {
+                result = .failure((error as? URLError) ?? URLError(.unknown))
+            } else {
+                let response = HTTPResponse(status: state.status, headers: state.headers, body: state.kept)
+                let complete = state.status != 200 || state.expected.map { $0 == state.received } ?? true
+                result = .success((response, complete))
+            }
+            return (continuation, result)
+        }
+        continuation?.resume(with: result)
     }
 }
