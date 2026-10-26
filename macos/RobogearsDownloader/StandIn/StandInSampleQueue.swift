@@ -33,6 +33,7 @@ enum StandInSampleQueue {
         let blue = add(StandIn.item("Blue Lantern", artist: "Another Artist")) {
             $0.item.libraryMatch = .init(kind: .similar, path: "/Volumes/Library/Blue Lantern (Remix).mp3",
                                          libraryTitle: "Blue Lantern (Remix)")
+            $0.libraryDurationSeconds = $0.item.durationSeconds.map { $0 - 23 }
         }
         // Waiting inside the running batch.
         _ = add(StandIn.item("Seven", artist: "The Band")) { $0.item.state = .queued; $0.inBatch = true }

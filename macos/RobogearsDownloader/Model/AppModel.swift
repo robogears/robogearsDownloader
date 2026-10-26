@@ -203,6 +203,7 @@ final class AppModel {
         sounds.isEnabled = settings.playSoundEffects
         if settings.previewVolume != old.previewVolume { player.volume = settings.previewGain }
         guard persists, settings != old else { return }
+        if settings.notifyWhenDownloadsFinish, !old.notifyWhenDownloadsFinish { requestNotificationPermission() }
         settingsSaveTask?.cancel()
         settingsSaveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))

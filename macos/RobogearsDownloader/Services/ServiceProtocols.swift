@@ -79,10 +79,19 @@ enum LibraryScanEvent: Sendable, Equatable {
     case unavailable(String)
 }
 
+/// A library match plus the library file's length when its tags give one,
+/// so the row can show both lengths when they're more than 10 s apart
+/// (DESIGN_DIRECTION 4.4). The length isn't saved with the queue yet:
+/// RobogearsCore's LibraryMatch has no field for it.
+struct LibraryVerdict: Sendable, Equatable {
+    var match: QueueItem.LibraryMatch
+    var durationSeconds: Int?
+}
+
 protocol LibraryChecking: Sendable {
     /// The library verdict for each row (a missing key means no match).
     /// Never writes to the library folder.
-    func check(_ items: [QueueItem]) async -> [UUID: QueueItem.LibraryMatch]
+    func check(_ items: [QueueItem]) async -> [UUID: LibraryVerdict]
     /// Whether a file for this row already sits in the download folder (D4 2.16).
     func isInDownloadFolder(_ item: QueueItem, folder: URL) async -> Bool
     /// Reads (or re-reads) the library folder's index. Read-only; cancelling

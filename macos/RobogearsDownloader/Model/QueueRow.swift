@@ -17,6 +17,8 @@ final class QueueRow: Identifiable {
     var percent: Int = 0
     /// Waiting for the library check (D4 4.20): "Checking library…".
     var isCheckingLibrary = false
+    /// The matched library file's length, for "· 4:12 vs 3:58" (this session only).
+    var libraryDurationSeconds: Int?
     /// A file for this row already sits in the download folder (D4 2.16).
     var inDownloadFolder = false
     /// Same-name clash or a damaged existing file, from the last batch.

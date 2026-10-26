@@ -31,7 +31,19 @@ enum Palette {
 
     /// The same colours for AppKit drawing (the activity panel, the Dock tile).
     enum AppKit {
-        static func named(_ name: String) -> NSColor { NSColor(named: name) ?? .labelColor }
+        /// The asset colour, resolved by AppKit in the drawing appearance (so
+        /// the person's Increase Contrast setting picks the high-contrast
+        /// variants). Only when the snapshot harness renders an Increase
+        /// Contrast look does it come from `IncreasedContrastTable` instead.
+        static func named(_ name: String) -> NSColor {
+            let asset = NSColor(named: name) ?? .labelColor
+            guard let variants = IncreasedContrastTable.colors[name] else { return asset }
+            return NSColor(name: name) { appearance in
+                guard IncreasedContrastTable.isForced else { return asset }
+                let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return dark ? variants.dark : variants.light
+            }
+        }
         static var ink: NSColor { named("Ink") }
         static var inkSecondary: NSColor { named("InkSecondary") }
         static var inkTertiary: NSColor { named("InkTertiary") }
@@ -67,5 +79,58 @@ enum Tone: Equatable, Sendable {
         case .similar: Palette.AppKit.statusSimilar
         case .done: Palette.AppKit.statusDone
         }
+    }
+}
+
+/// The asset catalog's Increase Contrast variants, for the snapshot harness
+/// only. AppKit picks those variants when the person's Increase Contrast
+/// setting is on, and an off-screen window can't turn that on (an
+/// `NSAppearance` named `.accessibilityHighContrastAqua` resolves as plain
+/// Aqua), so the harness forces these. `--run-checks` compares every value
+/// with the colour sets' Contents.json so the two can't drift apart.
+enum IncreasedContrastTable {
+    struct Variants {
+        let light: NSColor
+        let dark: NSColor
+        let lightHex: String
+        let darkHex: String
+        let alpha: CGFloat
+
+        init(_ lightHex: String, _ darkHex: String, alpha: CGFloat = 1) {
+            self.lightHex = lightHex
+            self.darkHex = darkHex
+            self.alpha = alpha
+            light = NSColor(hex: lightHex, alpha: alpha)
+            dark = NSColor(hex: darkHex, alpha: alpha)
+        }
+    }
+
+    /// Set only by the snapshot harness, on the main thread, between renders.
+    nonisolated(unsafe) static var isForced = false
+
+    /// DESIGN_DIRECTION 3.1, "Light + Increase Contrast" and "Dark + Increase Contrast".
+    static let colors: [String: Variants] = [
+        "Canvas": Variants("FFFFFF", "000000"),
+        "Ink": Variants("000000", "FFFFFF"),
+        "InkSecondary": Variants("3D3D3D", "C8C8C8"),
+        "InkTertiary": Variants("595959", "9A9A9A"),
+        "Hairline": Variants("8A8A8A", "5E5E5E"),
+        "Surface": Variants("EBEBEB", "1A1A1A"),
+        "Surface2": Variants("D6D6D6", "2E2E2E"),
+        "StatusFailed": Variants("9B1C1C", "FF8A8A"),
+        "StatusSimilar": Variants("7A5200", "FCD34D"),
+        "StatusDone": Variants("0F5E27", "86EFAC"),
+        "WaveUnplayed": Variants("000000", "FFFFFF", alpha: 0.45),
+        "WaveHoverMax": Variants("000000", "FFFFFF", alpha: 0.80),
+        "WaveCursor": Variants("000000", "FFFFFF", alpha: 0.80),
+    ]
+}
+
+extension NSColor {
+    /// "3D3D3D" in sRGB.
+    convenience init(hex: String, alpha: CGFloat = 1) {
+        let value = UInt32(hex, radix: 16) ?? 0
+        self.init(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+                  blue: CGFloat(value & 0xFF) / 255, alpha: alpha)
     }
 }

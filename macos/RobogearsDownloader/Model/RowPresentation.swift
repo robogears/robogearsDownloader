@@ -55,6 +55,8 @@ struct RowFacts: Equatable, Sendable {
     var isAACOnly = false
     var hasSavedFile = false
     var preview: Preview = .none
+    /// The library file's length, when known.
+    var libraryDurationSeconds: Int?
 
     enum Preview: Equatable, Sendable { case none, loading, ready, unavailable }
 }
@@ -102,7 +104,9 @@ struct RowPresentation: Equatable, Sendable {
 
         // Second-line candidates, highest first: failure or clash › library › source.
         var failureLine: String?
-        let libraryLine = item.libraryMatch.map { "Library: \($0.libraryTitle)" }
+        let libraryLine = item.libraryMatch.map {
+            "Library: \($0.libraryTitle)" + lengthComparison(item.durationSeconds, f.libraryDurationSeconds)
+        }
         let sourceLine = sourceWording(item)
 
         // Status, by priority: download result › clash or damaged › Not on
@@ -218,6 +222,14 @@ struct RowPresentation: Equatable, Sendable {
 
         p.secondLine = failureLine ?? libraryLine ?? sourceLine
         return p
+    }
+
+    /// " · 4:12 vs 3:58" (this track's length, then the library file's) when
+    /// both are known and more than 10 s apart; otherwise nothing.
+    static func lengthComparison(_ track: Int?, _ library: Int?) -> String {
+        guard let track, let library, track > 0, library > 0, abs(track - library) > 10,
+              let a = Formatting.duration(track), let b = Formatting.duration(library) else { return "" }
+        return " · \(a) vs \(b)"
     }
 
     /// "Spotify: Intro — Placeholder Artist" when the source named the track

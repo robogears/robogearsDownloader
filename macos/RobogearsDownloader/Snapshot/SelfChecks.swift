@@ -54,9 +54,11 @@ enum SelfChecks {
     private static func runAll() async {
         presentationRules()
         textRules()
+        contrastTableMatchesAssets()
         await addFlows()
         await undoFlows()
         await batchFlows()
+        await commandRules()
     }
 
     // MARK: Pure rules
@@ -80,6 +82,12 @@ enum SelfChecks {
         expect(p("Satellite")?.status?.text == "Different artist on TIDAL" && p("Satellite")?.isLeftOut == true, "different artist left out")
         expect(p("Blue Lantern")?.status?.tone == .similar && p("Blue Lantern")?.commands.contains(.leaveOut) == true, "similar: amber, Leave Out")
         expect(p("Afterglow")?.status?.text == "In your download folder", "in download folder")
+        if let blue = sample.rows.first(where: { $0.item.title == "Blue Lantern" }), let own = blue.item.durationSeconds {
+            expect(p("Blue Lantern")?.secondLine == "Library: Blue Lantern (Remix) · \(Formatting.duration(own)!) vs \(Formatting.duration(own - 23)!)",
+                   "similar: both lengths when more than 10 s apart")
+        }
+        expect(RowPresentation.lengthComparison(238, 230) == "" && RowPresentation.lengthComparison(238, nil) == ""
+               && RowPresentation.lengthComparison(252, 238) == " · 4:12 vs 3:58", "lengths shown only when known and > 10 s apart")
         expect(p("Echo Park")?.action == .saveAs && p("Echo Park")?.status?.text == "Not downloaded", "clash: Save As…")
         expect(p("Driftwood")?.action == .replace, "damaged: Replace")
         expect(p("Hollow")?.status?.showsSpinner == true, "checking library spinner")
@@ -108,6 +116,46 @@ enum SelfChecks {
         expect(summary.sentence == "Finished with problems: 10 downloaded, 2 failed.", "summary never says finished-clean with failures")
         let lines = Set((0..<10).map { LoadingLines.line(seed: 3, tick: $0) })
         expect(lines.count == 10 && LoadingLines.line(seed: 3, tick: 0) != LoadingLines.line(seed: 3, tick: 1), "loading lines rotate through all ten")
+    }
+
+    // MARK: Colours
+
+    /// The harness's Increase Contrast table equals the asset catalog's
+    /// high-contrast variants, read from the colour sets' Contents.json in the
+    /// source tree (found from this file's compile-time path).
+    private static func contrastTableMatchesAssets(sourceFile: String = #filePath) {
+        let assets = URL(fileURLWithPath: sourceFile).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Assets.xcassets")
+        guard FileManager.default.fileExists(atPath: assets.path) else {
+            expect(false, "asset catalog found at \(assets.path)")
+            return
+        }
+        for (name, variants) in IncreasedContrastTable.colors.sorted(by: { $0.key < $1.key }) {
+            let file = assets.appendingPathComponent("\(name).colorset/Contents.json")
+            guard let data = try? Data(contentsOf: file),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let colors = json["colors"] as? [[String: Any]] else {
+                expect(false, "\(name) colour set readable")
+                continue
+            }
+            var found: [String: (hex: String, alpha: Double)] = [:]
+            for entry in colors {
+                let appearances = (entry["appearances"] as? [[String: String]]) ?? []
+                let dark = appearances.contains { $0["appearance"] == "luminosity" && $0["value"] == "dark" }
+                let high = appearances.contains { $0["appearance"] == "contrast" && $0["value"] == "high" }
+                guard high, let components = (entry["color"] as? [String: Any])?["components"] as? [String: String] else { continue }
+                func byte(_ key: String) -> Int {
+                    let raw = components[key] ?? "0"
+                    return raw.hasPrefix("0x") ? Int(raw.dropFirst(2), radix: 16) ?? 0 : Int(((Double(raw) ?? 0) * 255).rounded())
+                }
+                let hex = String(format: "%02X%02X%02X", byte("red"), byte("green"), byte("blue"))
+                found[dark ? "dark" : "light"] = (hex, Double(components["alpha"] ?? "1") ?? 1)
+            }
+            let ok = found["light"]?.hex == variants.lightHex && found["dark"]?.hex == variants.darkHex
+                && abs((found["light"]?.alpha ?? -1) - Double(variants.alpha)) < 0.005
+                && abs((found["dark"]?.alpha ?? -1) - Double(variants.alpha)) < 0.005
+            expect(ok, "\(name) Increase Contrast table matches the asset catalog")
+        }
     }
 
     // MARK: Adding
@@ -267,6 +315,42 @@ enum SelfChecks {
         expect(t.batch?.total == 1 && t.batch?.isDownloadAll == false, "retry batch holds the failed row only")
         _ = await wait(30) { t.batch == nil }
         expect(t.rows.count == 2, "retry leaves the waiting row alone")
+    }
+
+    // MARK: Menu commands (DESIGN_DIRECTION 5)
+
+    private static func commandRules() async {
+        // Retry Selected when a selected row failed; otherwise Retry All Failed (N).
+        let f = model()
+        let a = QueueRow(item: StandIn.item("Glass Houses"))
+        a.item.state = .failed(reason: "TIDAL couldn't send this track. Try again later.")
+        let b = QueueRow(item: StandIn.item("Echo Park"))
+        b.item.state = .failed(reason: "TIDAL couldn't send this track. Try again later.")
+        f.rows = [a, b, QueueRow(item: StandIn.item("Afterglow"))]
+        expect(f.retryTitle == "Retry All Failed (2)", "retry names the failed count")
+        f.selection = [a.id]
+        expect(f.retryTitle == "Retry Selected", "retry follows the selection")
+
+        // ⌘. answers the frontmost thing: a sheet › the adding cover › the batch.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("robogears-checks-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let m = model(folder: folder)
+        m.rows = (0..<8).map { QueueRow(item: StandIn.item("Halcyon \($0)", artist: "Harbour Lights")) }
+        m.downloadAll()
+        m.sheet = .whatsNew
+        expect(m.isModalUp && !m.canDownload, "with a sheet up ⌘↩ has nothing to start")
+        m.cancelFrontmost()
+        expect(m.sheet == nil && m.batch?.stoppedByPerson == false, "⌘. closes the sheet first; downloads keep going")
+        m.beginAdd(.link("https://tidal.com/browse/album/123"), description: "tracks from this link")
+        expect(m.adding != nil, "adding works during a batch")
+        m.cancelFrontmost()
+        _ = await wait { m.adding == nil }
+        expect(m.batch != nil && m.batch?.stoppedByPerson == false, "⌘. stops the add before the downloads")
+        m.cancelFrontmost()
+        expect(m.batch?.stoppedByPerson == true, "then ⌘. stops the downloads")
+        _ = await wait(30) { m.batch == nil }
+        expect(m.summary?.outcome == .stoppedByPerson, "stopped by the person after ⌘.")
     }
 }
 #endif

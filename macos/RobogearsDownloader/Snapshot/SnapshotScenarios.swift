@@ -100,6 +100,12 @@ enum SnapshotScenarios {
         // Empty states.
         list.append(SnapshotScenario(name: "empty-signed-out", looks: both, sizes: bothSizes,
                                      makeModel: { baseModel(signedIn: false, folder: false) }))
+        list.append(SnapshotScenario(name: "empty-sign-in-invalid", looks: both, sizes: [SnapshotHarness.small],
+                                     makeModel: {
+                                         let model = baseModel(signedIn: false, folder: true)
+                                         model.signInState = .invalid
+                                         return model
+                                     }))
         list.append(SnapshotScenario(name: "empty-no-folder", looks: both, sizes: bothSizes,
                                      makeModel: { baseModel(folder: false) }))
         list.append(SnapshotScenario(name: "empty-ready", looks: Look.all, sizes: bothSizes,

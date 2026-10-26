@@ -28,10 +28,18 @@ private struct ResolveDisplayPreferences: ViewModifier {
     @Environment(\.displayOverrides) private var overrides
 
     func body(content: Content) -> some View {
-        content.environment(\.displayPreferences, DisplayPreferences(
-            increasedContrast: overrides.increasedContrast ?? (contrast == .increased),
-            reduceMotion: overrides.reduceMotion ?? reduceMotion,
-            reduceTransparency: overrides.reduceTransparency ?? reduceTransparency))
+        let increased = overrides.increasedContrast ?? (contrast == .increased)
+        content
+            .environment(\.displayPreferences, DisplayPreferences(
+                increasedContrast: increased,
+                reduceMotion: overrides.reduceMotion ?? reduceMotion,
+                reduceTransparency: overrides.reduceTransparency ?? reduceTransparency))
+            // An override (the snapshot harness only) also gives SwiftUI's own
+            // controls their Increase Contrast look. Without one, the person's
+            // system setting is left exactly as SwiftUI read it.
+            .transformEnvironment(\._colorSchemeContrast) { value in
+                if let forced = overrides.increasedContrast { value = forced ? .increased : .standard }
+            }
     }
 }
 

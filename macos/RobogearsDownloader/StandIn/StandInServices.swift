@@ -6,16 +6,21 @@ import RobogearsCore
 
 /// Marks a few invented titles as already in the library or similar.
 struct StandInLibrary: LibraryChecking {
-    func check(_ items: [QueueItem]) async -> [UUID: QueueItem.LibraryMatch] {
+    func check(_ items: [QueueItem]) async -> [UUID: LibraryVerdict] {
         try? await Task.sleep(for: .milliseconds(700))
-        var result: [UUID: QueueItem.LibraryMatch] = [:]
+        var result: [UUID: LibraryVerdict] = [:]
         for item in items {
             let h = StandIn.hash(item.title.lowercased())
             if item.title == "Slow Motion" || (h % 11 == 0) {
-                result[item.id] = .init(kind: .exact, path: "/Volumes/Library/\(item.title).flac", libraryTitle: item.title)
+                result[item.id] = LibraryVerdict(
+                    match: .init(kind: .exact, path: "/Volumes/Library/\(item.title).flac", libraryTitle: item.title),
+                    durationSeconds: item.durationSeconds)
             } else if item.title == "Blue Lantern" || (h % 7 == 0) {
-                result[item.id] = .init(kind: .similar, path: "/Volumes/Library/\(item.title) (Remix).mp3",
-                                        libraryTitle: "\(item.title) (Remix)")
+                // The remix in the library runs 23 s shorter.
+                result[item.id] = LibraryVerdict(
+                    match: .init(kind: .similar, path: "/Volumes/Library/\(item.title) (Remix).mp3",
+                                 libraryTitle: "\(item.title) (Remix)"),
+                    durationSeconds: item.durationSeconds.map { max(1, $0 - 23) })
             }
         }
         return result

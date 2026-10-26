@@ -78,9 +78,13 @@ enum SnapshotHarness {
         window.toolbarStyle = .unified
 
         // Increase Contrast: AppKit picks the asset catalog's high-contrast
-        // colours only when the system setting is on, so these renders show the
-        // contrast-specific code (no dimming, stronger bars and hairline
-        // alphas) over the standard colours. The asset variants need a live check.
+        // colours only when the system setting is on (the accessibility
+        // appearance names resolve as plain Aqua off-screen), so the harness
+        // forces the same values from IncreasedContrastTable, which
+        // --run-checks keeps equal to the colour sets. The overrides switch on
+        // the contrast-specific code too (no dimming, stronger bars).
+        IncreasedContrastTable.isForced = overrides.increasedContrast == true
+        defer { IncreasedContrastTable.isForced = false }
         let root = MainWindow(model: model)
             .environment(\.displayOverrides, overrides)
             .environment(\.snapshotHover, hover)
@@ -95,6 +99,10 @@ enum SnapshotHarness {
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.04))
         }
+        // The window is never key (the app never activates, so it can't take
+        // focus from the person): selection draws in its inactive grey, and
+        // the prominent button without its accent fill. Section 7's first
+        // check (the selection with the ink accent) stays a live check.
 
         let target = host.superview ?? host
         let bounds = target.bounds

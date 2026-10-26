@@ -56,7 +56,7 @@ struct UpdateControl: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!state.isEnabled)
-                .help("Download the update and relaunch")
+                .help(state.help)
                 .transition(prefs.reduceMotion ? .identity : .opacity)
             }
         }

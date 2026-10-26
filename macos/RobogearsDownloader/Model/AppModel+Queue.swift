@@ -202,7 +202,7 @@ extension AppModel {
                      case .ready: .ready
                      case .unavailable: .unavailable
                      }
-                 }())
+                 }(), libraryDurationSeconds: row.libraryDurationSeconds)
     }
 
     func presentation(_ row: QueueRow) -> RowPresentation { RowPresentation.make(facts(row)) }

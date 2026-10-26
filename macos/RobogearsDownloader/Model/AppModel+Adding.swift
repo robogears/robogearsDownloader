@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// next Download All (D4 4.12).
 extension AppModel {
     /// Tracklists longer than this ask first (D4 4.8).
-    static let largeImportLines = 2_000
+    nonisolated static let largeImportLines = 2_000
 
     // MARK: The Add field
 
@@ -441,11 +441,13 @@ extension AppModel {
         for row in candidates { row.isCheckingLibrary = true }
         let items = candidates.map(\.item)
         Task {
-            let matches = await services.library.check(items)
+            let verdicts = await services.library.check(items)
+            let matches = verdicts.mapValues(\.match)
             var changed = false
             for row in candidates {
                 guard self.row(row.id) != nil else { continue }
                 row.isCheckingLibrary = false
+                row.libraryDurationSeconds = verdicts[row.id]?.durationSeconds
                 let match = matches[row.id]
                 if row.item.libraryMatch != match {
                     row.item.libraryMatch = match
