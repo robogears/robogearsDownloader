@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane, 4 download lanes, resolver lane
+STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane (sheets+Settings), 4 download lanes, resolver lane — all resumed after the usage limit
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,6 +15,7 @@ STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane, 
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct, resumed: all three workflows had been stopped by the usage limit on 22 Oct. The UI lane finished the main window (waveform queue, toolbar, menu bar; 68 self-checks pass, Debug build clean) before the sheets-and-Settings part was cut off; the four download lanes and the resolver were cut off mid-build. Each lane's partial work was saved as an unverified WIP commit on its own branch, and all three workflows were restarted to continue from it. No harm done; nothing reached the loop branch unverified.
 - 01:35 The app now keeps its settings, queue and TIDAL sign-in in a folder of its own (Application Support/com.robogears.downloader) instead of the old Electron folder, as D4 5.11 asks; a helper behind the first-launch notice finds the old app's files by exact name (Move Old Files to Trash leaves update-cache.json and anything unknown alone; Delete Old Sign-in removes token.json for good). Previews show in Control Center's Now Playing (5.13). 748 tests pass.
 - 01:10 Download pipeline started (item 9): the shared shapes are committed (a79f82c) and four lanes are building in parallel — the per-track downloader, the download-folder checks and naming (includes D4 2.6/2.7), a native AAC (.m4a) writer and the batch runner. Resolver and shared TIDAL pace started as its own lane. Done here meanwhile: one version rule for the app (L1), the library index joined to the matcher (L5), and preview part 1 — 200-bar waveform peaks and a 1 GB preview cache with Clear Preview Cache (12 new tests; two checked by breaking the code). 740 tests pass.
 - 00:25 Core lanes merged (items 4–8), each built, independently reviewed and fixed: input and import parsing (170 tests incl. 30 mutation checks), one Unicode-aware matcher and the library matcher (112), TIDAL models, manifests and the Spotify embed (110), the TIDAL client with sign-in, token keeper, retries and credential stores (186), and the offline audio spikes with a native FLAC writer (80; findings in docs/spikes/audio-and-tagging.md). Merged tree: 726 tests pass, no warnings, app builds. Lane worktrees and the temporary Pictures link removed.
@@ -58,6 +59,7 @@ STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane, 
 - Latest: RobogearsCore 726/726 tests pass (43 suites), no warnings; app builds (Debug)
 
 ## Usage-limit waits
+- 22 Oct ~02:00 → 26 Oct: every running workflow agent hit the session limit; resumed from WIP commits on the lane branches.
 
 ## Morning merge — for YOU (the loop never runs these)
 ```sh
