@@ -33,6 +33,12 @@ targets:
         PRODUCT_NAME: "robogears Downloader"
         PRODUCT_BUNDLE_IDENTIFIER: com.robogears.downloader
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The ink accent (DESIGN_DIRECTION 2, question 4): used by the system
+        # only when the person's accent is Multicolor.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Colours are read through Palette (Design/Palette.swift); generated
+        # symbols would add a second, clashing set of names.
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "robogears Downloader"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
