@@ -135,6 +135,21 @@ struct DownloadFolderMoveTests {
         #expect(moved.notes.isEmpty)
     }
 
+    @Test func theRealRenameRefusesANameThatExistsAndKeepsBothFiles() throws {
+        let folder = try TestFolder()
+        let existing = try folder.writeFLAC("Intro.flac", title: "Intro", isrc: isrc(1))
+        let before = try Data(contentsOf: existing)
+        let temp = try folder.temporaryDownload(title: "Intro", isrc: isrc(2))
+        #expect(system(temp.path, folder.url.path + "/Intro.flac") == EEXIST)
+        let caseSensitive = try folder.url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+            .volumeSupportsCaseSensitiveNames ?? true
+        if !caseSensitive {
+            #expect(system(temp.path, folder.url.path + "/INTRO.flac") == EEXIST)
+        }
+        #expect(try Data(contentsOf: existing) == before)
+        #expect(FileManager.default.fileExists(atPath: temp.path))
+    }
+
     // MARK: Other disks and disks without exclusive renames
 
     @Test func aFileOnAnotherDiskIsCopiedInHiddenThenRenamedLeavingNothingBehind() async throws {
