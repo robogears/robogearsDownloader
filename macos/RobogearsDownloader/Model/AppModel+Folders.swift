@@ -166,9 +166,21 @@ extension AppModel {
 
     // MARK: Sign-in
 
-    func showSignIn() {
-        guard batch == nil, sheet == nil, !isSigningIn else { return }
-        sheet = .signIn(resumeAdd: nil)
+    /// Sign In… / Sign In Again…: one sign-in at a time, never during a
+    /// batch (D4 1.2, 1.3). From Settings the sheet opens on the Settings window.
+    func showSignIn(onSettings: Bool = false) {
+        guard canChangeSignIn, !isSigningIn else { return }
+        if onSettings {
+            isSettingsSignInPresented = true
+        } else if sheet == nil, alert == nil {
+            sheet = .signIn(resumeAdd: nil)
+        }
+    }
+
+    /// Settings › Folders › Reset Folders… asks first.
+    func askToResetFolders() {
+        guard settings.downloadFolder != nil || settings.libraryFolder != nil else { return }
+        settingsAlert = .resetFolders
     }
 
     /// The sign-in sheet reports success here.
@@ -186,7 +198,7 @@ extension AppModel {
     }
 
     func signOut() {
-        guard batch == nil else { return }
+        guard canChangeSignIn else { return }
         Task {
             await services.signIn.signOut()
             signInState = .signedOut
@@ -195,4 +207,13 @@ extension AppModel {
     }
 
     var canChangeSignIn: Bool { batch == nil }
+
+    /// Settings › TIDAL's status line (4.12). Never a token, email or account name.
+    var signInStatusText: String {
+        switch signInState {
+        case .signedIn(let country): country.map { "Signed in to TIDAL · \($0)" } ?? "Signed in to TIDAL"
+        case .signedOut: "Not signed in"
+        case .invalid: "Your TIDAL sign-in is no longer valid."
+        }
+    }
 }

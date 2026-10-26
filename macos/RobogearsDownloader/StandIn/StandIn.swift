@@ -20,7 +20,8 @@ enum StandIn {
                     library: StandInLibrary(),
                     downloader: StandInDownloader(),
                     previews: StandInPreviews(),
-                    signIn: StandInSignIn())
+                    signIn: StandInSignIn(),
+                    oldFiles: StandInOldAppFiles())
     }
 
     /// Stable across launches (Swift's `hashValue` isn't): FNV-1a.

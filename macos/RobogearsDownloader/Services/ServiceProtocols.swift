@@ -218,6 +218,29 @@ protocol SignInProviding: Sendable {
     func signOut() async
 }
 
+// MARK: - The previous version's files (first launch, D4 5.11)
+
+/// The Electron app's files in ~/Library/Application Support/robogears
+/// Downloader. Shaped exactly like RobogearsCore's `LegacyElectronFiles` on
+/// the integration branch, so wiring the real one is
+/// `extension LegacyElectronFiles: OldAppFilesProviding {}`. Nothing here
+/// runs without the person's click, and only items known by exact name are
+/// ever touched.
+protocol OldAppFilesProviding: Sendable {
+    /// The old app's data folder.
+    var folder: URL { get }
+    /// The known old items that are actually there, app files first.
+    func presentItems() -> [URL]
+    /// There's something of the old app's to talk about.
+    var shouldOfferNotice: Bool { get }
+    /// The old plain-text TIDAL sign-in (token.json) is there.
+    var hasOldSignIn: Bool { get }
+    /// Move Old Files to Trash: every known item, recoverable. Returns what moved.
+    @discardableResult func moveToTrash() throws -> [URL]
+    /// Delete Old Sign-in: removes token.json for good (in the Trash it stays readable).
+    func deleteOldSignIn() throws
+}
+
 /// Everything the window talks to, bundled so the app can swap stand-ins
 /// for the real services in one place.
 struct AppServices: Sendable {
@@ -226,4 +249,5 @@ struct AppServices: Sendable {
     var downloader: any BatchDownloading
     var previews: any PreviewProviding
     var signIn: any SignInProviding
+    var oldFiles: any OldAppFilesProviding
 }

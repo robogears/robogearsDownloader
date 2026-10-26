@@ -80,6 +80,17 @@ extension AppModel {
         }
     }
 
+    /// Check Now has an updater to ask (the snapshot harness pins a status instead).
+    var canCheckForUpdates: Bool { update != nil || updateStatusOverride != nil }
+
+    /// Settings › Updates › What's New…, and Help › What's New.
+    func showWhatsNew() {
+        guard updateInfo != nil else { return }
+        openMainWindow()
+        guard sheet == nil, alert == nil else { return }
+        sheet = .whatsNew
+    }
+
     var isCheckingForUpdates: Bool {
         if case .checking = update?.phase { true } else { false }
     }
@@ -173,6 +184,31 @@ extension AppModel {
         return update.isQuittingForUpdate
     }
 
+    /// What's New › Skip This Version: the toolbar control stays hidden for
+    /// this version (a newer one, or Check for Updates…, shows again).
+    func skipThisVersion() {
+        guard let info = updateInfo else { return }
+        setSkippedVersion(info.version)
+        activity.add(.update, "Skipped robogears Downloader \(info.version). Check for Updates… shows it again.")
+    }
+
+    func setSkippedVersion(_ version: String?) {
+        skippedUpdateVersion = version
+        guard persists else { return }
+        if let version {
+            UserDefaults.standard.set(version, forKey: Self.skippedVersionKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.skippedVersionKey)
+        }
+    }
+
+    /// What's New's install button, after the sheet has gone: during a batch
+    /// it asks first, so the alert must not meet the closing sheet.
+    func installFromWhatsNew() {
+        sheet = nil
+        afterAlertCloses { $0.updateControlClicked() }
+    }
+
     func openReleasePage() {
         let page = updateInfo?.releaseURL ?? URL(string: "https://github.com/robogears/robogearsDownloader/releases/latest")!
         NSWorkspace.shared.open(page)
@@ -190,6 +226,8 @@ extension AppModel {
             switch update.phase {
             case .available:
                 if let v = update.available?.version {
+                    // A check the person asked for shows a skipped version again.
+                    if skippedUpdateVersion == v { setSkippedVersion(nil) }
                     activity.add(.update, "robogears Downloader \(v) is available.")
                     announce("robogears Downloader \(v) is available.")
                     if fromMenu, sheet == nil, alert == nil {

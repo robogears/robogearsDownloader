@@ -70,6 +70,7 @@ extension AppModel {
     // MARK: Preview cache (Settings › General)
 
     func refreshPreviewCacheSize() {
+        guard !pinsPreviewCacheSize else { return }
         Task { previewCacheBytes = await services.previews.cacheSize() }
     }
 

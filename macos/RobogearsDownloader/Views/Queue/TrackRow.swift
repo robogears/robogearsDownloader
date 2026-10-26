@@ -195,6 +195,8 @@ struct ExplicitMark: View {
 struct QualityBadge: View {
     let text: String
     var color: Color = Palette.inkTertiary
+    /// The capsule's stroke: Hairline on the canvas, the system separator in sheets.
+    var stroke: Color = Palette.hairline
 
     var body: some View {
         Text(text)
@@ -202,7 +204,7 @@ struct QualityBadge: View {
             .foregroundStyle(color)
             .padding(.vertical, 1)
             .padding(.horizontal, 5)
-            .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(stroke, lineWidth: 1))
             .fixedSize()
     }
 }

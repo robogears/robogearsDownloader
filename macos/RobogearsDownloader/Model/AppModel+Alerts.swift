@@ -6,7 +6,7 @@ import RobogearsCore
 extension AppModel {
     func perform(_ action: AlertAction) {
         switch action {
-        case .dismiss, .keepOldFiles:
+        case .dismiss:
             break
         case .signIn(let pending):
             // The alert is still leaving; the sheet comes up once it's gone.
@@ -24,26 +24,20 @@ extension AppModel {
             resetFolders()
         case .moveToApplications:
             moveToApplications()
-        case .trashOldFiles:
-            trashOldFiles()
-        case .showOldFiles:
-            let files = OldAppFiles.found(in: AppPaths.supportDirectory())
-            if files.isEmpty {
-                NSWorkspace.shared.open(AppPaths.supportDirectory())
-            } else {
-                NSWorkspace.shared.activateFileViewerSelecting(files)
-            }
         }
     }
 
-    /// Runs `body` once the window has no alert or sheet up (SwiftUI clears
-    /// the alert only after its button's action returns).
+    /// Runs `body` once the main window has no alert or sheet up, and the
+    /// last one has finished leaving (SwiftUI clears the route before its
+    /// close animation ends, and a second presentation during it is lost).
     func afterAlertCloses(_ body: @escaping @MainActor (AppModel) -> Void) {
         Task { @MainActor [weak self] in
-            for _ in 0..<40 {
+            for _ in 0..<60 {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard let self else { return }
                 if self.alert == nil && self.sheet == nil {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard self.alert == nil && self.sheet == nil else { continue }
                     body(self)
                     return
                 }
@@ -57,10 +51,13 @@ extension AppModel {
     func presentNextFirstLaunchNotice() {
         guard !firstLaunchQueue.isEmpty else { return }
         afterAlertCloses { model in
-            guard model.adding == nil, !model.firstLaunchQueue.isEmpty else { return }
+            guard model.adding == nil, model.batch == nil, !model.firstLaunchQueue.isEmpty else { return }
             let next = model.firstLaunchQueue.removeFirst()
             FirstLaunch.markShown(next)
-            model.alert = next
+            switch next {
+            case .moveToApplications: model.alert = .moveToApplications
+            case .oldFiles: model.sheet = .oldFiles
+            }
         }
     }
 
@@ -77,13 +74,48 @@ extension AppModel {
         }
     }
 
-    private func trashOldFiles() {
-        let files = OldAppFiles.found(in: AppPaths.supportDirectory())
-        let result = OldAppFiles.moveToTrash(files)
-        if result.failed.isEmpty {
-            activity.add(.notice, "Moved \(Formatting.count(result.moved)) files from the previous version to the Trash.")
+    // MARK: The previous version's files (D4 5.11)
+
+    /// Show Old Files: the old folder in Finder, its known items selected.
+    func showOldFiles() {
+        let items = services.oldFiles.presentItems()
+        if items.isEmpty {
+            NSWorkspace.shared.open(services.oldFiles.folder)
         } else {
-            activity.add(.warning, "Moved \(Formatting.count(result.moved)) files from the previous version to the Trash. These couldn't be moved: \(result.failed.joined(separator: ", ")). You can remove them in Finder.")
+            NSWorkspace.shared.activateFileViewerSelecting(items)
+        }
+    }
+
+    /// Move to Trash: only the known old items, recoverable. Returns the
+    /// sentence for the notice when something couldn't be moved.
+    @discardableResult
+    func trashOldFiles() -> String? {
+        do {
+            let moved = try services.oldFiles.moveToTrash()
+            activity.add(.notice, moved.count == 1
+                         ? "Moved 1 item from the previous version to the Trash."
+                         : "Moved \(Formatting.count(moved.count)) items from the previous version to the Trash.")
+            return nil
+        } catch {
+            let left = services.oldFiles.presentItems().count
+            let message = "Some of the previous version's files couldn't be moved to the Trash (\(error.localizedDescription)). \(Formatting.count(left)) are still in \(Formatting.abbreviatedPath(services.oldFiles.folder.path)); you can move them in Finder."
+            activity.add(.warning, message)
+            return message
+        }
+    }
+
+    /// Delete Old Sign-in: the old token.json, for good. Returns a sentence
+    /// for the notice when it failed.
+    @discardableResult
+    func deleteOldSignIn() -> String? {
+        do {
+            try services.oldFiles.deleteOldSignIn()
+            activity.add(.notice, "Deleted the previous version's TIDAL sign-in.")
+            return nil
+        } catch {
+            let message = "The old sign-in couldn't be deleted (\(error.localizedDescription)). It's token.json in \(Formatting.abbreviatedPath(services.oldFiles.folder.path))."
+            activity.add(.warning, message)
+            return message
         }
     }
 
@@ -105,10 +137,13 @@ extension AppModel {
     /// Brings the main window forward, reopening it if it was closed.
     func openMainWindow() {
         NSApp.activate()
-        if let window = mainWindow {
+        if let window = mainWindow, window.isVisible || window.isMiniaturized {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
+        } else if let openMainWindowAction {
+            openMainWindowAction()
         } else {
-            openMainWindowAction?()
+            mainWindow?.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -123,5 +158,18 @@ extension AppModel {
     var isMainWindowVisible: Bool {
         guard let mainWindow else { return false }
         return mainWindow.isVisible && !mainWindow.isMiniaturized
+    }
+}
+
+/// What ⌘Q, Quit and logging out do (4.9, D4 2.5): ask only while a batch
+/// runs, and never when the app quits to install an update it already asked
+/// about, or after the person chose Quit.
+enum QuitDecision: Equatable {
+    case quit
+    case ask(remaining: Int)
+
+    static func make(batch: BatchState?, quitConfirmed: Bool, quittingForUpdate: Bool) -> QuitDecision {
+        guard let batch, !quitConfirmed, !quittingForUpdate else { return .quit }
+        return .ask(remaining: max(0, batch.total - batch.finished))
     }
 }

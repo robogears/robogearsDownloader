@@ -27,7 +27,7 @@ final class DockProgress {
     }
 }
 
-private final class DockProgressView: NSView {
+final class DockProgressView: NSView {
     var fraction: Double = 0
 
     override func draw(_ dirtyRect: NSRect) {

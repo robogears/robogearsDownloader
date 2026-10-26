@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,6 +13,7 @@ struct MainWindow: View {
     @State private var isDropTargeted = false
     @State private var windowWidth: CGFloat = Metrics.windowDefault.width
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         content
@@ -25,8 +27,10 @@ struct MainWindow: View {
                     .resolvingDisplayPreferences()
             }
             .modifier(MainAlerts(model: model))
+            .background(WindowReader { model.mainWindow = $0 })
             .onAppear {
                 model.undoManager = undoManager
+                model.openMainWindowAction = { openWindow(id: "main") }
                 model.start()
             }
             .onChange(of: undoManager) { _, manager in model.undoManager = manager }
@@ -121,5 +125,28 @@ struct QueueDropDelegate: DropDelegate {
             return false
         }
         return model.drop(info.itemProviders(for: [.fileURL, .url, .plainText]))
+    }
+}
+
+/// Hands the hosting NSWindow to the model once the view is in it (the quit
+/// question, the end-of-batch attention request and reopening use it).
+struct WindowReader: NSViewRepresentable {
+    let onWindow: @MainActor (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {}
+
+    final class ReaderView: NSView {
+        var onWindow: (@MainActor (NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { onWindow?(window) }
+        }
     }
 }

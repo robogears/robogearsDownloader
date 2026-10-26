@@ -10,6 +10,8 @@ enum SheetRoute: Identifiable, Equatable {
     case pickOne(rowID: UUID, query: String, results: [SearchResult])
     /// What's New for an available update (4.8).
     case whatsNew
+    /// First launch only: the previous version's files (4.11, D4 5.11).
+    case oldFiles
 
     var id: String {
         switch self {
@@ -17,6 +19,7 @@ enum SheetRoute: Identifiable, Equatable {
         case .searchResults(let q, _): "search-\(q)"
         case .pickOne(let id, _, _): "pick-\(id)"
         case .whatsNew: "whatsNew"
+        case .oldFiles: "oldFiles"
         }
     }
 }
@@ -42,8 +45,6 @@ enum AlertRoute: Identifiable, Equatable {
     case resetFolders
     /// First launch only, outside Applications (4.11, D4 5.15).
     case moveToApplications
-    /// First launch only, when the previous version's files are found (4.11, D4 5.11).
-    case oldFiles(folder: String)
     /// A plain answer with OK: the result of Check for Updates… when there's
     /// nothing to install, or why Move to Applications didn't work.
     case information(title: String, message: String?)
@@ -56,7 +57,6 @@ enum AlertRoute: Identifiable, Equatable {
         case .largeImport: "largeImport"
         case .resetFolders: "resetFolders"
         case .moveToApplications: "moveToApplications"
-        case .oldFiles: "oldFiles"
         case .information: "information"
         }
     }

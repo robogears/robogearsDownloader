@@ -148,13 +148,15 @@ extension AppModel {
         addTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let results = try await self.services.resolver.search(query)
+                let found = try await self.services.resolver.search(query)
+                guard !Task.isCancelled else { self.adding = nil; return }
+                let results = await self.markLibrary(found)
                 guard !Task.isCancelled else { self.adding = nil; return }
                 self.adding = nil
                 self.activity.add(.search, results.isEmpty
                                   ? "No TIDAL results for “\(query)”."
                                   : "Found \(Formatting.count(results.count)) TIDAL results for “\(query)”.")
-                self.sheet = .searchResults(query: query, results: self.markInQueue(results))
+                self.sheet = .searchResults(query: query, results: results)
             } catch {
                 self.adding = nil
                 let message = (error as? ServiceError)?.message ?? "TIDAL search didn't work. Try again."
@@ -177,16 +179,25 @@ extension AppModel {
         adding = AddingState()
         addTask = Task { [weak self] in
             guard let self else { return }
-            let results = (try? await self.services.resolver.search(query)) ?? []
+            let results = await self.markLibrary((try? await self.services.resolver.search(query)) ?? [])
             self.adding = nil
             self.addTask = nil
             guard !Task.isCancelled else { return }
-            self.sheet = .pickOne(rowID: rowID, query: query, results: self.markInQueue(results))
+            self.sheet = .pickOne(rowID: rowID, query: query, results: results)
         }
     }
 
-    /// Search results mark the tracks already in the queue ("In Queue").
-    func markInQueue(_ results: [SearchResult]) -> [SearchResult] { results }
+    /// Search results carry the queue's own library marks (D4 4.11), from
+    /// the same check the queue uses. "In Queue" is read live by the sheet.
+    func markLibrary(_ results: [SearchResult]) async -> [SearchResult] {
+        guard settings.libraryFolder != nil, !results.isEmpty else { return results }
+        let verdicts = await services.library.check(results.map(\.track))
+        return results.map { result in
+            var marked = result
+            marked.track.libraryMatch = verdicts[result.track.id]?.match
+            return marked
+        }
+    }
 
     func isInQueue(_ tidalID: Int64?) -> Bool {
         guard let tidalID else { return false }
@@ -196,7 +207,12 @@ extension AppModel {
     /// Add Selected in the search sheet. A library-exact pick lands left out,
     /// as the queue rule says (D4 4.11).
     func addSearchResults(_ results: [SearchResult], query: String) {
-        let items = results.map(\.track).filter { !isInQueue($0.tidalID) }
+        // A library-exact pick lands left out, as the queue rule says (D4 4.11).
+        let items = results.map(\.track).filter { !isInQueue($0.tidalID) }.map { track in
+            var item = track
+            item.included = item.libraryMatch?.kind != .exact
+            return item
+        }
         guard !items.isEmpty else { return }
         let newRows = items.map(QueueRow.init(item:))
         appendRows(newRows)

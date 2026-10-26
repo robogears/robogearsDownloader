@@ -20,6 +20,12 @@ enum Typography {
     static let notice = Font.body
     static let activityHeader = Font.subheadline
     static let coverText = Font.body.monospacedDigit()
+    /// TIDAL's short code in the sign-in sheet: 22 pt medium monospaced.
+    static let signInCode = Font.system(size: 22, weight: .medium, design: .monospaced)
+    /// About: name, version, signature (17 / 13 / 10).
+    static let aboutName = Font.title2
+    static let aboutVersion = Font.body
+    static let signature = Font.caption
     /// The activity panel's lines, 12 pt monospaced.
     static let activityPointSize: CGFloat = 12
 }

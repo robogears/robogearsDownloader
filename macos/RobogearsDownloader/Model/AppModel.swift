@@ -38,13 +38,17 @@ final class AppModel {
 
     // MARK: Routing and transient UI state
 
-    var sheet: SheetRoute?
+    var sheet: SheetRoute? {
+        didSet { if sheet == nil, oldValue != nil { presentNextFirstLaunchNotice() } }
+    }
     var alert: AlertRoute? {
         didSet { if alert == nil, oldValue != nil { presentNextFirstLaunchNotice() } }
     }
+    /// The Settings window's own alert (Reset Folders…).
+    var settingsAlert: AlertRoute?
+    /// Settings › TIDAL › Sign In…: the sign-in sheet on the Settings window.
+    var isSettingsSignInPresented = false
     var signInState: SignInState = .signedOut
-    /// A sign-in sheet is up (on the main window or Settings): one at a time (D4 1.3).
-    var isSigningIn = false
     /// An add in flight: the adding cover is up.
     var adding: AddingState?
     var batch: BatchState?
@@ -79,13 +83,21 @@ final class AppModel {
     /// macOS has notifications turned off for the app (Settings › General).
     var notificationsBlocked = false
     /// First-launch questions still to ask, one after the other.
-    @ObservationIgnored var firstLaunchQueue: [AlertRoute] = []
+    @ObservationIgnored var firstLaunchQueue: [FirstLaunchNotice] = []
+    /// What's New › Skip This Version: the toolbar control stays hidden for
+    /// this version. Check for Updates… shows it again.
+    // TODO(core integration): UpdateService could own this; it lives in the
+    // app's own defaults key until then.
+    var skippedUpdateVersion: String?
+    static let skippedVersionKey = "Updates.SkippedVersion"
     /// Reopens the main window (set by the window; used after it was closed).
     @ObservationIgnored var openMainWindowAction: (@MainActor () -> Void)?
     /// The main window, once it exists (for the quit question and attention).
     @ObservationIgnored weak var mainWindow: NSWindow?
     /// The snapshot harness pins whether the main window is key.
     @ObservationIgnored var mainWindowIsKeyOverride: Bool?
+    /// The snapshot harness pins the preview cache size (no measuring).
+    @ObservationIgnored var pinsPreviewCacheSize = false
 
     // MARK: Preview
 
@@ -122,6 +134,7 @@ final class AppModel {
         self.queueStore = queueStore
         self.update = update
         self.persists = settingsStore != nil
+        if persists { skippedUpdateVersion = UserDefaults.standard.string(forKey: Self.skippedVersionKey) }
         sounds.isEnabled = settings.playSoundEffects
         player.volume = settings.previewGain
         player.onFinish = { [weak self] in self?.previewDidFinish() }
@@ -158,6 +171,7 @@ final class AppModel {
     func prepareForSnapshot() {
         started = true
         preloadingEnabled = false
+        pinsPreviewCacheSize = true
     }
 
     /// Once, when the main window first appears.
@@ -172,7 +186,7 @@ final class AppModel {
             refreshNotificationPermission()
             // The first-launch questions wait until the window has settled.
             try? await Task.sleep(for: .milliseconds(600))
-            firstLaunchQueue = FirstLaunch.pendingNotices()
+            firstLaunchQueue = FirstLaunch.pendingNotices(oldFiles: services.oldFiles)
             presentNextFirstLaunchNotice()
         }
         // The launch check is silent and only in release builds: debug builds
@@ -227,6 +241,12 @@ final class AppModel {
         if case .signedIn = signInState { true } else { false }
     }
 
+    /// A sign-in sheet is up (on the main window or Settings): one at a time (D4 1.3).
+    var isSigningIn: Bool {
+        if case .signIn = sheet { return true }
+        return isSettingsSignInPresented
+    }
+
     // MARK: Aggregates (read by the toolbar and the header)
 
     /// Rows Download All would send now (checked, included, matched).
@@ -271,6 +291,8 @@ final class AppModel {
         guard let update, let available = update.available else { return nil }
         switch update.phase {
         case .available, .failed, .idle, .upToDate, .checking, .noReleases, .offline, .rateLimited:
+            // Skip This Version hides the control until a newer one, or a manual check.
+            if available.version == skippedUpdateVersion { return nil }
             return .available(version: available.version)
         case .downloading(let percent):
             return .downloading(percent: percent)
@@ -287,7 +309,7 @@ final class AppModel {
     }
 
     /// Something modal is up: ⌘↩ and paste stay away from it.
-    var isModalUp: Bool { sheet != nil || alert != nil }
+    var isModalUp: Bool { sheet != nil || alert != nil || settingsAlert != nil || isSettingsSignInPresented }
 
     /// Announces a sentence to VoiceOver.
     func announce(_ text: String) {

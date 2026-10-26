@@ -13,6 +13,7 @@
 		1C1436BB7F9CA327365F82E3 /* SnapshotHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFCA5841DFD2129C6B3A15F5 /* SnapshotHarness.swift */; };
 		2209A4399875BC69C023823F /* BrandGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585703E5570955DA09EFA92F /* BrandGlyph.swift */; };
 		2235A409058A0FD2D75FC611 /* ActivityLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E1B17E8B700C660A64CB9F /* ActivityLog.swift */; };
+		23907023F23A784ED7B40007 /* SnapshotWindows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7D2D2D3AF38380F30C3F18 /* SnapshotWindows.swift */; };
 		2850E10FD88712C051176F4D /* ServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4C1D1662EE2DCAA276A5945 /* ServiceProtocols.swift */; };
 		29F578B098BB2ABBEA71DFF1 /* StandInSampleQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BB155659D1F349863E69DF4 /* StandInSampleQueue.swift */; };
 		2D5E9B259710564BE8E51E78 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF212390CF97F2428DDDBAFA /* AppModel.swift */; };
@@ -33,6 +34,7 @@
 		7CB0302DB68A644E07ABFD9E /* MainAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC62F03000A2531EB970C090 /* MainAlerts.swift */; };
 		814BAB374B234096FDD35AF1 /* FirstLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA5AD572CCE04E685E53F15 /* FirstLaunch.swift */; };
 		8998F16F10668FA74598F71E /* DisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B58186DA6C7076BF07D6CEFC /* DisplayPreferences.swift */; };
+		8A08C92FFC3B6176D93FF8C3 /* StandInOldAppFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD0E03C95E6CE7FB4E369E10 /* StandInOldAppFiles.swift */; };
 		9BF06EDD8FF4DE3201DBE20D /* AppModel+Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA4CC39BABC07D2356FD962 /* AppModel+Library.swift */; };
 		9C9E47E164CDEE3876B5083A /* DockProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111B5F015AEDD268163ED7C9 /* DockProgress.swift */; };
 		A4696DBFD6B98CCB216E1110 /* QueueRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66770515465DA8E38F01588A /* QueueRow.swift */; };
@@ -58,6 +60,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0D7D2D2D3AF38380F30C3F18 /* SnapshotWindows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotWindows.swift; sourceTree = "<group>"; };
 		111B5F015AEDD268163ED7C9 /* DockProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockProgress.swift; sourceTree = "<group>"; };
 		1A4DEBC5146158C8863A94A0 /* AppModel+Folders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Folders.swift"; sourceTree = "<group>"; };
 		1B8B143A58422436F0B91E33 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -105,6 +108,7 @@
 		CF212390CF97F2428DDDBAFA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		D70EB9E6F53E1BE17676B990 /* TrackRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackRow.swift; sourceTree = "<group>"; };
 		DBA5AD572CCE04E685E53F15 /* FirstLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunch.swift; sourceTree = "<group>"; };
+		DD0E03C95E6CE7FB4E369E10 /* StandInOldAppFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandInOldAppFiles.swift; sourceTree = "<group>"; };
 		E4F7D8C89AD41DF8313DB800 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		EFCA5841DFD2129C6B3A15F5 /* SnapshotHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotHarness.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -212,6 +216,7 @@
 			isa = PBXGroup;
 			children = (
 				B4CB4A7546DD3796924BA23E /* StandIn.swift */,
+				DD0E03C95E6CE7FB4E369E10 /* StandInOldAppFiles.swift */,
 				88C3716BAC9699BE29CF3845 /* StandInResolver.swift */,
 				7BB155659D1F349863E69DF4 /* StandInSampleQueue.swift */,
 				91F7B51C2561BCBE7D13A732 /* StandInServices.swift */,
@@ -234,6 +239,7 @@
 				A44B7F67E53737847C5F59E5 /* SelfChecks.swift */,
 				EFCA5841DFD2129C6B3A15F5 /* SnapshotHarness.swift */,
 				42075C638478D66554EDDE40 /* SnapshotScenarios.swift */,
+				0D7D2D2D3AF38380F30C3F18 /* SnapshotWindows.swift */,
 			);
 			path = Snapshot;
 			sourceTree = "<group>";
@@ -427,7 +433,9 @@
 				B635344E530EEFD104C541C6 /* SheetHost.swift in Sources */,
 				1C1436BB7F9CA327365F82E3 /* SnapshotHarness.swift in Sources */,
 				C8FD3B948A2685E8A4F15965 /* SnapshotScenarios.swift in Sources */,
+				23907023F23A784ED7B40007 /* SnapshotWindows.swift in Sources */,
 				03099749D2C41651E33C2EBB /* StandIn.swift in Sources */,
+				8A08C92FFC3B6176D93FF8C3 /* StandInOldAppFiles.swift in Sources */,
 				613439C182A45CAA5BE81A5C /* StandInResolver.swift in Sources */,
 				29F578B098BB2ABBEA71DFF1 /* StandInSampleQueue.swift in Sources */,
 				EF0BAAC1CACD2F040E58ECB3 /* StandInServices.swift in Sources */,

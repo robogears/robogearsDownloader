@@ -3,7 +3,9 @@ import RobogearsCore
 import SwiftUI
 
 /// A debug instrument, never shipped behaviour a person sees: with
-/// `--render-snapshots <dir>` the app renders its main-window states into
+/// `--render-snapshots <dir>` the app renders its main-window states (and,
+/// through SnapshotWindows, every sheet, alert, Settings pane, About and the
+/// Dock tile) into
 /// PNGs at 2× from off-screen windows (no window is ever shown, nothing is
 /// saved, nothing is loaded) and quits. Used to check the real pixels in
 /// Light, Dark and both Increase Contrast appearances.
@@ -62,6 +64,8 @@ enum SnapshotHarness {
             }
             FileHandle.standardError.write(Data(String(format: "%@: %.1f s\n", scenario.name, Date().timeIntervalSince(started)).utf8))
         }
+        // Sheets, alerts, Settings, About and the Dock tile.
+        written += SnapshotWindows.renderAll(into: directory, only: only)
         print(written.joined(separator: "\n"))
         exit(written.isEmpty ? 1 : 0)
     }

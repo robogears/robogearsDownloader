@@ -7,6 +7,9 @@ enum Metrics {
     // Window
     static let windowDefault = CGSize(width: 980, height: 740)
     static let windowMinimum = CGSize(width: 720, height: 540)
+    /// Settings panes (4.12) and the About window (4.13).
+    static let settingsWidth: CGFloat = 480
+    static let aboutSize = CGSize(width: 300, height: 340)
     /// Side inset of the content regions; rows align their content to it.
     static let contentInset: CGFloat = 20
     static let regionGap: CGFloat = 12

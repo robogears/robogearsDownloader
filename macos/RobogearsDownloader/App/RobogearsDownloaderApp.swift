@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 /// The entry point: runs a debug instrument when asked to (snapshots, or
 /// the model checks in debug builds; never shown to the person), otherwise
@@ -41,7 +42,10 @@ struct RobogearsDownloaderApp: App {
         }
 
         Window("About robogears Downloader", id: "about") {
+            // The title stays for the Window menu and Mission Control; the
+            // window itself shows only its content, like other About windows.
             AboutWindow(model: model)
+                .toolbar(removing: .title)
                 .windowMinimizeBehavior(.disabled)
         }
         .windowResizability(.contentSize)
@@ -49,20 +53,38 @@ struct RobogearsDownloaderApp: App {
     }
 }
 
-/// Quit confirmation during a batch, last-window behaviour and the Dock menu.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+/// Quit confirmation during a batch, last-window behaviour, reopening, the
+/// Dock menu and the end-of-batch notification's buttons.
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories([AppModel.batchNotificationCategory])
+    }
+
     /// Closing the window keeps downloading (4.9); the Dock shows progress.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Clicking the Dock icon with the window closed brings it back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { AppModel.shared.openMainWindow() }
+        return true
+    }
+
+    /// ⌘Q, Quit and logging out during a batch ask first, app-modal so the
+    /// question shows even with the window closed or a sheet up; Keep
+    /// Downloading is the default and Escape (4.9, D4 2.5). An update that
+    /// is quitting to install, or a Quit already chosen, goes straight through.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = AppModel.shared
-        let updating = model.update?.isQuittingForUpdate == true
-        if let batch = model.batch, !model.quitConfirmed, !updating {
-            model.alert = .quitDuringBatch(remaining: max(0, batch.total - batch.finished))
+        let decision = QuitDecision.make(batch: model.batch, quitConfirmed: model.quitConfirmed,
+                                         quittingForUpdate: model.update?.isQuittingForUpdate == true)
+        if case .ask(let remaining) = decision {
+            let content = AlertRoute.quitDuringBatch(remaining: remaining).content
             NSApp.activate()
-            NSApp.windows.first { $0.identifier?.rawValue == "main" || $0.title == "robogears Downloader" }?
-                .makeKeyAndOrderFront(nil)
-            return .terminateCancel
+            let response = content.makeNSAlert().runModal()
+            guard content.action(for: response) == .quit else { return .terminateCancel }
+            model.quitConfirmed = true
         }
         Task { @MainActor in
             await model.prepareForQuit()
@@ -75,18 +97,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let model = AppModel.shared
         let menu = NSMenu()
+        menu.autoenablesItems = false
         if model.batch != nil {
             menu.addItem(ActionMenuItem("Stop Downloads") { model.stopDownloads() })
         } else {
             let item = ActionMenuItem(model.downloadButtonTitle) { model.downloadAll() }
-            item.isEnabled = model.canDownload
+            item.isEnabled = model.canDownload && !model.isModalUp
             menu.addItem(item)
         }
         let open = ActionMenuItem("Open Download Folder") { model.openDownloadFolder() }
         open.isEnabled = model.settings.downloadFolder != nil
         menu.addItem(open)
-        menu.autoenablesItems = false
         return menu
+    }
+
+    // MARK: The end-of-batch notification
+
+    /// Clicking the notification brings the window forward; Show in Finder
+    /// opens the download folder (D4 2.12).
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse) async {
+        let showInFinder = response.actionIdentifier == AppModel.showInFinderActionID
+        await MainActor.run {
+            let model = AppModel.shared
+            if showInFinder { model.openDownloadFolder() } else { model.openMainWindow() }
+        }
+    }
+
+    /// A batch can end while Settings is in front: the banner still shows.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list]
     }
 }
 
@@ -121,5 +162,7 @@ extension AppModel {
         stopPreview()
         saveSettingsNow()
         await flushQueue()
+        // What's New › Install on Quit: the staged update installs now.
+        if update?.isQuittingForUpdate != true { installChosenUpdateAtQuit() }
     }
 }

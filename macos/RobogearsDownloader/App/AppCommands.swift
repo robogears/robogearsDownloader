@@ -15,12 +15,12 @@ struct AppCommands: Commands {
             Button("About robogears Downloader") { openWindow(id: "about") }
         }
         CommandGroup(after: .appSettings) {
-            Button("Check for Updates…") { model.checkForUpdates() }
+            Button("Check for Updates…") { model.checkForUpdates(fromMenu: true) }
                 .disabled(model.update == nil || model.isCheckingForUpdates)
-            Button(model.isSignedIn ? "Sign Out of TIDAL" : "Sign In to TIDAL…") {
-                if model.isSignedIn { model.signOut() } else { showMain(); model.showSignIn() }
+            Button(model.signInState == .signedOut ? "Sign In to TIDAL…" : "Sign Out of TIDAL") {
+                if model.signInState == .signedOut { showMain(); model.showSignIn() } else { model.signOut() }
             }
-            .disabled(!model.canChangeSignIn || model.sheet != nil)
+            .disabled(!model.canChangeSignIn || model.isSigningIn || model.isModalUp)
         }
 
         CommandGroup(replacing: .newItem) {
@@ -51,8 +51,8 @@ struct AppCommands: Commands {
             Button("robogears Downloader Help") { model.openHelp() }
                 .keyboardShortcut("?")
             Divider()
-            Button("What's New") { showMain(); model.sheet = .whatsNew }
-                .disabled(model.update?.available == nil || model.isModalUp)
+            Button("What's New") { model.showWhatsNew() }
+                .disabled(model.updateInfo == nil || model.isModalUp)
             Button("Open Exportify") { model.openExportify() }
         }
     }

@@ -1,6 +1,15 @@
 import AppKit
 import RobogearsCore
 
+/// One of the two first-launch questions (DESIGN_DIRECTION 4.11).
+enum FirstLaunchNotice: Equatable, Sendable {
+    /// "Move robogears Downloader to Applications?" (an alert; D4 5.15).
+    case moveToApplications
+    /// The previous version's files (a small sheet: it carries D4 5.11's
+    /// three actions plus Keep, one more than an alert holds).
+    case oldFiles
+}
+
 /// The two first-launch questions (DESIGN_DIRECTION 4.11; D4 5.15, 5.11):
 /// Move to Applications, then the previous version's files. One after the
 /// other, each at most once, and only in release builds: a development build
@@ -8,102 +17,52 @@ import RobogearsCore
 /// still in use on this Mac.
 enum FirstLaunch {
     static let moveOfferedKey = "FirstLaunch.MoveToApplicationsOffered"
+    /// TODO(core integration): RobogearsCore's `AppSettings.oldAppNoticeShown`
+    /// replaces this key once the lanes merge.
     static let oldFilesOfferedKey = "FirstLaunch.OldFilesOffered"
     /// Where the copy that chose Move ran from, so the new copy can put it in
     /// the Trash once it runs from Applications.
     static let movedFromKey = "FirstLaunch.MovedFrom"
     static let appName = "robogears Downloader"
 
+    /// The rule, without the Mac: Move first, then the old files; each only
+    /// once; the old files wait while the old app is still running (its
+    /// files are in use).
+    static func notices(moveOffered: Bool, outsideApplications: Bool, oldFilesShown: Bool,
+                        oldFilesPresent: Bool, oldAppRunning: Bool) -> [FirstLaunchNotice] {
+        var list: [FirstLaunchNotice] = []
+        if !moveOffered, outsideApplications { list.append(.moveToApplications) }
+        if !oldFilesShown, oldFilesPresent, !oldAppRunning { list.append(.oldFiles) }
+        return list
+    }
+
     /// The questions to ask at this launch, in order.
     @MainActor
-    static func pendingNotices(defaults: UserDefaults = .standard, bundleURL: URL = Bundle.main.bundleURL,
-                               supportDirectory: URL = AppPaths.supportDirectory()) -> [AlertRoute] {
+    static func pendingNotices(oldFiles: any OldAppFilesProviding, defaults: UserDefaults = .standard,
+                               bundleURL: URL = Bundle.main.bundleURL) -> [FirstLaunchNotice] {
         #if DEBUG
         return []
         #else
-        var list: [AlertRoute] = []
-        if !defaults.bool(forKey: moveOfferedKey),
-           AppLocation.shouldOfferMove(bundleURL: bundleURL, destinationExists: { FileManager.default.fileExists(atPath: $0.path) }) {
-            list.append(.moveToApplications)
-        }
         // Another copy with our identity still running (the old app during a
         // switch-over) means its files are in use: ask another time.
         let othersRunning = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             .contains { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !defaults.bool(forKey: oldFilesOfferedKey), !othersRunning, OldAppFiles.hasOldApp(in: supportDirectory) {
-            list.append(.oldFiles(folder: Formatting.abbreviatedPath(supportDirectory.path)))
-        }
-        return list
+        return notices(
+            moveOffered: defaults.bool(forKey: moveOfferedKey),
+            outsideApplications: AppLocation.shouldOfferMove(bundleURL: bundleURL,
+                                                             destinationExists: { FileManager.default.fileExists(atPath: $0.path) }),
+            oldFilesShown: defaults.bool(forKey: oldFilesOfferedKey),
+            oldFilesPresent: oldFiles.shouldOfferNotice,
+            oldAppRunning: othersRunning)
         #endif
     }
 
     /// Records that a question was shown, so it never comes back.
-    static func markShown(_ route: AlertRoute, defaults: UserDefaults = .standard) {
-        switch route {
+    static func markShown(_ notice: FirstLaunchNotice, defaults: UserDefaults = .standard) {
+        switch notice {
         case .moveToApplications: defaults.set(true, forKey: moveOfferedKey)
         case .oldFiles: defaults.set(true, forKey: oldFilesOfferedKey)
-        default: break
         }
-    }
-}
-
-/// The previous (Electron) version's files in Application Support, found
-/// and moved only by exact name (D4 5.11). The Swift app's own files have
-/// other names (settings-v2.json, queue-v2.json, update-check.json) and are
-/// never touched; update-cache.json is left alone on purpose.
-enum OldAppFiles {
-    /// The old app's own files: any one of them means the old app ran here.
-    static let appFiles = ["settings.json", "queue.json", "token.json"]
-
-    /// Everything the old app and its Electron shell left, by exact name.
-    static let names: [String] = appFiles + [
-        "pending-tracklist.json", "extension-token.txt", "chrome-extension",
-        // Electron and Chromium's own data.
-        "Cache", "Code Cache", "GPUCache", "DawnCache", "DawnGraphiteCache", "DawnWebGPUCache",
-        "GrShaderCache", "ShaderCache", "Local Storage", "Session Storage", "Shared Dictionary",
-        "SharedStorage", "SharedStorage-wal", "blob_storage", "Crashpad", "Dictionaries", "IndexedDB",
-        "WebStorage", "Service Worker", "Cookies", "Cookies-journal", "Network", "Network Persistent State",
-        "Preferences", "TransportSecurity", "Trust Tokens", "Trust Tokens-journal", "DIPS", "DIPS-journal",
-        "DIPS-wal", "Local State", "QuotaManager", "QuotaManager-journal", "databases", "VideoDecodeStats",
-        "shared_proto_db", "Partitions", "MediaDeviceSalts", "MediaDeviceSalts-journal",
-    ]
-
-    /// The old files present in `folder`. The old sign-in counts only when it
-    /// has the old app's shape (a JSON array), so a newer file that happens
-    /// to share its name is never taken for it.
-    static func found(in folder: URL, fileManager fm: FileManager = .default) -> [URL] {
-        names.compactMap { name in
-            let url = folder.appendingPathComponent(name)
-            guard fm.fileExists(atPath: url.path) else { return nil }
-            if name == "token.json", !isOldSignIn(url) { return nil }
-            return url
-        }
-    }
-
-    static func hasOldApp(in folder: URL) -> Bool {
-        found(in: folder).contains { appFiles.contains($0.lastPathComponent) }
-    }
-
-    static func isOldSignIn(_ url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) else { return false }
-        return object is [Any]
-    }
-
-    /// Moves each old file to the Trash (recoverable). Returns how many moved
-    /// and the names that couldn't be moved.
-    static func moveToTrash(_ urls: [URL], fileManager fm: FileManager = .default) -> (moved: Int, failed: [String]) {
-        var moved = 0
-        var failed: [String] = []
-        for url in urls {
-            do {
-                try fm.trashItem(at: url, resultingItemURL: nil)
-                moved += 1
-            } catch {
-                failed.append(url.lastPathComponent)
-            }
-        }
-        return (moved, failed)
     }
 }
 

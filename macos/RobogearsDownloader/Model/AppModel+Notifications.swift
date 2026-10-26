@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import UserNotifications
 
 /// "Notify When Downloads Finish" (off by default; D4 2.12, DESIGN_DIRECTION
@@ -12,6 +12,14 @@ extension AppModel {
         Task {
             let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
             notificationsBlocked = status == .denied
+        }
+    }
+
+    /// Settings › General: System Settings › Notifications, where only the
+    /// person can turn them on.
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -34,12 +42,23 @@ extension AppModel {
         let content = UNMutableNotificationContent()
         content.title = Self.notificationTitle(for: notice.outcome)
         content.body = notice.sentence
+        content.categoryIdentifier = Self.batchCategoryID
         let request = UNNotificationRequest(identifier: "batch-\(notice.id.uuidString)", content: content, trigger: nil)
         Task {
             let center = UNUserNotificationCenter.current()
             guard await center.notificationSettings().authorizationStatus == .authorized else { return }
             try? await center.add(request)
         }
+    }
+
+    nonisolated static let batchCategoryID = "batch-finished"
+    nonisolated static let showInFinderActionID = "show-in-finder"
+
+    /// The notification's one button (D4 2.12: "with Show in Finder").
+    static var batchNotificationCategory: UNNotificationCategory {
+        UNNotificationCategory(identifier: batchCategoryID,
+                               actions: [UNNotificationAction(identifier: showInFinderActionID, title: "Show in Finder")],
+                               intentIdentifiers: [])
     }
 
     static func notificationTitle(for outcome: BatchSummary.Outcome) -> String {

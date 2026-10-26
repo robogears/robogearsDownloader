@@ -36,9 +36,6 @@ enum AlertAction: Equatable {
     case importFirstLines(text: String, name: String?)
     case resetFolders
     case moveToApplications
-    case keepOldFiles
-    case trashOldFiles
-    case showOldFiles
 }
 
 extension AlertRoute {
@@ -104,18 +101,6 @@ extension AlertRoute {
                 buttons: [
                     AlertButton(title: "Move", isDefault: true, action: .moveToApplications),
                     AlertButton(title: "Not Now", role: .cancel, action: .dismiss),
-                ])
-
-        case .oldFiles(let folder):
-            // 4.11 (2), D4 5.11. Keep is the default; everything goes to the
-            // Trash, nothing is deleted outright.
-            return AlertContent(
-                title: "Files from the previous version are in \(folder).",
-                message: "This version starts fresh, so your old queue, folders and TIDAL sign-in aren't used. You can move them to the Trash; the old sign-in is removed for good when you empty the Trash.",
-                buttons: [
-                    AlertButton(title: "Keep", role: .cancel, isDefault: true, action: .keepOldFiles),
-                    AlertButton(title: "Move to Trash", action: .trashOldFiles),
-                    AlertButton(title: "Show Old Files", action: .showOldFiles),
                 ])
 
         case .information(let title, let message):
