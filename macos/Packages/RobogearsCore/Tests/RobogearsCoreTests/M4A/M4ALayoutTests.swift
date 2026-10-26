@@ -69,6 +69,25 @@ struct M4ALayoutTests {
         #expect(try Self.save(source) == expected)
     }
 
+    @Test("a DASH run that leaves out its sizes takes them from tfhd, or else from trex, and saves the same file")
+    func defaultSizes() throws {
+        // A default size fits a run whose packets are all that size, so each
+        // such run here holds one packet. Packets 0 and 20 differ in size, so
+        // taking the wrong default would misplace every later packet.
+        let first = UInt32(plain.packets[0].count), other = UInt32(plain.packets[20].count)
+        try #require(first != other)
+        let source = SyntheticM4A.fragmented(plain, trexDuration: 1024, trexSize: other, segments: [
+            // tfhd's default wins over trex's.
+            .init(tfhdFlags: 0x02_0010, defaultSize: first,
+                  runs: [.init(packets: 0..<1, sizes: false), .init(packets: 1..<20, dataOffset: false)]),
+            .init(runs: [.init(packets: 20..<21, sizes: false), .init(packets: 21..<44, dataOffset: false)]),
+            .init(runs: [.init(packets: 44..<45, durations: true)]),
+        ])
+        let read = try MP4AudioTrackReader.read(source)
+        #expect(read.samples.map { source.subdata(in: $0.range) } == plain.packets)
+        #expect(try Self.save(source) == expected)
+    }
+
     @Test("a DASH run with no duration anywhere, or offsets counted from the lost segment file, is refused")
     func unreadableFragmentsRefused() throws {
         let noDuration = SyntheticM4A.fragmented(plain, trexDuration: 0, segments: [
@@ -125,13 +144,66 @@ struct M4ALayoutTests {
         #expect(layout.durationSeconds == 3000 * 1024 / 44100.0)
     }
 
-    @Test("the sample limit keeps the largest table, stts with every duration different, under a 32-bit box size")
-    func sampleLimitFitsTheTables() {
-        // stts: box header, version and flags, the run count, then 8 bytes per run.
-        let worstStts = 16 + 8 * UInt64(M4AWriter.maximumSampleCount)
-        #expect(worstStts < UInt64(UInt32.max) - (1 << 20))
-        // The limit is still far beyond any real track: a month of 44.1 kHz AAC.
-        #expect(M4AWriter.maximumSampleCount > 30 * 24 * 3600 * 44100 / 1024)
+    /// A track shaped so every table is as large as it can be: each packet
+    /// has its own duration and size, and the packets per chunk alternate
+    /// 1, 2 (700 KB alone, then two of 400 KB), so stsc needs an entry for
+    /// every chunk.
+    func largestTables(count: Int) -> MP4AudioTrack {
+        var track = syntheticTrack(count: count, size: 1)
+        let sizes = [700_000, 400_000, 400_000]
+        track.samples = (0..<count).map { MP4Sample(offset: 0, size: sizes[$0 % 3] + $0, duration: UInt32($0 + 1)) }
+        return track
+    }
+
+    @Test("a corrupt file whose sample tables would pass 4 GB is refused before any table is built, not crashed on")
+    func oversizedTablesRefused() throws {
+        let track = largestTables(count: 3000)
+        let tags = FLACTags(title: "Odd")
+        let layout = try M4AWriter.layout(track, tags: tags, coverJPEG: nil, toolName: "test")
+        let (boxes, _) = try split(layout.header)
+        let stbl = MP4Inspector.sampleTablePath
+        #expect(try entries(MP4Inspector.box(boxes, stbl + ["stts"])).count == 3000)
+        #expect(try entries(MP4Inspector.box(boxes, stbl + ["stsc"])).count == 2000)
+        let moovBytes = UInt64(boxes.count - M4AWriter.fileType().count)
+
+        // The limit stands in for 4 GB: a moov even one byte over it is
+        // refused, so the bound the guard checks covers these tables.
+        #expect(throws: M4AFormatError.unsupportedMP4("sample tables larger than 4 GB")) {
+            try M4AWriter.layout(track, tags: tags, coverJPEG: nil, toolName: "test", movieByteLimit: moovBytes - 1)
+        }
+        // The real limit is the 32-bit box size, and still far beyond any real
+        // track: a month of 320 kbps AAC at 44.1 kHz (112 million packets)
+        // needs about a third of it.
+        #expect(M4AWriter.maximumMovieBytes == UInt64(UInt32.max))
+        let month = 30 * 24 * 3600
+        let bound = M4AWriter.movieBytesBound(sampleCount: month * 44100 / 1024,
+                                              chunkCount: month * 40_000 / M4AWriter.maximumChunkBytes * 2, otherBytes: 1 << 20)
+        #expect(bound < M4AWriter.maximumMovieBytes / 2)
+    }
+
+    @Test("a track whose every packet has its own duration is laid out in moments, not minutes")
+    func everyDurationDifferentIsQuick() {
+        // stts needs an entry per packet here. Joining the entries by copying
+        // the growing table at every step took time growing with the square
+        // of their number (half a minute for these in a debug build), and
+        // nothing could cancel it. Built in one buffer, it takes about as long
+        // as the stsz table for as many packets, so that table is timed just
+        // before and after: on a busy machine both slow down together.
+        let count = 100_000
+        let durations = (0..<count).map { UInt32($0 + 1) }
+        let sizes = (0..<count).map { $0 + 1 }
+        let clock = ContinuousClock()
+        var stsz = Data(), stts = Data()
+        let before = clock.measure { stsz = MP4BoxWriter.sampleSizes(sizes) }
+        let elapsed = clock.measure { stts = MP4BoxWriter.timeToSample(durations) }
+        let after = clock.measure { stsz = MP4BoxWriter.sampleSizes(sizes) }
+        #expect(stsz.count == 20 + 4 * count)
+        #expect(stts.count == 16 + 8 * count)
+        // Size, type, version and flags, the entry count, then (1, 1), (1, 2), …
+        #expect(stts.prefix(32) == SyntheticFMP4.u32(UInt32(16 + 8 * count)) + Data("stts".utf8)
+            + SyntheticFMP4.u32(0, UInt32(count), 1, 1, 1, 2))
+        #expect(stts.suffix(8) == SyntheticFMP4.u32(1, UInt32(count)))
+        #expect(elapsed < max(before, after) * 15)
     }
 
     @Test("a file past 4 GB gets 64-bit chunk offsets and a 64-bit mdat size")

@@ -111,43 +111,49 @@ enum SyntheticM4A {
         var dataOffset = true
         /// The run lists each sample's duration.
         var durations = false
+        /// The run lists each sample's size; without, the size is tfhd's or trex's.
+        var sizes = true
     }
 
     struct Segment {
         var tfhdFlags: UInt32 = 0x02_0000 // default-base-is-moof
         /// Written when `tfhdFlags` has 0x08.
         var defaultDuration: UInt32 = 0
+        /// Written when `tfhdFlags` has 0x10.
+        var defaultSize: UInt32 = 0
         var runs: [Run]
     }
 
-    /// An init segment (with trex's default duration and the source's edit,
-    /// its length left as 0 the way a DASH packager writes it), then one
-    /// moof + mdat per segment. Every run lists its samples' sizes.
-    static func fragmented(_ source: Source, trexDuration: UInt32, segments: [Segment]) -> Data {
+    /// An init segment (with trex's default duration and size and the
+    /// source's edit, its length left as 0 the way a DASH packager writes
+    /// it), then one moof + mdat per segment.
+    static func fragmented(_ source: Source, trexDuration: UInt32, trexSize: UInt32 = 0, segments: [Segment]) -> Data {
         let edit = source.edit.map { MP4AudioTrack.Edit(segmentDuration: 0, mediaTime: $0.mediaTime) }
         let emptyTable = S.fullBox("stts", S.u32(0)) + S.fullBox("stsc", S.u32(0))
             + S.fullBox("stsz", S.u32(0, 0)) + S.fullBox("stco", S.u32(0))
-        let mvex = S.box("mvex", S.fullBox("trex", S.u32(1, 1, trexDuration, 0, 0)))
+        let mvex = S.box("mvex", S.fullBox("trex", S.u32(1, 1, trexDuration, trexSize, 0)))
         var file = ftyp + S.box("moov", movieHeader(source) + track(source, edit: edit, sampleTable: emptyTable) + mvex)
 
         for (number, segment) in segments.enumerated() {
             var tfhd = S.u32(1)
             if segment.tfhdFlags & 0x01 != 0 { tfhd += u64(0) }
             if segment.tfhdFlags & 0x08 != 0 { tfhd += S.u32(segment.defaultDuration) }
+            if segment.tfhdFlags & 0x10 != 0 { tfhd += S.u32(segment.defaultSize) }
             // A run's data offset depends on the moof's size, which doesn't
             // depend on the offsets' values: measure, then fill in.
             func moof(size: Int) -> Data {
                 var truns = Data()
                 var position = 0
                 for run in segment.runs {
-                    var flags: UInt32 = 0x200
+                    var flags: UInt32 = 0
                     if run.dataOffset { flags |= 0x01 }
+                    if run.sizes { flags |= 0x200 }
                     if run.durations { flags |= 0x100 }
                     var body = S.u32(UInt32(run.packets.count))
                     if run.dataOffset { body += S.u32(UInt32(size + 8 + position)) }
                     for i in run.packets {
                         if run.durations { body += S.u32(source.durations[i]) }
-                        body += S.u32(UInt32(source.packets[i].count))
+                        if run.sizes { body += S.u32(UInt32(source.packets[i].count)) }
                         position += source.packets[i].count
                     }
                     truns += S.fullBox("trun", flags: flags, body)

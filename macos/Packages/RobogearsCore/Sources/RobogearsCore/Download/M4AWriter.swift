@@ -27,6 +27,12 @@ public struct M4AWriter: M4AWriting {
     /// can't be used throws `M4AFormatError` before anything is created; an
     /// existing destination throws `POSIXError(.EEXIST)` and is left as it
     /// was; any later failure, cancellation included, removes the new file.
+    ///
+    /// A joined DASH source must hold every segment the manifest lists: the
+    /// fragments are joined in the order given and their tfdt times aren't
+    /// read, so a segment missing from the middle isn't noticed here (as in
+    /// FMP4FLACExtractor). Only the length check (2.2) would see it, and only
+    /// when the gap is longer than its tolerance.
     public func writeM4A(from source: URL, tags: FLACTags, coverJPEG: Data?, to destination: URL) async throws -> M4AWriteResult {
         let data = try Data(contentsOf: source, options: .alwaysMapped)
         return try Self.write(data, tags: tags, coverJPEG: coverJPEG, toolName: toolName, to: destination)
@@ -235,22 +241,38 @@ public struct M4AWriter: M4AWriting {
 
     static let maximumChunkBytes = 1 << 20
 
-    /// The most samples one file can list while its largest table (stts at
-    /// 8 bytes per sample) still fits a 32-bit box size, with room for the
-    /// box headers.
-    static let maximumSampleCount = 500_000_000
+    /// The largest moov a 32-bit box size can state. The moov holds every
+    /// other box this writer sizes, so a moov within it means they all are.
+    static let maximumMovieBytes = UInt64(UInt32.max)
 
-    static func layout(_ track: MP4AudioTrack, tags: FLACTags, coverJPEG: Data?, toolName: String) throws(M4AFormatError) -> Layout {
+    /// The most bytes the moov can take, whatever the samples look like: per
+    /// sample an stts entry (8 bytes, when every duration differs) and an
+    /// stsz entry (4); per chunk a co64 entry (8) and an stsc entry (12, when
+    /// the samples per chunk keep changing); the copied sample entry and the
+    /// tags (`otherBytes`); and under 1 KiB of fixed boxes and headers.
+    static func movieBytesBound(sampleCount: Int, chunkCount: Int, otherBytes: Int) -> UInt64 {
+        12 * UInt64(sampleCount) + 20 * UInt64(chunkCount) + UInt64(otherBytes) + 4096
+    }
+
+    /// `movieByteLimit` is `maximumMovieBytes`; tests pass a small one to
+    /// reach the refusal without gigabytes of samples.
+    static func layout(
+        _ track: MP4AudioTrack, tags: FLACTags, coverJPEG: Data?, toolName: String,
+        movieByteLimit: UInt64 = maximumMovieBytes
+    ) throws(M4AFormatError) -> Layout {
         if let coverJPEG, !(coverJPEG.count >= 2 && coverJPEG.first == 0xFF && coverJPEG.dropFirst().first == 0xD8) {
             throw .coverIsNotJPEG
         }
-        // Every table box has a 32-bit size, and stts can need 8 bytes per
-        // sample (when every duration differs). No real track comes near
-        // this (it's months of audio); only a corrupt file of several GB
-        // could, and refusing it keeps every table box below 4 GB.
-        guard track.samples.count <= maximumSampleCount else { throw .unsupportedMP4("more than 500 million samples") }
         let timing = try timing(track)
         let chunks = chunkSampleCounts(track.samples)
+        let ilst = MP4BoxWriter.box("ilst", tagAtoms(tags, coverJPEG: coverJPEG, toolName: toolName).reduce(Data(), +))
+        // Every box has a 32-bit size, and the sample tables grow with the
+        // samples. No real track comes near 4 GB of tables (that's months of
+        // audio); only a corrupt file could, and refusing it here, before any
+        // table is built, is what keeps the box sizes from overflowing.
+        let bound = movieBytesBound(sampleCount: track.samples.count, chunkCount: chunks.count,
+                                    otherBytes: track.sampleEntry.count + ilst.count)
+        guard bound <= movieByteLimit else { throw .unsupportedMP4("sample tables larger than 4 GB") }
         // Where each chunk starts, counted from the first sample byte.
         var chunkStarts: [UInt64] = []
         chunkStarts.reserveCapacity(chunks.count)
@@ -264,7 +286,6 @@ public struct M4AWriter: M4AWriting {
         let sampleBytes = position
         let mdatHeader = MP4BoxWriter.mdatHeader(bodySize: sampleBytes)
         let ftyp = fileType()
-        let ilst = MP4BoxWriter.box("ilst", tagAtoms(tags, coverJPEG: coverJPEG, toolName: toolName).reduce(Data(), +))
 
         // The chunk offsets count from the file's start, so they depend on
         // the moov's size, which depends on whether they need 64 bits. The
@@ -436,13 +457,18 @@ enum MP4BoxWriter {
         return box("edts", fullBox("elst", version: wide ? 1 : 0, u32(1) + entry + u32(0x0001_0000)))
     }
 
-    /// stts: runs of equal durations.
+    /// stts: runs of equal durations. The entries go into one growing
+    /// buffer, as in the other tables: joining copies would take time
+    /// growing with the square of the runs, and a source whose every packet
+    /// has its own duration has one run per packet.
     static func timeToSample(_ durations: [UInt32]) -> Data {
         var runs: [(count: UInt32, delta: UInt32)] = []
         for d in durations {
             if let last = runs.last, last.delta == d { runs[runs.count - 1].count += 1 } else { runs.append((1, d)) }
         }
-        return fullBox("stts", u32(UInt32(runs.count)) + runs.map { u32($0.count) + u32($0.delta) }.reduce(Data(), +))
+        var table = FLACByteWriter()
+        for run in runs { table.u32be(run.count); table.u32be(run.delta) }
+        return fullBox("stts", u32(UInt32(runs.count)) + table.data)
     }
 
     /// stsc: a new entry wherever the samples per chunk change; every chunk
