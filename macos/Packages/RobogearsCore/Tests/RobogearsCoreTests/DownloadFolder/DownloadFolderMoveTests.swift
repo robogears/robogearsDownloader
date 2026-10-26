@@ -232,8 +232,60 @@ struct DownloadFolderMoveTests {
                 return
             }
             #expect(error.stopsBatch)
+            // The shortfall is the temporary file's size less the free
+            // space, and never less than 1 byte, so the message always
+            // names an amount (2.20).
+            let size = Int64(try Data(contentsOf: temp).count)
+            let free = Int64(try folder.url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+                .volumeAvailableCapacity ?? 0)
+            if case let .diskFull(bytes) = error {
+                #expect(bytes >= 1 && bytes <= max(1, size))
+                if free > 2 * size { #expect(bytes == 1) }
+            }
         }
         #expect(try folder.names().isEmpty)
+        #expect(FileManager.default.fileExists(atPath: temp.path))
+    }
+
+    @Test func aFolderThatCantBeWrittenStopsTheBatchInsteadOfFailingEachTrack() async throws {
+        // 2.19, 2.1: a read-only disk or a folder without write permission
+        // would fail every remaining track, so it stops the batch once.
+        for code in [EACCES, EPERM, EROFS] {
+            let folder = try TestFolder()
+            let planner = folder.planner(rename: { _, _ in code })
+            let temp = try folder.temporaryDownload(title: "Blue Lantern")
+            await #expect(throws: TrackDownloadError.folderUnavailable(message:
+                "robogears Downloader can't save into the download folder “Downloads”. Check its permissions or choose another folder."
+            ), "errno \(code)") {
+                try await planner.moveIntoPlace(temp, for: folder.request(title: "Blue Lantern"),
+                                                plannedName: "Blue Lantern.flac", fileExtension: .flac)
+            }
+            #expect(TrackDownloadError.folderUnavailable(message: "").stopsBatch)
+            #expect(try folder.names().isEmpty)
+            #expect(FileManager.default.fileExists(atPath: temp.path))
+        }
+    }
+
+    @Test func aFolderThatDisappearsDuringTheMoveStopsTheBatchAndIsNeverCreated() async throws {
+        let folder = try TestFolder()
+        let folderURL = folder.url
+        let planner = folder.planner(rename: { _, _ in
+            // The folder goes between the last check and the rename.
+            try? FileManager.default.removeItem(at: folderURL)
+            return ENOENT
+        })
+        let temp = try folder.temporaryDownload(title: "Blue Lantern")
+        do {
+            _ = try await planner.moveIntoPlace(temp, for: folder.request(title: "Blue Lantern"),
+                                                plannedName: "Blue Lantern.flac", fileExtension: .flac)
+            Issue.record("expected an error")
+        } catch let error as TrackDownloadError {
+            #expect(error == .folderUnavailable(message:
+                "The download folder “Downloads” no longer exists. Create it again or choose another folder."))
+            #expect(error.stopsBatch)
+        }
+        #expect(!FileManager.default.fileExists(atPath: folder.url.path))
+        #expect(FileManager.default.fileExists(atPath: temp.path))
     }
 
     // MARK: Names the move refuses

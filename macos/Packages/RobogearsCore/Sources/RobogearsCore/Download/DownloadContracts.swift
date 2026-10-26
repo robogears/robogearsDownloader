@@ -36,10 +36,16 @@ public struct TrackDownloadRequest: Sendable, Equatable {
     /// The person chose Replace on a damaged existing file (2.3): the old
     /// file goes to the Trash before the new one is saved.
     public var replaceExisting: Bool
+    /// The person chose Save As… on a row whose plain name is held by a file
+    /// whose title and artist can't be read (2.6's fallback): that file then
+    /// counts as a different song, and the track is saved under the first
+    /// free clash name, for example "Intro (Second Example).flac".
+    public var saveBesideUnreadable: Bool
 
     public init(rowID: UUID, tidalID: Int64, title: String, version: String? = nil, artist: String,
                 album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil,
-                expectsHiRes: Bool = false, losslessOnTIDAL: Bool? = nil, folder: URL, replaceExisting: Bool = false) {
+                expectsHiRes: Bool = false, losslessOnTIDAL: Bool? = nil, folder: URL, replaceExisting: Bool = false,
+                saveBesideUnreadable: Bool = false) {
         self.rowID = rowID
         self.tidalID = tidalID
         self.title = title
@@ -52,6 +58,7 @@ public struct TrackDownloadRequest: Sendable, Equatable {
         self.losslessOnTIDAL = losslessOnTIDAL
         self.folder = folder
         self.replaceExisting = replaceExisting
+        self.saveBesideUnreadable = saveBesideUnreadable
     }
 }
 

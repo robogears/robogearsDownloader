@@ -442,6 +442,118 @@ struct DownloadFolderDecisionTests {
         }
         #expect(!FileManager.default.fileExists(atPath: drive.path))
     }
+
+    @Test func aFolderOnADiskThatIsGoneNamesTheDisk() async throws {
+        // 2.19: "The download folder "TIDAL" on Music SSD isn't available…".
+        // Only reads: nothing exists at this path to write to.
+        let disk = "robogears-test-disk-\(UUID().uuidString)"
+        let gone = URL(fileURLWithPath: "/Volumes/\(disk)/TIDAL", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: "/Volumes/\(disk)"))
+        let folder = try TestFolder()
+        var request = folder.request(title: "Blue Lantern")
+        request.folder = gone
+        await #expect(throws: TrackDownloadError.folderUnavailable(message:
+            "The download folder “TIDAL” on \(disk) isn't available. Connect the drive or choose another folder.")) {
+            try await folder.planner(folder: gone).decide(for: request, fileExtension: .flac)
+        }
+    }
+
+    @Test func theFoldersOwnMessagesMatchSettingsWords() throws {
+        // The batch's check (Folders.message) and this type's fallback must
+        // say the same thing for the same problem (2.19).
+        let folder = try TestFolder()
+        let tidal = folder.root.appendingPathComponent("TIDAL", isDirectory: true)
+        try FileManager.default.createDirectory(at: tidal, withIntermediateDirectories: false)
+        let reference = try FolderReference(url: tidal)
+        func settings(_ status: FolderStatus) -> String? {
+            Folders.message(for: status, reference: reference, role: "download folder")
+        }
+        #expect(DownloadFolder.unavailableMessage(tidal, volumeName: "Music SSD")
+            == settings(.unavailable(volumeName: "Music SSD")))
+        #expect(DownloadFolder.missingMessage(tidal) == settings(.missing))
+        #expect(DownloadFolder.cantSaveMessage(tidal) == settings(.notWritable(tidal)))
+    }
+
+    // MARK: Cancel (2.4)
+
+    /// Runs `body` in a task that is already cancelled, as after Cancel.
+    func cancelled<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) async -> Result<T, any Error> {
+        await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await body()
+        }.result
+    }
+
+    func isCancellation<T>(_ result: Result<T, any Error>) -> Bool {
+        if case .failure(let error) = result { return error is CancellationError }
+        return false
+    }
+
+    @Test func aCancelledDecisionThrowsInsteadOfGivingAnAnswer() async throws {
+        let folder = try TestFolder()
+        try folder.writeFLAC("Blue Lantern.flac", title: "Blue Lantern", isrc: isrc(1))
+        let planner = folder.planner()
+        let request = folder.request(title: "Blue Lantern", isrc: isrc(1))
+        #expect(isCancellation(await cancelled { try await planner.decide(for: request, fileExtension: nil) }))
+    }
+
+    @Test func aCancelledReplaceMovesNothingToTheTrash() async throws {
+        let folder = try TestFolder()
+        try folder.writeFLAC("Blue Lantern.flac", title: "Blue Lantern", isrc: isrc(1))
+        try folder.cut("Blue Lantern.flac", fraction: 0.6)
+        let planner = folder.planner()
+        let request = folder.request(title: "Blue Lantern", isrc: isrc(1), replace: true)
+        #expect(isCancellation(await cancelled { try await planner.decide(for: request, fileExtension: nil) }))
+        #expect(try folder.names() == ["Blue Lantern.flac"])
+        #expect(try folder.trashedNames().isEmpty)
+    }
+
+    @Test func aCancelledPermanentDeleteDeletesNothing() async throws {
+        let folder = try TestFolder()
+        try folder.writeFLAC("Blue Lantern.flac", title: "Blue Lantern", isrc: isrc(1))
+        try folder.cut("Blue Lantern.flac", fraction: 0.6)
+        let planner = folder.planner(noTrash: true)
+        let request = folder.request(title: "Blue Lantern", isrc: isrc(1), replace: true)
+        #expect(isCancellation(await cancelled {
+            try await planner.deleteDamagedCopyPermanently(named: "Blue Lantern.flac", for: request)
+        }))
+        #expect(try folder.names() == ["Blue Lantern.flac"])
+    }
+
+    @Test func aCancelledBadgePassThrows() async throws {
+        let folder = try TestFolder()
+        try folder.writeFLAC("Blue Lantern.flac", title: "Blue Lantern", isrc: isrc(1))
+        let planner = folder.planner()
+        let request = folder.request(title: "Blue Lantern", isrc: isrc(1))
+        #expect(isCancellation(await cancelled { try await planner.inFolderStatuses(for: [request]) }))
+    }
+
+    // MARK: Save As… beside an unreadable file (2.6's fallback)
+
+    @Test func saveAsBesideAnUnreadableFileTakesTheFirstFreeClashName() async throws {
+        let folder = try TestFolder()
+        try folder.writeFLAC("Intro.flac", title: nil, artist: nil)
+        let planner = folder.planner()
+        var request = folder.request(title: "Intro", artist: "Second Example", isrc: isrc(2))
+        #expect(try await planner.decide(for: request, fileExtension: .flac)
+            == .skip(.nameTakenByUnreadableFile(fileName: "Intro.flac")))
+
+        request.saveBesideUnreadable = true
+        #expect(try await planner.inFolderStatus(for: request)
+            == .differentSongHoldsName(fileName: "Intro.flac", plannedName: "Intro (Second Example).flac"))
+        #expect(try await planner.decide(for: request, fileExtension: .flac)
+            == .save(fileName: "Intro (Second Example).flac", notes: [.savedUnderAnotherName(takenName: "Intro.flac")]))
+        let temp = try folder.temporaryDownload(title: "Intro", artist: "Second Example", isrc: isrc(2))
+        let moved = try await planner.moveIntoPlace(temp, for: request, plannedName: "Intro (Second Example).flac",
+                                                    fileExtension: .flac)
+        #expect(moved.fileName == "Intro (Second Example).flac")
+        #expect(try folder.names() == ["Intro (Second Example).flac", "Intro.flac"])
+
+        // Queued again later, without Save As…, it finds its own file.
+        request.saveBesideUnreadable = false
+        #expect(try await planner.decide(for: request, fileExtension: .flac)
+            == .skip(.alreadyInFolder(fileName: "Intro (Second Example).flac")))
+    }
 }
 
 /// Shorthand for the clash note in the ordering test.

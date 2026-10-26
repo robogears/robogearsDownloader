@@ -195,7 +195,9 @@ public struct DownloadFolder: DownloadFolderPlanning {
         /// save this one as `plannedName` (2.6).
         case differentSongHoldsName(fileName: String, plannedName: String)
         /// A file whose title and artist can't be read holds the plain name;
-        /// the row offers Save As… (2.6's fallback).
+        /// the row offers Save As… (2.6's fallback). The name it offers is
+        /// the `plannedName` this answers for the same request with
+        /// `saveBesideUnreadable` set, which is also what the batch then saves.
         case nameTakenByUnreadableFile(fileName: String)
     }
 
@@ -254,6 +256,8 @@ public struct DownloadFolder: DownloadFolderPlanning {
         }
         let url = folder.appendingPathComponent(fileName)
         let verdict = await ExistingFileCheck.check(url, as: lookup.ext, tidalSeconds: request.durationSeconds.map(Double.init))
+        // A verdict read after a Cancel may call a healthy .m4a damaged.
+        try Task.checkCancellation()
         guard !verdict.isHealthy else { return false }
         // The name exactly as listed: never a URL, which could spell it
         // differently on a disk that tells composed and decomposed apart.
@@ -281,8 +285,20 @@ public struct DownloadFolder: DownloadFolderPlanning {
     /// `mayTrash`: Replace may move a damaged copy to the Trash (false for
     /// the badge and the move). `mustSave`: the file is already downloaded
     /// and checked, so nothing skips; every existing file just holds its name.
+    ///
+    /// A cancelled call throws `CancellationError` instead of answering
+    /// (2.4): the .m4a reads go through AVFoundation, whose failures read as
+    /// "no tags" or "damaged", so an answer worked out after a Cancel could
+    /// take a healthy file for a damaged one.
     func plan(_ request: TrackDownloadRequest, want: FileNaming.AudioExtension?, context: inout Context,
               mayTrash: Bool, mustSave: Bool) async throws -> FolderDecision {
+        let decision = try await planReading(request, want: want, context: &context, mayTrash: mayTrash, mustSave: mustSave)
+        try Task.checkCancellation()
+        return decision
+    }
+
+    private func planReading(_ request: TrackDownloadRequest, want: FileNaming.AudioExtension?, context: inout Context,
+                             mayTrash: Bool, mustSave: Bool) async throws -> FolderDecision {
         let names = TrackNames(request)
 
         // 1. Every copy of this recording under a name this track may have.
@@ -319,6 +335,8 @@ public struct DownloadFolder: DownloadFolderPlanning {
                 guard mayTrash, request.replaceExisting else {
                     return .skip(.existingLooksDamaged(fileName: damaged[0].name))
                 }
+                // Nothing goes to the Trash on a verdict read after a Cancel.
+                try Task.checkCancellation()
                 for copy in damaged {
                     try moveToTrash(copy.name)
                     context.listing.remove(copy.name)
@@ -338,7 +356,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
         case .free:
             return .save(fileName: "\(names.plainStem).\(target.rawValue)", notes: notes)
         case let .taken(holder, unreadable):
-            if unreadable, !mustSave { return .skip(.nameTakenByUnreadableFile(fileName: holder)) }
+            // Unless the person chose Save As… for it (2.6's fallback), a
+            // file that can't be identified keeps the row waiting.
+            if unreadable, !mustSave, !request.saveBesideUnreadable {
+                return .skip(.nameTakenByUnreadableFile(fileName: holder))
+            }
             takenName = holder
         }
         notes.insert(.savedUnderAnotherName(takenName: takenName), at: 0)
@@ -564,7 +586,10 @@ public struct DownloadFolder: DownloadFolderPlanning {
     /// Why the folder can't be used, in 2.19's words. The batch checks the
     /// remembered folder before each track (with its bookmark and disk name);
     /// this covers the folder vanishing in between. It never creates the
-    /// folder (2.19).
+    /// folder (2.19). The disk is named as it was mounted ("/Volumes/Music
+    /// SSD"). A folder moved to the Trash in that gap reads as no longer
+    /// existing: only the bookmark, which the batch holds, could follow it
+    /// there.
     private func unavailable() -> TrackDownloadError {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
@@ -572,7 +597,8 @@ public struct DownloadFolder: DownloadFolderPlanning {
             return .folderUnavailable(message: Self.cantSaveMessage(folder))
         }
         if let volume = Folders.volumeRoot(of: folder.path), !fm.fileExists(atPath: volume) {
-            return .folderUnavailable(message: Self.unavailableMessage(folder))
+            let volumeName = URL(fileURLWithPath: volume).lastPathComponent
+            return .folderUnavailable(message: Self.unavailableMessage(folder, volumeName: volumeName))
         }
         return .folderUnavailable(message: Self.missingMessage(folder))
     }
@@ -601,9 +627,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
             && !name.unicodeScalars.contains("\u{0}") && FileNaming.storedBytes(name) <= FileNaming.maxNameBytes
     }
 
-    // The same words as `Folders.message` for the download folder (2.19).
-    static func unavailableMessage(_ folder: URL) -> String {
-        "The download folder “\(folder.lastPathComponent)” isn't available. Connect its drive or choose another folder."
+    // The same words as `Folders.message` for the download folder (2.19);
+    // a test holds them equal. That function needs the folder's bookmark,
+    // which can't be made once the folder is gone.
+    static func unavailableMessage(_ folder: URL, volumeName: String) -> String {
+        "The download folder “\(folder.lastPathComponent)” on \(volumeName) isn't available. Connect the drive or choose another folder."
     }
 
     static func missingMessage(_ folder: URL) -> String {

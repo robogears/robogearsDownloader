@@ -22,6 +22,21 @@ struct ExistingFileCheckTests {
         #expect(await check(folder, "Hi-Res.flac") == .healthy)
     }
 
+    @Test func aFLACThisAppSavedFromADASHStreamIsHealthy() async throws {
+        // The main Hi-Res path: FLAC frames taken out of fragmented MP4, with
+        // the sample count filled in from the counted frames. The check's
+        // position rule needs their frame numbers to start at 0.
+        let folder = try TestFolder()
+        for source in ["dash-24-96000.mp4", "dash-live-16-44100.mp4"] {
+            let name = "\(source).flac"
+            let url = try folder.writeFLAC(name, title: "Hi-Res", source: source)
+            #expect(try FLACMetadataReader.summary(of: url).streamInfo.totalSamples > 0, "\(source)")
+            #expect(await check(folder, name) == .healthy, "\(source)")
+            try folder.cut(name, fraction: 0.7)
+            #expect(await check(folder, name, tidal: nil) != .healthy, "\(source) cut short")
+        }
+    }
+
     @Test func filesTheOldAppsFFmpegWroteAreHealthy() async throws {
         let folder = try TestFolder()
         for name in ["ffmpeg-bts-16-44100.flac", "ffmpeg-dash-24-96000.flac", "ffmpeg-dash-live-16-44100.flac"] {
