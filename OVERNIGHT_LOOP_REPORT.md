@@ -1,6 +1,6 @@
 # Overnight Loop Report — 2026-10-26
 
-STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (1181) · last: five of six lanes merged; UI fix round resumed
+STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (1181 + 206 app checks) · last: all six lanes merged; integration review and design lead running
 
 ## Run
 - Started: 12:49 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -16,6 +16,7 @@ STATUS: LOOPING · cycle 0 · 0 done · build+tests GREEN (1181) · last: five o
 - 💡 Untrack `.claude/settings.local.json` (`git rm --cached .claude/settings.local.json` and add it to .gitignore) — why: then the loop's push safety rules can be installed — how: one commit by you
 
 ## Progress log (last 20; older lines roll into the tally)
+- 17:20 The native UI lane is merged too, so all six shelved lanes are in the loop branch. The merged app builds with no warnings and passes its 206 self-checks; the core passes 1181 tests. One core timing test failed once under heavy load (load average over 300) and passed alone twice; I made it robust to load instead of trusting a rerun. 192 snapshots were rendered from the merged app, and a single Fable design lead is now critiquing them for the "cleaner UI" pass, including the search sheet's new preview row. The core integration review (end-to-end tests plus three reviewers) is still running.
 - 15:40 Five of the six lanes are merged into the loop branch, one at a time, each passing its gate (clean working copy, no leftover breakage edits) and the full suite: download folder (847 tests), track download (960), batch runner (1071), resolver (1141) and the AAC writer (1181). The resolver merge conflicted in QueueItem.swift: both lanes' new fields are kept, the row copier now copies them all, every new TIDAL row records whether TIDAL has a lossless version (D4 2.10), and Download All holds rows still waiting for their library check (D4 4.20), each with a test. The UI lane's fix round was cut off by the usage limit; its partial work is saved and the round resumed.
 - 13:15 Integration plan for wiring the real services written to docs/INTEGRATION_PLAN.md (read-only research across all six lanes): which core type backs each of the app's services, every mismatch and which side changes, the object graph at launch, what previews still need (including preview in search), the sign-in mapping, a 13-step build order, and the risks for the merges. It found mutation-check edits left in two lanes' working copies, so each merge now waits for a clean copy and a search of its diff.
 - 12:49 Kickoff. Mission: finish and merge the six shelved lanes (already running in the background), a cleaner UI, song preview in search, then the real TIDAL services wired into the app. Baseline green: 748 core tests pass, the app builds.
