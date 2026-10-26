@@ -129,7 +129,11 @@ private struct GeneralPane: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .onAppear { model.refreshPreviewCacheSize() }
+        .onAppear {
+            model.refreshPreviewCacheSize()
+            // Notifications may have been turned on in System Settings since launch.
+            model.refreshNotificationPermission()
+        }
     }
 }
 

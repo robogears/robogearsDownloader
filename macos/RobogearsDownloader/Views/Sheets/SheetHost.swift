@@ -518,7 +518,7 @@ struct OldFilesSheet: View {
                     Text("Files from the previous version are in \(Formatting.abbreviatedPath(files.folder.path)).")
                         .font(.headline)
                         .accessibilityAddTraits(.isHeader)
-                    Text("They aren't used: this version starts fresh, so your old queue, folders and TIDAL sign-in weren't carried over. You can move them to the Trash.")
+                    Text("They aren't used: this version starts fresh, so your old queue, folders and TIDAL sign-in weren't carried over. Sign in and choose your folders in Settings. You can move the old files to the Trash.")
                     if showsDelete {
                         Text("The old TIDAL sign-in is saved as plain text and stays readable in the Trash. Delete Old Sign-in removes it for good.")
                             .foregroundStyle(.secondary)

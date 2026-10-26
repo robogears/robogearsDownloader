@@ -39,6 +39,7 @@ enum SnapshotHarness {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
             FileHandle.standardError.write(Data("Can't create \(directory.path): \(error.localizedDescription)\n".utf8))
+            StorageLocation.removeInstrumentFolder()
             exit(1)
         }
         var written: [String] = []
@@ -67,6 +68,7 @@ enum SnapshotHarness {
         // Sheets, alerts, Settings, About and the Dock tile.
         written += SnapshotWindows.renderAll(into: directory, only: only)
         print(written.joined(separator: "\n"))
+        StorageLocation.removeInstrumentFolder()
         exit(written.isEmpty ? 1 : 0)
     }
 
@@ -104,9 +106,11 @@ enum SnapshotHarness {
             RunLoop.main.run(until: Date().addingTimeInterval(0.04))
         }
         // The window is never key (the app never activates, so it can't take
-        // focus from the person): selection draws in its inactive grey, and
-        // the prominent button without its accent fill. Section 7's first
-        // check (the selection with the ink accent) stays a live check.
+        // focus from the person), and AppKit draws a window's active look
+        // only when it really is key: selection draws in its inactive grey,
+        // and prominent buttons without their fill. Section 7's first two
+        // checks (the selection and the prominent button in a window in
+        // front) stay live checks.
 
         let target = host.superview ?? host
         let bounds = target.bounds

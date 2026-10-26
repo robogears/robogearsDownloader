@@ -82,9 +82,10 @@ struct PrimaryActionButton: View {
             } label: {
                 Text(model.downloadButtonTitle)
                     .contentTransition(prefs.reduceMotion ? .identity : .numericText())
+                    .inkProminentLabel()
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.rows.isEmpty || model.downloadableCount == 0)
+            .inkProminent()
+            .disabled(model.rows.isEmpty || model.downloadableCount == 0 || model.isSigningIn)
             .animation(Motion.ease(Motion.numbers, reduceMotion: prefs.reduceMotion), value: model.downloadButtonTitle)
             .help("Download every included track (⌘↩)")
         }

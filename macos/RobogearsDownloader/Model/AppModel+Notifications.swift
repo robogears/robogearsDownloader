@@ -9,6 +9,7 @@ extension AppModel {
     /// Reads whether macOS lets the app notify (Settings › General shows a
     /// note when it doesn't). Never asks.
     func refreshNotificationPermission() {
+        guard persists else { return }
         Task {
             let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
             notificationsBlocked = status == .denied

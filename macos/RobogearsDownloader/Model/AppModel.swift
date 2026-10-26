@@ -85,9 +85,8 @@ final class AppModel {
     /// First-launch questions still to ask, one after the other.
     @ObservationIgnored var firstLaunchQueue: [FirstLaunchNotice] = []
     /// What's New › Skip This Version: the toolbar control stays hidden for
-    /// this version. Check for Updates… shows it again.
-    // TODO(core integration): UpdateService could own this; it lives in the
-    // app's own defaults key until then.
+    /// this version. Check for Updates… shows it again. Kept as a small value
+    /// (StorageLocation.values) until UpdateService owns it.
     var skippedUpdateVersion: String?
     static let skippedVersionKey = "Updates.SkippedVersion"
     /// Reopens the main window (set by the window; used after it was closed).
@@ -134,16 +133,18 @@ final class AppModel {
         self.queueStore = queueStore
         self.update = update
         self.persists = settingsStore != nil
-        if persists { skippedUpdateVersion = UserDefaults.standard.string(forKey: Self.skippedVersionKey) }
+        if persists { skippedUpdateVersion = StorageLocation.values.string(forKey: Self.skippedVersionKey) }
         sounds.isEnabled = settings.playSoundEffects
         player.volume = settings.previewGain
         player.onFinish = { [weak self] in self?.previewDidFinish() }
     }
 
-    /// The app's model: saved settings and queue, the real updater, and the
-    /// stand-in services until the real ones are wired.
+    /// The app's model: saved settings and queue, the real updater, the real
+    /// old-files helper, and the stand-in services until the real ones are
+    /// wired. Everything it saves goes through StorageLocation, so in a debug
+    /// instrument run it lands in that run's temporary folder.
     static func live() -> AppModel {
-        let support = AppPaths.supportDirectory()
+        let support = StorageLocation.supportDirectory
         let store = SettingsStore(file: AppPaths.settingsFile(in: support))
         let (settings, outcome) = store.load()
         #if DEBUG
@@ -151,12 +152,18 @@ final class AppModel {
         #else
         let isDebug = false
         #endif
-        let update = UpdateService(
+        // An instrument run (--run-checks) gets no updater: building one tidies
+        // the app's old update downloads out of the temporary folder.
+        let update = StorageLocation.isIsolated ? nil : UpdateService(
             configuration: .standard(isDebugBuild: isDebug, supportDirectory: support),
             currentVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? RobogearsCore.version,
             runningBundle: Bundle.main.bundleURL,
             isDebugBuild: isDebug)
-        let model = AppModel(services: StandIn.services(), player: StandInPreviewPlayer(), settings: settings,
+        var services = StandIn.services()
+        // The previous version's files (D4 5.11). Only release builds offer
+        // the notice (FirstLaunch), and nothing moves without a click.
+        services.oldFiles = LegacyElectronFiles(folder: StorageLocation.legacyElectronDirectory)
+        let model = AppModel(services: services, player: StandInPreviewPlayer(), settings: settings,
                              settingsStore: store, queueStore: QueueStore(file: AppPaths.queueFile(in: support)),
                              update: update)
         if case .unreadable(let kept) = outcome {
@@ -186,7 +193,8 @@ final class AppModel {
             refreshNotificationPermission()
             // The first-launch questions wait until the window has settled.
             try? await Task.sleep(for: .milliseconds(600))
-            firstLaunchQueue = FirstLaunch.pendingNotices(oldFiles: services.oldFiles)
+            firstLaunchQueue = FirstLaunch.pendingNotices(oldFiles: services.oldFiles,
+                                                          oldAppNoticeShown: settings.oldAppNoticeShown)
             presentNextFirstLaunchNotice()
         }
         // The launch check is silent and only in release builds: debug builds
@@ -264,7 +272,7 @@ final class AppModel {
         return n == rows.count || n == 0 ? "Download All" : "Download (\(Formatting.count(n)))"
     }
 
-    var canDownload: Bool { batch == nil && downloadableCount > 0 }
+    var canDownload: Bool { batch == nil && !isSigningIn && downloadableCount > 0 }
 
     /// Rows selected, in queue order.
     var selectedRows: [QueueRow] { rows.filter { selection.contains($0.id) } }

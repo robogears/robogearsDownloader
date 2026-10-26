@@ -54,6 +54,44 @@ enum Palette {
     }
 }
 
+extension View {
+    /// The main window's prominent buttons (Download All, + Add): the system
+    /// `.borderedProminent` control, filled with the ink (black in Light,
+    /// white in Dark) whatever accent the person chose. Under a chosen accent
+    /// the system would fill it with that accent: with blue, a bright capsule
+    /// whose white label is about 4:1, under DESIGN_DIRECTION 7's 4.5:1 floor
+    /// for the prominent button, and a second accent beside the ink (owner's
+    /// Debug build, 26 Oct). Pair it with `inkProminentLabel()` on the label.
+    func inkProminent() -> some View {
+        buttonStyle(.borderedProminent).tint(Palette.ink)
+    }
+
+    /// The label of an `inkProminent()` button: the canvas colour on the ink
+    /// fill (21:1) while the window is in front and the button is available.
+    /// Otherwise the system draws the button unfilled and the label keeps the
+    /// system's own colour. Set on the label itself, so it never reaches the
+    /// button's fill.
+    func inkProminentLabel() -> some View { modifier(InkProminentLabel()) }
+}
+
+struct InkProminentLabel: ViewModifier {
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.isEnabled) private var isEnabled
+
+    /// The canvas colour only on the ink fill: an unfilled button (window
+    /// not in front, or unavailable) with a canvas label would be white on
+    /// white in Light.
+    static func usesCanvas(appearsActive: Bool, isEnabled: Bool) -> Bool { appearsActive && isEnabled }
+
+    func body(content: Content) -> some View {
+        if Self.usesCanvas(appearsActive: appearsActive, isEnabled: isEnabled) {
+            content.foregroundStyle(Palette.canvas)
+        } else {
+            content
+        }
+    }
+}
+
 /// What a status means, mapped to its one colour (colour is never the only
 /// signal: every tone is paired with a symbol and words).
 enum Tone: Equatable, Sendable {

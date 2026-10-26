@@ -97,6 +97,28 @@ enum SnapshotScenarios {
                                              .map { SnapshotHover(rowID: $0.id, fraction: 0.4) }
                                      }))
 
+        // Ready to download, with an update waiting: the toolbar's one
+        // prominent button (ink, whatever accent the person chose), the
+        // update control beside it, and "+ Add" on a left-out row.
+        list.append(SnapshotScenario(name: "queue-ready", looks: Look.all, sizes: bothSizes, makeModel: {
+            let model = baseModel()
+            model.rows = StandInSampleQueue.afterBatch(failed: 0, waiting: 9)
+            let left = QueueRow(item: StandIn.item("Slow Motion", hiRes: true))
+            left.item.libraryMatch = .init(kind: .exact, path: NSHomeDirectory() + "/Music/Library/Slow Motion.flac",
+                                           libraryTitle: "Slow Motion")
+            left.item.included = false
+            if let id = left.item.tidalID { left.preview = .ready(StandIn.peaks(for: id)) }
+            model.rows.insert(left, at: 2)
+            model.selection = [model.rows[4].id]
+            model.updateControlOverride = .available(version: "0.1.32")
+            return model
+        }))
+        list.append(SnapshotScenario(name: "queue-ready-all", looks: both, sizes: [SnapshotHarness.small], makeModel: {
+            let model = baseModel()
+            model.rows = StandInSampleQueue.afterBatch(failed: 0, waiting: 6)
+            return model
+        }))
+
         // Empty states.
         list.append(SnapshotScenario(name: "empty-signed-out", looks: both, sizes: bothSizes,
                                      makeModel: { baseModel(signedIn: false, folder: false) }))

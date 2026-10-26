@@ -8,11 +8,13 @@ extension AppModel {
 
     /// The toolbar's primary action, ⌘↩ and the Dock menu.
     func downloadAll() {
-        guard batch == nil, sheet == nil else { return }
+        // A sign-in in progress (here or in Settings) may switch the account:
+        // a batch never starts under it (D4 1.2).
+        guard batch == nil, sheet == nil, !isSigningIn else { return }
         guard isSignedIn else {
             // D4 2.18: signed out opens the sign-in sheet, not the honk. Nothing
             // starts by itself afterwards.
-            sheet = .signIn(resumeAdd: nil)
+            showSignIn()
             return
         }
         guard let folder = availableDownloadFolder() else { return }
@@ -27,7 +29,7 @@ extension AppModel {
 
     /// Retry on a row, Retry Selected, Retry All Failed (⌘R).
     func retry(_ ids: Set<UUID>) {
-        guard batch == nil else { return }
+        guard batch == nil, !isSigningIn else { return }
         let targets = rows.filter { row in
             guard ids.contains(row.id), row.item.tidalID != nil else { return false }
             if case .failed = row.item.state { return true }
@@ -255,7 +257,7 @@ extension AppModel {
         case .openFolder: openDownloadFolder()
         case .retryFailed: retry(Set(failedRows.map(\.id)))
         case .chooseFolder: chooseDownloadFolder()
-        case .signIn: sheet = .signIn(resumeAdd: nil)
+        case .signIn: showSignIn()
         case .openExportify: openExportify()
         }
     }

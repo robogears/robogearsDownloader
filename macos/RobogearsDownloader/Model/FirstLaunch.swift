@@ -15,30 +15,30 @@ enum FirstLaunchNotice: Equatable, Sendable {
 /// other, each at most once, and only in release builds: a development build
 /// must never offer to move itself or to tidy the files of the Electron app
 /// still in use on this Mac.
+@MainActor
 enum FirstLaunch {
-    static let moveOfferedKey = "FirstLaunch.MoveToApplicationsOffered"
-    /// TODO(core integration): RobogearsCore's `AppSettings.oldAppNoticeShown`
-    /// replaces this key once the lanes merge.
-    static let oldFilesOfferedKey = "FirstLaunch.OldFilesOffered"
+    /// A small value (StorageLocation.values): AppSettings has no field for it.
+    nonisolated static let moveOfferedKey = "FirstLaunch.MoveToApplicationsOffered"
     /// Where the copy that chose Move ran from, so the new copy can put it in
     /// the Trash once it runs from Applications.
-    static let movedFromKey = "FirstLaunch.MovedFrom"
-    static let appName = "robogears Downloader"
+    nonisolated static let movedFromKey = "FirstLaunch.MovedFrom"
+    nonisolated static let appName = "robogears Downloader"
 
     /// The rule, without the Mac: Move first, then the old files; each only
     /// once; the old files wait while the old app is still running (its
     /// files are in use).
-    static func notices(moveOffered: Bool, outsideApplications: Bool, oldFilesShown: Bool,
-                        oldFilesPresent: Bool, oldAppRunning: Bool) -> [FirstLaunchNotice] {
+    nonisolated static func notices(moveOffered: Bool, outsideApplications: Bool, oldFilesShown: Bool,
+                                    oldFilesPresent: Bool, oldAppRunning: Bool) -> [FirstLaunchNotice] {
         var list: [FirstLaunchNotice] = []
         if !moveOffered, outsideApplications { list.append(.moveToApplications) }
         if !oldFilesShown, oldFilesPresent, !oldAppRunning { list.append(.oldFiles) }
         return list
     }
 
-    /// The questions to ask at this launch, in order.
-    @MainActor
-    static func pendingNotices(oldFiles: any OldAppFilesProviding, defaults: UserDefaults = .standard,
+    /// The questions to ask at this launch, in order. `oldAppNoticeShown` is
+    /// RobogearsCore's `AppSettings.oldAppNoticeShown` ("explain once").
+    static func pendingNotices(oldFiles: any OldAppFilesProviding, oldAppNoticeShown: Bool,
+                               values: any SmallValueStore = StorageLocation.values,
                                bundleURL: URL = Bundle.main.bundleURL) -> [FirstLaunchNotice] {
         #if DEBUG
         return []
@@ -48,21 +48,13 @@ enum FirstLaunch {
         let othersRunning = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             .contains { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
         return notices(
-            moveOffered: defaults.bool(forKey: moveOfferedKey),
+            moveOffered: values.bool(forKey: moveOfferedKey),
             outsideApplications: AppLocation.shouldOfferMove(bundleURL: bundleURL,
                                                              destinationExists: { FileManager.default.fileExists(atPath: $0.path) }),
-            oldFilesShown: defaults.bool(forKey: oldFilesOfferedKey),
+            oldFilesShown: oldAppNoticeShown,
             oldFilesPresent: oldFiles.shouldOfferNotice,
             oldAppRunning: othersRunning)
         #endif
-    }
-
-    /// Records that a question was shown, so it never comes back.
-    static func markShown(_ notice: FirstLaunchNotice, defaults: UserDefaults = .standard) {
-        switch notice {
-        case .moveToApplications: defaults.set(true, forKey: moveOfferedKey)
-        case .oldFiles: defaults.set(true, forKey: oldFilesOfferedKey)
-        }
     }
 }
 
@@ -119,7 +111,7 @@ enum AppLocation {
         try UpdateInstaller.launchRelauncher(appName: FirstLaunch.appName, stagedApp: staged, target: target,
                                              fromVersion: version, toVersion: version)
         if !isTranslocated(bundleURL) {
-            UserDefaults.standard.set(bundleURL.path, forKey: FirstLaunch.movedFromKey)
+            StorageLocation.values.set(bundleURL.path, forKey: FirstLaunch.movedFromKey)
         }
     }
 
@@ -128,7 +120,7 @@ enum AppLocation {
     /// carries this app's identifier. Returns a sentence for the log.
     @MainActor
     static func trashMovedOriginalIfNeeded(running bundleURL: URL = Bundle.main.bundleURL,
-                                           defaults: UserDefaults = .standard) -> String? {
+                                           defaults: any SmallValueStore = StorageLocation.values) -> String? {
         guard let path = defaults.string(forKey: FirstLaunch.movedFromKey) else { return nil }
         guard isInApplications(bundleURL) else { return nil }
         defaults.removeObject(forKey: FirstLaunch.movedFromKey)

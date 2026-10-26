@@ -64,8 +64,8 @@ struct ActivitySplit<Top: View, Bottom: View>: NSViewRepresentable {
             super.layout()
             guard !placedInitially, bounds.height > 0, arrangedSubviews.count == 2 else { return }
             placedInitially = true
-            if let heightKey, UserDefaults.standard.double(forKey: heightKey) >= Metrics.activityMinimum {
-                lastBottomHeight = UserDefaults.standard.double(forKey: heightKey)
+            if let heightKey, StorageLocation.values.double(forKey: heightKey) >= Metrics.activityMinimum {
+                lastBottomHeight = StorageLocation.values.double(forKey: heightKey)
             }
             setPosition(bounds.height - lastBottomHeight - dividerThickness, ofDividerAt: 0)
             applyBottomVisibility()
@@ -77,7 +77,7 @@ struct ActivitySplit<Top: View, Bottom: View>: NSViewRepresentable {
             let height = arrangedSubviews[1].frame.height
             guard height >= Metrics.activityMinimum else { return }
             lastBottomHeight = height
-            if let heightKey { UserDefaults.standard.set(Double(height), forKey: heightKey) }
+            if let heightKey { StorageLocation.values.set(Double(height), forKey: heightKey) }
         }
 
         func applyBottomVisibility() {

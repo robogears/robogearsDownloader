@@ -9,13 +9,18 @@ import UserNotifications
 enum AppMain {
     @MainActor
     static func main() {
+        // The instruments never touch the person's Application Support
+        // folder or preferences: everything they save goes to a temporary
+        // folder of their own (StorageLocation).
         #if DEBUG
         if SelfChecks.requested(CommandLine.arguments) {
+            StorageLocation.isolateForInstrument()
             SelfChecks.run()
             return
         }
         #endif
         if let directory = SnapshotHarness.requestedDirectory(CommandLine.arguments) {
+            StorageLocation.isolateForInstrument()
             SnapshotHarness.run(into: directory)
         } else {
             RobogearsDownloaderApp.main()

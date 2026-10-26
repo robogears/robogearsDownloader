@@ -122,14 +122,21 @@ struct TrackRow: View {
 
     @ViewBuilder
     private func actionButton(_ command: RowCommand) -> some View {
-        let button = Button(command.buttonTitle) { model.perform(command, on: [row.id]) }
-            .controlSize(.small)
-            .help(command == .include ? "Add to the download" : command.title)
-            .accessibilityHidden(true)
         if command == .include {
-            button.buttonStyle(.borderedProminent)
+            // "+ Add" is the row's one prominent control (4.4), in the ink.
+            Button { model.perform(command, on: [row.id]) } label: {
+                Text(command.buttonTitle).inkProminentLabel()
+            }
+            .inkProminent()
+            .controlSize(.small)
+            .help("Add to the download")
+            .accessibilityHidden(true)
         } else {
-            button.buttonStyle(.bordered)
+            Button(command.buttonTitle) { model.perform(command, on: [row.id]) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help(command.title)
+                .accessibilityHidden(true)
         }
     }
 

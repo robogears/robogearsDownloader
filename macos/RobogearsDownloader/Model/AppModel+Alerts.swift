@@ -53,11 +53,24 @@ extension AppModel {
         afterAlertCloses { model in
             guard model.adding == nil, model.batch == nil, !model.firstLaunchQueue.isEmpty else { return }
             let next = model.firstLaunchQueue.removeFirst()
-            FirstLaunch.markShown(next)
+            model.markShown(next)
             switch next {
             case .moveToApplications: model.alert = .moveToApplications
             case .oldFiles: model.sheet = .oldFiles
             }
+        }
+    }
+
+    /// Records that a first-launch question was asked, so it never comes
+    /// back: the old-files notice in the settings file (AppSettings.
+    /// oldAppNoticeShown, D4 5.11 "explain once"), the move offer as a small value.
+    func markShown(_ notice: FirstLaunchNotice) {
+        switch notice {
+        case .moveToApplications:
+            StorageLocation.values.set(true, forKey: FirstLaunch.moveOfferedKey)
+        case .oldFiles:
+            settings.oldAppNoticeShown = true
+            saveSettingsNow()
         }
     }
 
@@ -98,7 +111,8 @@ extension AppModel {
             return nil
         } catch {
             let left = services.oldFiles.presentItems().count
-            let message = "Some of the previous version's files couldn't be moved to the Trash (\(error.localizedDescription)). \(Formatting.count(left)) are still in \(Formatting.abbreviatedPath(services.oldFiles.folder.path)); you can move them in Finder."
+            let still = left == 1 ? "1 item is" : "\(Formatting.count(left)) items are"
+            let message = "Some of the previous version's files couldn't be moved to the Trash (\(error.localizedDescription)). \(still) still in \(Formatting.abbreviatedPath(services.oldFiles.folder.path)); you can move them in Finder."
             activity.add(.warning, message)
             return message
         }

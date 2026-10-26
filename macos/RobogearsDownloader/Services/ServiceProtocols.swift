@@ -221,11 +221,10 @@ protocol SignInProviding: Sendable {
 // MARK: - The previous version's files (first launch, D4 5.11)
 
 /// The Electron app's files in ~/Library/Application Support/robogears
-/// Downloader. Shaped exactly like RobogearsCore's `LegacyElectronFiles` on
-/// the integration branch, so wiring the real one is
-/// `extension LegacyElectronFiles: OldAppFilesProviding {}`. Nothing here
-/// runs without the person's click, and only items known by exact name are
-/// ever touched.
+/// Downloader. RobogearsCore's `LegacyElectronFiles` is the real one (the
+/// running app); `StandInOldAppFiles` gives the instruments sample items
+/// that never touch the disk. Nothing here runs without the person's click,
+/// and only items known by exact name are ever touched.
 protocol OldAppFilesProviding: Sendable {
     /// The old app's data folder.
     var folder: URL { get }
@@ -240,6 +239,8 @@ protocol OldAppFilesProviding: Sendable {
     /// Delete Old Sign-in: removes token.json for good (in the Trash it stays readable).
     func deleteOldSignIn() throws
 }
+
+extension LegacyElectronFiles: OldAppFilesProviding {}
 
 /// Everything the window talks to, bundled so the app can swap stand-ins
 /// for the real services in one place.

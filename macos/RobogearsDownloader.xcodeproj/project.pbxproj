@@ -11,6 +11,7 @@
 		03099749D2C41651E33C2EBB /* StandIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4CB4A7546DD3796924BA23E /* StandIn.swift */; };
 		15014E94562FD989F38E99B1 /* BatchSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD49D7C527368FBB88C2530A /* BatchSummary.swift */; };
 		1C1436BB7F9CA327365F82E3 /* SnapshotHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFCA5841DFD2129C6B3A15F5 /* SnapshotHarness.swift */; };
+		1F8F8358B7BD0D5E11170FD8 /* StorageLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3897AC62625D1C5FC7EA388E /* StorageLocation.swift */; };
 		2209A4399875BC69C023823F /* BrandGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585703E5570955DA09EFA92F /* BrandGlyph.swift */; };
 		2235A409058A0FD2D75FC611 /* ActivityLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E1B17E8B700C660A64CB9F /* ActivityLog.swift */; };
 		23907023F23A784ED7B40007 /* SnapshotWindows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7D2D2D3AF38380F30C3F18 /* SnapshotWindows.swift */; };
@@ -71,6 +72,7 @@
 		2F5BE99FA74B4FDE8C264B7C /* RowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowPresentation.swift; sourceTree = "<group>"; };
 		31712237EC06FB6C4160DC4E /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		31A34F7655B60C7926D00D2F /* AppModel+Alerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Alerts.swift"; sourceTree = "<group>"; };
+		3897AC62625D1C5FC7EA388E /* StorageLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageLocation.swift; sourceTree = "<group>"; };
 		3FEB7320D34ED3C3AF60E251 /* Metrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Metrics.swift; sourceTree = "<group>"; };
 		42075C638478D66554EDDE40 /* SnapshotScenarios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotScenarios.swift; sourceTree = "<group>"; };
 		47050DBA4D33A14D65FAC8B0 /* QueueArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueArea.swift; sourceTree = "<group>"; };
@@ -156,6 +158,7 @@
 				66770515465DA8E38F01588A /* QueueRow.swift */,
 				917EC2B3E1AC9A64AAA64741 /* Routes.swift */,
 				2F5BE99FA74B4FDE8C264B7C /* RowPresentation.swift */,
+				3897AC62625D1C5FC7EA388E /* StorageLocation.swift */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -439,6 +442,7 @@
 				613439C182A45CAA5BE81A5C /* StandInResolver.swift in Sources */,
 				29F578B098BB2ABBEA71DFF1 /* StandInSampleQueue.swift in Sources */,
 				EF0BAAC1CACD2F040E58ECB3 /* StandInServices.swift in Sources */,
+				1F8F8358B7BD0D5E11170FD8 /* StorageLocation.swift in Sources */,
 				AA93CFE356996F25FF228CC9 /* TrackRow.swift in Sources */,
 				775E5476B0CF229626EF413F /* Typography.swift in Sources */,
 				BF2FAB9728B74545F4EBD448 /* WaveformView.swift in Sources */,

@@ -196,9 +196,9 @@ extension AppModel {
         skippedUpdateVersion = version
         guard persists else { return }
         if let version {
-            UserDefaults.standard.set(version, forKey: Self.skippedVersionKey)
+            StorageLocation.values.set(version, forKey: Self.skippedVersionKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.skippedVersionKey)
+            StorageLocation.values.removeObject(forKey: Self.skippedVersionKey)
         }
     }
 
