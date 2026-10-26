@@ -73,6 +73,8 @@ struct BatchPreflightTests {
         try FileManager.default.removeItem(at: folders.download)
         let verdict = check(download: reference)
         #expect(blockedMessage(verdict) == "The download folder “TIDAL” no longer exists. Create it again or choose another folder.")
+        // Create Folder is offered beside Choose Folder…; only that click creates it (2.19).
+        if case let .blocked(blocked) = verdict { #expect(blocked.fix == .createFolder) }
         #expect(!FileManager.default.fileExists(atPath: folders.download.path))
     }
 
@@ -81,6 +83,7 @@ struct BatchPreflightTests {
         defer { folders.remove() }
         let verdict = check(download: try FolderReference(url: folders.download), trash: [folders.root])
         #expect(blockedMessage(verdict) == "The download folder “TIDAL” is in the Trash. Put it back or choose another folder.")
+        if case let .blocked(blocked) = verdict { #expect(blocked.fix == .chooseFolder) }
     }
 
     @Test func aDownloadFolderInsideTheLibraryIsRefusedBecauseTheLibraryIsReadOnly() throws {
@@ -144,12 +147,21 @@ struct BatchPreflightTests {
         #expect(verdict.sound == .warningHonk)
     }
 
-    @Test func aSignInThatCannotBeReadIsRefusedWithItsOwnMessage() throws {
+    @Test func aSignInStillBeingReadIsRefusedWithItsOwnMessage() throws {
         let folders = try PreflightFolders()
         defer { folders.remove() }
         let reference = try FolderReference(url: folders.download)
         #expect(blockedMessage(check(download: reference, signIn: .notLoaded))
                 == "Your TIDAL sign-in is still being read. Try again in a moment.")
+    }
+
+    @Test func aSignInThatCannotBeReadIsRefusedWithItsOwnMessageAndTheHonk() throws {
+        let folders = try PreflightFolders()
+        defer { folders.remove() }
+        let reference = try FolderReference(url: folders.download)
+        let verdict = check(download: reference, signIn: .unreadable(.undecodable))
+        #expect(blockedMessage(verdict) == "Your saved TIDAL sign-in is damaged. Sign in again to replace it.")
+        #expect(verdict.sound == .warningHonk)
     }
 
     @Test func nothingToDownloadIsRefused() throws {

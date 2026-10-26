@@ -138,7 +138,10 @@ struct DownloadBatchTests {
         #expect(await batch.counter == Counter(finished: 3, total: 3))
     }
 
-    @Test func rowsAddedToTheQueueDuringABatchWaitForTheNextDownloadAll() async {
+    /// Documents 4.12 rather than guarding a code path: a batch's track list
+    /// is fixed when it's made and has no way to take new rows, so rows
+    /// pasted mid-batch can only wait in the queue for the next Download All.
+    @Test func aBatchsTrackListIsFixedSoRowsPastedMidBatchStayWaitingInTheQueue() async {
         var queue = BatchFixtures.rows(3)
         let gate = BatchGate()
         let downloader = BatchScriptedDownloader([queue[0].id: [.saveWhenOpened(gate)]])
@@ -291,13 +294,14 @@ struct DownloadBatchTests {
         #expect(summary.counts.downloaded == 11)
         #expect(summary.counts.unfinished == 289)
         #expect(log.stopNotices == [Notice(reason: .signInRejected, unfinished: 289)])
-        #expect(summary.text == "Downloads stopped: your TIDAL sign-in is no longer valid. 289 tracks are still in your queue.")
+        #expect(summary.text == "11 downloaded. Downloads stopped: your TIDAL sign-in is no longer valid. 289 tracks are still in your queue.")
+        #expect(summary.notificationText == summary.text)
         #expect(rows.prefix(11).allSatisfy { isDone(log.finalStates[$0.id]) })
         #expect(rows.suffix(289).allSatisfy { log.finalStates[$0.id] == .waiting })
         #expect(summary.returnedRows.map(\.rowID) == rows.suffix(289).map(\.id))
     }
 
-    @Test func rowsBeingRetriedReturnToTheirEarlierFailureWhenTheBatchStops() async {
+    @Test func rowsBeingRetriedReturnToTheirEarlierFailureAndAReplaceToWaitingWhenTheBatchStops() async {
         let reasons = [busyLine, "Failed: Not available in your country", "Failed: the download stopped early. Retry to download it again."]
         var queue = reasons.enumerated().map { BatchFixtures.row("Song \($0.offset)", state: .failed(reason: $0.element)) }
         let damagedLine = "Damaged.flac in your download folder looks damaged"
@@ -314,8 +318,12 @@ struct DownloadBatchTests {
         _ = await runToEnd(batch, log)
         let before = queue
         queue.apply(log.all)
-        #expect(queue == before)
-        #expect(queue[3].lastOutcome == .existingLooksDamaged(fileName: "Damaged.flac"))
+        #expect(Array(queue.prefix(3)) == Array(before.prefix(3)))
+        // The damaged file may be in the Trash already, so the row no longer
+        // claims it's in the folder; Download All checks again (2.3).
+        #expect(queue[3].state == .waiting)
+        #expect(queue[3].lastOutcome == nil)
+        #expect(queue[3].isDownloadable)
     }
 
     @Test func aReplaceRequestAsksTheDownloaderToReplaceTheDamagedFile() async {
@@ -338,7 +346,7 @@ struct DownloadBatchTests {
         let summary = await runToEnd(batch, log)
         #expect(log.stopNotices.count == 1)
         #expect(log.stopNotices.first?.fix == .chooseFolder)
-        #expect(summary.text == "Downloads stopped: the download folder “TIDAL” on Test SSD isn't available. Connect the drive or choose another folder. 3 tracks are still in your queue.")
+        #expect(summary.text == "2 downloaded. Downloads stopped: the download folder “TIDAL” on Test SSD isn't available. Connect the drive or choose another folder. 3 tracks are still in your queue.")
         #expect(rows.prefix(2).allSatisfy { isDone(log.finalStates[$0.id]) })
         #expect(rows.suffix(3).allSatisfy { log.finalStates[$0.id] == .waiting })
     }
@@ -451,9 +459,13 @@ struct DownloadBatchTests {
         let batch = BatchFixtures.batch(rows, downloader: downloader)
         let log = BatchEventLog.listen(to: batch)
         let summary = await runToEnd(batch, log)
-        #expect(summary.ending == .stopped(Notice(reason: .previewsOnly, unfinished: 3)))
+        #expect(summary.ending == .stopped(Notice(reason: .previewsOnly, unfinished: 2)))
         #expect(downloader.calls.count == 1)
-        #expect(rows.allSatisfy { log.finalStates[$0.id] == .waiting })
+        // The row that stopped it says why, so it's clear which track it was (2.23).
+        #expect(log.finalStates[rows[0].id] == .failed(reason: previewLine))
+        #expect(rows.dropFirst().allSatisfy { log.finalStates[$0.id] == .waiting })
+        #expect(summary.counts.failed == 1)
+        #expect(log.stopNotices.count == 1)
     }
 
     @Test func aPreviewAfterASavedTrackFailsOnlyItsRow() async {
@@ -477,9 +489,10 @@ struct DownloadBatchTests {
         let batch = BatchFixtures.batch(rows, downloader: downloader)
         let log = BatchEventLog.listen(to: batch)
         let summary = await runToEnd(batch, log)
-        #expect(summary.ending == .stopped(Notice(reason: .previewsOnly, unfinished: 2)))
+        #expect(summary.ending == .stopped(Notice(reason: .previewsOnly, unfinished: 1)))
         #expect(log.finalStates[rows[0].id] == .skipped(reason: "Already in your download folder"))
-        #expect(log.finalStates[rows[1].id] == .waiting)
+        #expect(log.finalStates[rows[1].id] == .failed(reason: previewLine))
+        #expect(log.finalStates[rows[2].id] == .waiting)
     }
 
     // MARK: - 1.7 offline
@@ -578,6 +591,25 @@ struct DownloadBatchTests {
         await batchEventually { log.summary != nil }
         #expect(log.summary?.counts.downloaded == 2)
         #expect(keepAwake.history == [true, false, true, false])
+    }
+
+    @Test func onAMeteredNetworkTheTimedRechecksForAnUnreachableTIDALDoNotAsk() async {
+        let rows = BatchFixtures.rows(1)
+        // A phone hotspot with no data: the Mac has a connection, TIDAL can't be reached.
+        let network = BatchStandInNetwork(online: true, metered: true)
+        let clock = BatchGateClock()
+        let downloader = BatchScriptedDownloader([rows[0].id: [.fail(.offline), .fail(.offline)]])
+        let batch = BatchFixtures.batch(rows, downloader: downloader, network: network, clock: clock)
+        let log = BatchEventLog.listen(to: batch)
+        await batch.start()
+        await batchEventually { clock.sleeping == 1 }
+        clock.fire()
+        await batchEventually { clock.sleeping == 1 && clock.sleeps.count == 2 }
+        clock.fire()
+        await batchEventually { log.summary != nil }
+        #expect(clock.sleeps == [.seconds(10), .seconds(20)])
+        #expect(!log.all.contains(.askToResume))
+        #expect(log.summary?.counts.downloaded == 1)
     }
 
     @Test func cancellingTheMeteredQuestionPutsTheRowsBack() async {
@@ -763,6 +795,29 @@ struct DownloadBatchTests {
         #expect(log.summary?.text == "Nothing downloaded.")
         #expect(downloader.calls.count == 1)
         #expect(!keepAwake.isHeld)
+    }
+
+    @Test func removingThePausedRowAndThenTheRowsAfterItEndsTheWait() async {
+        let rows = BatchFixtures.rows(3)
+        let network = BatchStandInNetwork(online: false)
+        let sounds = BatchRecordingSounds()
+        let downloader = BatchScriptedDownloader([rows[0].id: [.fail(.offline)]])
+        let batch = BatchFixtures.batch(rows, downloader: downloader, network: network, sounds: sounds)
+        let log = BatchEventLog.listen(to: batch)
+        await batch.start()
+        await batchEventually { network.waiting == 1 }
+        await batch.remove(rows[0].id)
+        await batch.remove(rows[1].id)
+        #expect(network.waiting == 1)
+        await batch.remove(rows[2].id)
+        // The internet never comes back here: the batch ends on its own.
+        await batchEventually { log.summary != nil }
+        #expect(network.waiting == 0)
+        #expect(log.summary?.ending == .finished)
+        #expect(log.summary?.text == "Nothing downloaded.")
+        #expect(!log.all.contains(.askToResume))
+        #expect(sounds.all == [.downloadChime])
+        #expect(downloader.calls.count == 1)
     }
 
     @Test func aRowRemovedBeforeTheStartIsNeverShownAsWaiting() async {

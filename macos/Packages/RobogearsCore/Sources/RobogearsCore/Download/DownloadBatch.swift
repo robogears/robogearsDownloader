@@ -37,9 +37,8 @@ public actor DownloadBatch {
     public struct Track: Sendable, Equatable {
         public var request: TrackDownloadRequest
         /// A failed row being retried returns to this failure if the batch
-        /// stops before it finishes; a damaged-file row being replaced
-        /// returns to its "looks damaged" line. Anything else returns to
-        /// waiting.
+        /// stops before it finishes. Anything else, a damaged-file row being
+        /// replaced included, returns to waiting.
         public var stateBefore: QueueItem.DownloadState
         public var outcomeBefore: TrackDownloadOutcome?
 
@@ -255,7 +254,9 @@ public actor DownloadBatch {
         }
         emit(.started(rowIDs: pendingRowIDs(), folder: folder))
         // A row removed before the start has left the batch (2.13): it
-        // isn't marked "Waiting".
+        // isn't marked "Waiting". Known limit: a failed row being retried
+        // is saved as plain waiting while it waits here, so a crash (not a
+        // Quit, which hands back its earlier state) loses its reason.
         for rowID in pendingRowIDs() {
             emit(.row(RowUpdate(rowID: rowID, state: .queued)))
         }
@@ -308,14 +309,14 @@ public actor DownloadBatch {
         case .running:
             entries[index].status = .removed(savedAnyway: nil)
             attemptTask?.cancel()
-            // Waiting for the network for a row that's gone, with nothing
-            // after it, would wait for nothing.
-            if isPaused, nextPending() == nil {
-                pauseTask?.cancel()
-                answerResumeQuestion(false)
-            }
         case .finished, .removed, .returned:
             return
+        }
+        // Waiting for the network once every row it was for has gone would
+        // wait for nothing, whichever order they were removed in.
+        if isPaused, !entries.indices.contains(where: isRunning), nextPending() == nil {
+            pauseTask?.cancel()
+            answerResumeQuestion(false)
         }
         emit(.rowRemoved(rowID))
         emitCounter()
@@ -417,8 +418,10 @@ public actor DownloadBatch {
             // the plan, not the track (2.23, 1.10). "First" counts from the
             // first track saved, so rows skipped as already in the folder
             // at the start can't hide it; after a save, a preview fails only
-            // its own row.
+            // its own row. Either way the row fails with its preview line,
+            // as 2.23 says, so it names the track that stopped the batch.
             if failure == .previewOnly, !savedATrack {
+                finishRow(index, .failure(failure))
                 stopReason = .previewsOnly
                 return
             }
@@ -503,7 +506,10 @@ public actor DownloadBatch {
         var resume = (try? await wait.value) != nil
         pauseTask = nil
         guard finalSummary == nil else { return false }
-        if resume, halt == nil, options.askBeforeResumingOnMeteredNetwork,
+        // Ask only when the connection itself came back. A timed recheck
+        // stays on the network the batch was already using, so asking there
+        // would repeat the question every round (1.7).
+        if resume, unreachableRound == nil, halt == nil, options.askBeforeResumingOnMeteredNetwork,
            await network.currentStatus().isMetered, halt == nil {
             emit(.askToResume)
             resume = await withCheckedContinuation { resumeQuestion = $0 }
@@ -564,14 +570,15 @@ public actor DownloadBatch {
     }
 
     /// Unfinished rows go back to waiting with no badge; rows being retried
-    /// go back to their earlier failure and reason (2.1, 2.4).
+    /// go back to their earlier failure and reason (2.1, 2.4). A row being
+    /// replaced goes back to waiting too: its damaged file may already be in
+    /// the Trash (DownloadFolderPlanning.decide), so "looks damaged" could be
+    /// false, while Download All checks the folder again and says what's true.
     static func putBack(_ track: Track) -> RowUpdate {
         switch track.stateBefore {
         case let .failed(reason):
             return RowUpdate(rowID: track.rowID, state: .failed(reason: reason), outcome: track.outcomeBefore, message: reason)
-        case let .skipped(reason):
-            return RowUpdate(rowID: track.rowID, state: .skipped(reason: reason), outcome: track.outcomeBefore, message: reason)
-        case .waiting, .queued, .downloading, .done:
+        case .waiting, .queued, .downloading, .done, .skipped:
             return RowUpdate(rowID: track.rowID, state: .waiting)
         }
     }

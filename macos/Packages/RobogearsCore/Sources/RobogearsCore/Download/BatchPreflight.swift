@@ -66,7 +66,8 @@ public enum BatchPreflight {
         guard case let .available(folder) = status else {
             let message = Folders.message(for: status, reference: downloadFolder, role: "download folder")
                 ?? "The download folder isn't available. Choose another folder."
-            return .blocked(Blocked(message: message, fix: .chooseFolder))
+            // A folder that's gone offers Create Folder as well (2.19).
+            return .blocked(Blocked(message: message, fix: status == .missing ? .createFolder : .chooseFolder))
         }
         // Checked again at every start, since folders can be moved in Finder (2.11).
         if let libraryFolder,

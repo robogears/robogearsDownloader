@@ -85,9 +85,20 @@ struct BatchSummaryTests {
         let notice = Notice(reason: .signInRejected, unfinished: 288)
         let s = summary(Array(repeating: saved(), count: 11) + [failed(.busy)], ending: .stopped(notice), unfinished: 288)
         #expect(s.sound == .finishedWithProblems)
-        #expect(s.text == notice.text)
-        #expect(s.notificationText == notice.text)
         #expect(!s.isComplete)
+    }
+
+    @Test func aStoppedBatchSaysWhatItDidBeforeItsNotice() {
+        let notice = Notice(reason: .signInRejected, unfinished: 288)
+        let s = summary(Array(repeating: saved(), count: 11) + [failed(.busy)], ending: .stopped(notice), unfinished: 288)
+        #expect(s.text == "11 downloaded, 1 failed. Downloads stopped: your TIDAL sign-in is no longer valid. 288 tracks are still in your queue.")
+        #expect(s.notificationText == s.text)
+        let withNotes = summary([saved(notes: [.withoutCoverArt]), already], ending: .stopped(notice), unfinished: 288)
+        #expect(withNotes.text == "1 downloaded, 1 already in your folder. 1 without cover art. Downloads stopped: your TIDAL sign-in is no longer valid. 288 tracks are still in your queue.")
+        // Stopped at the first track: the notice alone says it all.
+        let atOnce = summary([], ending: .stopped(notice), unfinished: 288)
+        #expect(atOnce.text == notice.text)
+        #expect(atOnce.notificationText == notice.text)
     }
 
     @Test func aCancelledBatchHasNoEndingSoundBecauseTheCancelChimeAlreadyPlayed() {

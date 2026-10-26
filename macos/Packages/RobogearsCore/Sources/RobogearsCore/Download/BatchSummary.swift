@@ -77,8 +77,11 @@ extension DownloadBatch {
     public enum Fix: Sendable, Equatable {
         /// Sign In…, which opens the sign-in sheet (1.3, 1.6).
         case signIn
-        /// Choose Folder…, for a missing, unplugged or refused folder (2.11, 2.19).
+        /// Choose Folder…, when the download folder can't be used (2.11, 2.19).
         case chooseFolder
+        /// Create Folder beside Choose Folder…, for a download folder that
+        /// no longer exists (2.19). Only the person's click creates it.
+        case createFolder
     }
 
     // MARK: - Stop notice
@@ -93,6 +96,9 @@ extension DownloadBatch {
             case subscriptionInactive
             /// The first track TIDAL streamed in this batch was only a
             /// preview: probably the plan, but TIDAL didn't say so (2.23).
+            /// Its own reason rather than `subscriptionInactive`, because
+            /// TIDAL never said the plan had lapsed. That row fails with
+            /// 2.23's preview line; the rest go back to waiting (2.1).
             case previewsOnly
             /// The folder's own message, from 2.19's list.
             case folderUnavailable(message: String)
@@ -276,12 +282,15 @@ extension DownloadBatch {
         }
 
         /// The summary line (2.8). Always carries the result, because a
-        /// sound alone isn't accessible.
+        /// sound alone isn't accessible: a stopped batch says what it did
+        /// before its notice ("11 downloaded. Downloads stopped: …").
         public var text: String {
             let c = counts
             switch ending {
             case let .stopped(notice):
-                return notice.text
+                let parts = resultParts(includeDownloaded: c.downloaded > 0)
+                guard !parts.isEmpty else { return notice.text }
+                return parts.joined(separator: ", ") + "." + notesSentence + " " + notice.text
             case .cancelled, .quit:
                 var parts = ["\(c.downloaded) downloaded"] + resultParts(includeDownloaded: false)
                 if c.unfinished > 0 { parts.append("\(c.unfinished) still in your queue") }
@@ -318,15 +327,16 @@ extension DownloadBatch {
         }
 
         /// The text for the opt-in "downloads finished" notification (2.12):
-        /// "Downloaded 47 tracks. 2 failed." Nil when the person ended the
-        /// batch themselves, or nothing ran.
+        /// "Downloaded 47 tracks. 2 failed." A stopped batch uses its summary
+        /// line, counts and notice both. Nil when the person ended the batch
+        /// themselves, or nothing ran.
         public var notificationText: String? {
             let c = counts
             switch ending {
             case .cancelled, .quit:
                 return nil
-            case let .stopped(notice):
-                return notice.text
+            case .stopped:
+                return text
             case .finished:
                 if c.finished == 0 { return nil }
                 var sentences: [String] = []
