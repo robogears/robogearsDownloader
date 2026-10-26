@@ -73,6 +73,7 @@ enum SelfChecks {
         guard await storageStaysInTheInstrumentFolder() else { return }
         presentationRules()
         textRules()
+        waveformRules()
         contrastTableMatchesAssets()
         await addFlows()
         await undoFlows()
@@ -82,7 +83,8 @@ enum SelfChecks {
         await firstLaunchFlows()
         oldFilesFlows()
         settingsRules()
-        updateRules()
+        await signInAlertFlows()
+        await updateRules()
     }
 
     // MARK: Pure rules
@@ -144,6 +146,35 @@ enum SelfChecks {
                "the prominent label takes the canvas colour only on the ink fill")
         let lines = Set((0..<10).map { LoadingLines.line(seed: 3, tick: $0) })
         expect(lines.count == 10 && LoadingLines.line(seed: 3, tick: 0) != LoadingLines.line(seed: 3, tick: 1), "loading lines rotate through all ten")
+    }
+
+    // MARK: Waveform (DESIGN_DIRECTION 3.4)
+
+    /// Review, 26 Oct: under 200 pt the 1 pt bars overlapped and their alpha
+    /// stacked, so an unplayed waveform at the 720 pt window looked played.
+    private static func waveformRules() {
+        let loud = [Float](repeating: 1, count: 200)
+        func layout(_ width: CGFloat, scale: CGFloat = 2, progress: Double = 0, hover: Double? = nil) -> [WaveformBars.Bar] {
+            WaveformBars.layout(peaks: loud, size: CGSize(width: width, height: Metrics.waveformHeight), scale: scale,
+                                progress: progress, hover: hover, unplayedAlpha: 0.22, hoverMaxAlpha: 0.60)
+        }
+        for width in [30, 120.5, 185, 199, 200, 333.3, 560] as [CGFloat] {
+            for scale in [1, 2] as [CGFloat] {
+                let rects = layout(width, scale: scale).map(\.rect).sorted { $0.minX < $1.minX }
+                let overlaps = zip(rects, rects.dropFirst()).contains { $1.minX < $0.maxX - 0.001 }
+                let alphas = Set(layout(width, scale: scale).map(\.alpha))
+                expect(!overlaps && alphas == [0.22] && (rects.last?.maxX ?? .infinity) <= width + 0.5,
+                       "a \(width) pt waveform at \(Int(scale))x: bars never overlap, so unplayed stays at 22 %")
+            }
+        }
+        expect(layout(30).count == 30 && layout(600).count == 200, "one bar per point under 200 pt, one per peak above")
+        expect(layout(30, progress: 0.5).filter { $0.alpha == 1 }.count == 15
+               && layout(600, progress: 0.5).filter { $0.alpha == 1 }.count == 100, "the played half is half the bars at any width")
+        // The pointer over a bar's centre: that bar reaches 60 %, the far ones stay at 22 %.
+        let narrow = layout(30, hover: 14.5 / 30).map(\.alpha)
+        let wide = layout(600, hover: 100.5 / 200).map(\.alpha)
+        expect(abs((narrow.max() ?? 0) - 0.60) < 0.001 && abs((wide.max() ?? 0) - 0.60) < 0.001
+               && narrow.min() == 0.22 && wide.min() == 0.22, "hover brightens the bar under the pointer to 60 % at any width")
     }
 
     // MARK: Colours
@@ -343,6 +374,40 @@ enum SelfChecks {
         expect(t.batch?.total == 1 && t.batch?.isDownloadAll == false, "retry batch holds the failed row only")
         _ = await wait(30) { t.batch == nil }
         expect(t.rows.count == 2, "retry leaves the waiting row alone")
+
+        await batchStartedAsTheLastEnds()
+    }
+
+    /// Review, 26 Oct: the end of a batch waited on the queue save before
+    /// ending its keep-awake and Dock bar, so a batch started in that moment
+    /// lost its own and the first one's never ended. This model saves (into
+    /// a scratch folder) so the save really waits.
+    private static func batchStartedAsTheLastEnds() async {
+        let support = scratchFolder("Support")
+        var settings = AppSettings()
+        settings.playSoundEffects = false
+        settings.downloadFolder = try? FolderReference(url: scratchFolder("Downloads"))
+        let m = AppModel(services: StandIn.services(), player: StandInPreviewPlayer(), settings: settings,
+                         settingsStore: SettingsStore(file: AppPaths.settingsFile(in: support)),
+                         queueStore: QueueStore(file: AppPaths.queueFile(in: support)), update: nil)
+        m.prepareForSnapshot()
+        m.signInState = .signedIn(country: nil)
+        let first = QueueRow(item: StandIn.item("Low Tide 0", artist: "Coastline"))
+        first.item.state = .failed(reason: "TIDAL couldn't send this track. Try again later.")
+        m.rows = [first] + (1..<6).map { QueueRow(item: StandIn.item("Low Tide \($0)", artist: "Coastline")) }
+        m.retry([first.id])
+        expect(m.persists && m.batch?.total == 1, "a one-track batch runs on a model that saves")
+        // Start the next batch the first moment the main actor sees no batch.
+        let end = Date().addingTimeInterval(30)
+        while m.batch != nil, Date() < end { await Task.yield() }
+        m.downloadAll()
+        let started = m.batch != nil
+        try? await Task.sleep(for: .milliseconds(400))
+        expect(started && m.batch != nil && m.awakeActivity != nil,
+               "a batch started as the last one ends keeps its own keep-awake (the Mac stays awake)")
+        m.stopDownloads()
+        _ = await wait(30) { m.batch == nil }
+        expect(m.awakeActivity == nil, "and it ends with that batch")
     }
 
     // MARK: Menu commands (DESIGN_DIRECTION 5)
@@ -356,6 +421,8 @@ enum SelfChecks {
         b.item.state = .failed(reason: "TIDAL couldn't send this track. Try again later.")
         f.rows = [a, b, QueueRow(item: StandIn.item("Afterglow"))]
         expect(f.retryTitle == "Retry All Failed (2)", "retry names the failed count")
+        expect(BatchSummary.Button.retryFailed(2).title == f.retryTitle,
+               "the summary notice and the queue header give Retry the same name")
         f.selection = [a.id]
         expect(f.retryTitle == "Retry Selected", "retry follows the selection")
 
@@ -366,12 +433,26 @@ enum SelfChecks {
         let m = model(folder: folder)
         m.rows = (0..<8).map { QueueRow(item: StandIn.item("Halcyon \($0)", artist: "Harbour Lights")) }
         m.downloadAll()
+        expect(m.canStopFromMenu && m.stopCommandTitle == "Stop Downloads", "during a batch the menu offers Stop Downloads")
         m.sheet = .whatsNew
         expect(m.isModalUp && !m.canDownload, "with a sheet up ⌘↩ has nothing to start")
+        expect(!m.canStopFromMenu, "with a sheet up the menu's ⌘. is unavailable; the sheet's own ⌘. answers")
         m.cancelFrontmost()
         expect(m.sheet == nil && m.batch?.stoppedByPerson == false, "⌘. closes the sheet first; downloads keep going")
+        // Review, 26 Oct: an alert used to be skipped, so ⌘. stopped the
+        // downloads and left "Update now or when downloads finish?" up.
+        m.alert = .updateDuringBatch(remaining: 8)
+        m.sheet = nil
+        expect(!m.canStopFromMenu, "with an alert up the menu's ⌘. is unavailable")
+        m.cancelFrontmost()
+        expect(m.alert == nil && m.batch?.stoppedByPerson == false, "⌘. closes an alert first; downloads keep going")
+        m.settingsAlert = .resetFolders
+        m.cancelFrontmost()
+        expect(m.settingsAlert == nil && m.batch?.stoppedByPerson == false, "⌘. closes Settings' alert first; downloads keep going")
         m.beginAdd(.link("https://tidal.com/browse/album/123"), description: "tracks from this link")
         expect(m.adding != nil, "adding works during a batch")
+        expect(m.canStopFromMenu && m.stopCommandTitle == "Stop Adding Tracks",
+               "with an add running during a batch, the menu item says it stops the add")
         m.cancelFrontmost()
         _ = await wait { m.adding == nil }
         expect(m.batch != nil && m.batch?.stoppedByPerson == false, "⌘. stops the add before the downloads")
@@ -451,17 +532,24 @@ enum SelfChecks {
                    && content.action(for: .alertFirstButtonReturn) == content.defaultButton?.action,
                    "\(route.id): the default is the first NSAlert button and answers Return")
         }
+        expect(content(of: routes).allSatisfy { $0.defaultButton?.title != "Cancel" }, "Cancel is never the default button")
         let quit = AlertRoute.quitDuringBatch(remaining: 12).content
+        let quitAlert = quit.makeNSAlert()
         expect(quit.title == "Quit while 12 tracks are still downloading?" && quit.defaultButton?.title == "Keep Downloading"
-               && quit.defaultButton?.role == .cancel && quit.action(for: .alertSecondButtonReturn) == .quit,
-               "quit during a batch: Keep Downloading is the default and Escape")
+               && quit.defaultButton?.role == .cancel && quit.action(for: .alertSecondButtonReturn) == .quit
+               && quitAlert.buttons.last?.title == "Quit" && quitAlert.buttons.last?.keyEquivalent == "",
+               "quit during a batch: Keep Downloading answers Return; Quit has no key (Escape is a live check)")
         expect(AlertRoute.quitDuringBatch(remaining: 1).content.title == "Quit while 1 track is still downloading?", "quit alert singular")
         let update = AlertRoute.updateDuringBatch(remaining: 12).content
         expect(update.defaultButton?.action == .updateWhenDownloadsFinish && update.buttons.contains { $0.role == .cancel },
                "update during a batch: waiting is the default; Cancel is there")
-        expect(AlertRoute.resetFolders.content.defaultButton?.role == .cancel
-               && AlertRoute.resetFolders.content.buttons.contains { $0.role == .destructive && $0.action == .resetFolders },
-               "Reset Folders: Cancel is the default, Reset is destructive")
+        // Review, 26 Oct (alerts.md › Buttons): the person chose Reset
+        // Folders… on purpose, so Reset is the default and not red; this
+        // replaces the earlier rule that made Cancel the default.
+        let reset = AlertRoute.resetFolders.content
+        expect(reset.defaultButton?.action == .resetFolders && reset.defaultButton?.role == .normal
+               && reset.buttons.contains { $0.title == "Cancel" && $0.role == .cancel && !$0.isDefault },
+               "Reset Folders: Reset is the default and not destructive; Cancel answers Escape")
         expect(AlertRoute.moveToApplications.content.defaultButton?.action == .moveToApplications
                && AlertRoute.moveToApplications.content.buttons.contains { $0.title == "Not Now" && $0.role == .cancel },
                "Move to Applications: Move is the default, Not Now cancels")
@@ -476,6 +564,8 @@ enum SelfChecks {
                && QuitDecision.make(batch: batch, quitConfirmed: false, quittingForUpdate: true) == .quit,
                "a confirmed quit or an update's quit goes straight through")
     }
+
+    private static func content(of routes: [AlertRoute]) -> [AlertContent] { routes.map(\.content) }
 
     // MARK: First launch (4.11; D4 5.11, 5.15)
 
@@ -496,11 +586,14 @@ enum SelfChecks {
         // One after the other, never together; the old-files notice is
         // remembered in the settings file (AppSettings.oldAppNoticeShown).
         let m = model()
+        // The storage check recorded the offer already; start from "never asked".
+        StorageLocation.values.removeObject(forKey: FirstLaunch.moveOfferedKey)
+        let before = StorageLocation.values.bool(forKey: FirstLaunch.moveOfferedKey)
         m.firstLaunchQueue = [.moveToApplications, .oldFiles]
         m.presentNextFirstLaunchNotice()
         let asked = await wait(5) { m.alert == .moveToApplications }
         expect(asked && m.sheet == nil, "the move offer comes alone")
-        expect(StorageLocation.values.bool(forKey: FirstLaunch.moveOfferedKey), "the move offer is remembered")
+        expect(!before && StorageLocation.values.bool(forKey: FirstLaunch.moveOfferedKey), "the move offer is remembered once shown")
         expect(!m.settings.oldAppNoticeShown, "the old-files notice isn't marked before it shows")
         m.alert = nil
         let second = await wait(5) { m.sheet == .oldFiles }
@@ -613,9 +706,49 @@ enum SelfChecks {
                && UpdateStatusLine.offline.text == "No internet connection", "offline and rate limit read differently")
     }
 
+    // MARK: Sign in to continue (4.6; D4 1.2, 1.3)
+
+    private static func signInAlertFlows() async {
+        // Review, 26 Oct: the alert's Sign In… skipped the one-at-a-time
+        // rule, so a second sign-in could run beside Settings' own.
+        let pending = PendingAdd(source: .tracklist(text: "", name: nil), description: "2 tracks from pasted text")
+        let s = model(signedIn: false)
+        s.isSettingsSignInPresented = true
+        s.perform(.signIn(pending))
+        let besideSettings = await wait(1.5) { s.sheet != nil }
+        expect(!besideSettings && s.activity.entries.last?.text == "Finish signing in to TIDAL in Settings, then try again.",
+               "Sign In… in the alert opens no second sign-in while Settings signs in, and says why")
+        s.isSettingsSignInPresented = false
+        s.batch = BatchState(folder: URL(fileURLWithPath: "/tmp/none"), ids: [], total: 3, isDownloadAll: true)
+        s.perform(.signIn(pending))
+        let duringBatch = await wait(1.5) { s.sheet != nil }
+        expect(!duringBatch, "Sign In… in the alert opens no sign-in during a batch")
+        s.batch = nil
+        s.perform(.signIn(pending))
+        let opened = await wait(5) { s.sheet != nil }
+        expect(opened && s.sheet == .signIn(resumeAdd: pending), "otherwise Sign In… opens the sign-in sheet")
+
+        // Review, 26 Oct: Search TIDAL… on a "Not on TIDAL" row, signed out,
+        // came back after sign-in as a plain search that added a new row.
+        let p = model(signedIn: false)
+        let lost = QueueRow(item: StandIn.item("Midnight Static"))
+        p.rows = [lost]
+        p.searchTIDAL(for: lost.id)
+        guard case .signInToContinue(let held) = p.alert else {
+            expect(false, "Search TIDAL… signed out asks to sign in")
+            return
+        }
+        expect(held.pickOneRowID == lost.id, "the held search remembers its row")
+        p.alert = nil
+        p.signInState = .signedIn(country: nil)
+        p.continueAfterSignIn(held)
+        let picking = await wait(10) { if case .pickOne(let id, _, _) = p.sheet { id == lost.id } else { false } }
+        expect(picking && p.rows.count == 1, "after sign-in, Search TIDAL… comes back in pick-one mode for its row")
+    }
+
     // MARK: Updates (4.2, 4.8; D4 5.9, 5.12)
 
-    private static func updateRules() {
+    private static func updateRules() async {
         expect(UpdateControlState.available(version: "0.1.32").title == "Update to 0.1.32"
                && UpdateControlState.available(version: "0.1.32").isEnabled, "update control: Update to 0.1.32")
         expect(UpdateControlState.downloading(percent: 42).title == "Downloading 42%"
@@ -633,6 +766,21 @@ enum SelfChecks {
         m.updateAfterBatch = false
         m.perform(.updateNow)
         expect(m.updateAfterBatch && m.batch?.stoppedByPerson == true, "Update Now stops the downloads, then updates")
+
+        // Review, 26 Oct: the batch can end while the alert is still up.
+        // Either button then updates at once; neither waits for a batch
+        // that's gone (which left the control stuck on "Relaunching…").
+        for (button, name) in [(AlertAction.updateWhenDownloadsFinish, "Update When Downloads Finish"), (.updateNow, "Update Now")] {
+            let late = model(folder: scratchFolder("Downloads"))
+            late.rows = [QueueRow(item: StandIn.item("Low Tide 0", artist: "Coastline"))]
+            late.downloadAll()
+            late.updateControlClicked()
+            let ended = await wait(30) { late.batch == nil }
+            expect(ended && late.alert == .updateDuringBatch(remaining: 1), "the alert outlives the batch it asked about")
+            late.alert = nil
+            late.perform(button)
+            expect(!late.updateAfterBatch && late.batch == nil, "\(name) after the batch ended updates now, not after a next batch")
+        }
     }
 }
 #endif

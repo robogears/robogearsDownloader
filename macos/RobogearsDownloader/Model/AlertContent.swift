@@ -6,8 +6,9 @@ import Foundation
 ///
 /// Buttons are listed in AppKit order: the first is the default (rightmost,
 /// or top when macOS stacks three buttons), then the others. Exactly one
-/// button is the default, and it is always the safe choice (`alerts.md ›
-/// Buttons`).
+/// button is the default: the safe choice when the alert interrupts, or
+/// the action the person deliberately asked for (Reset Folders…). Cancel is
+/// never the default (`alerts.md › Buttons`).
 struct AlertContent: Equatable {
     var title: String
     var message: String?
@@ -52,7 +53,8 @@ extension AlertRoute {
                 ])
 
         case .quitDuringBatch(let n):
-            // 4.9: Keep Downloading is the default and Escape.
+            // 4.9: Keep Downloading is the default and the cancel choice;
+            // Quit gets no key, so neither Return nor Escape can quit.
             return AlertContent(
                 title: "Quit while \(Formatting.tracks(n)) \(n == 1 ? "is" : "are") still downloading?",
                 message: "Downloads stop. Finished tracks stay in your folder; the rest go back to Waiting.",
@@ -83,14 +85,15 @@ extension AlertRoute {
                 ])
 
         case .resetFolders:
-            // 4.12. Forgetting the folders is undone only by choosing them
-            // again, so Cancel is the default.
+            // 4.12. The person chose Reset Folders… on purpose and nothing on
+            // disk changes, so Reset is the default and not styled as
+            // destructive; Cancel answers Escape (`alerts.md › Buttons`).
             return AlertContent(
                 title: "Forget the download and library folders?",
                 message: "Your TIDAL sign-in stays. Nothing in either folder is changed.",
                 buttons: [
-                    AlertButton(title: "Cancel", role: .cancel, isDefault: true, action: .dismiss),
-                    AlertButton(title: "Reset", role: .destructive, action: .resetFolders),
+                    AlertButton(title: "Reset", isDefault: true, action: .resetFolders),
+                    AlertButton(title: "Cancel", role: .cancel, action: .dismiss),
                 ])
 
         case .moveToApplications:

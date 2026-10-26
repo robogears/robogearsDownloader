@@ -177,10 +177,15 @@ extension AppModel {
         Task { await services.downloader.stop() }
     }
 
-    /// ⌘. honours the frontmost cancellable thing: a sheet › the adding
-    /// cover › the batch (DESIGN_DIRECTION 5).
+    /// ⌘. honours the frontmost cancellable thing: an alert › a sheet › the
+    /// adding cover › the batch (DESIGN_DIRECTION 5). An alert left up must
+    /// never outlive the batch it asks about.
     func cancelFrontmost() {
-        if sheet != nil {
+        if alert != nil {
+            alert = nil
+        } else if settingsAlert != nil {
+            settingsAlert = nil
+        } else if sheet != nil {
             sheet = nil
         } else if adding != nil {
             cancelAdd()
@@ -188,6 +193,12 @@ extension AppModel {
             stopDownloads()
         }
     }
+
+    /// The Queue menu's ⌘. item names what it does. It's unavailable while a
+    /// sheet or alert is up, so ⌘. reaches that sheet's or alert's own
+    /// Cancel and a menu choice never acts behind it.
+    var stopCommandTitle: String { adding != nil ? "Stop Adding Tracks" : "Stop Downloads" }
+    var canStopFromMenu: Bool { (batch != nil || adding != nil) && !isModalUp }
 
     // MARK: The end
 
@@ -232,8 +243,10 @@ extension AppModel {
 
         let complete = !batch.stoppedByPerson && batch.stopCause == nil
         cleanUpAfterBatch(batch, complete: complete)
-        await flushQueue()
 
+        // Everything that belongs to this batch ends before the first await:
+        // a batch started during the save below keeps its own keep-awake,
+        // Dock bar and update decision.
         if let awakeActivity { ProcessInfo.processInfo.endActivity(awakeActivity) }
         awakeActivity = nil
         dockProgress.clear()
@@ -248,6 +261,7 @@ extension AppModel {
             updateAfterBatch = false
             performUpdate()
         }
+        await flushQueue()
     }
 
     func dismissSummary() { summary = nil }

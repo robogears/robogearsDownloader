@@ -74,22 +74,10 @@ struct WaveformView: View {
         let peaks = self.peaks
 
         return Canvas { context, size in
-            guard let peaks, !peaks.isEmpty, size.width >= 1 else { return }
-            let n = peaks.count
-            let pitch = size.width / CGFloat(n)
-            let barWidth = max(1, pitch - 1)
-            let hoverBar = hover.map { $0 * Double(n) - 0.5 }
-            for i in 0..<n {
-                let x = (CGFloat(i) * pitch * scale).rounded() / scale
-                let h = max(1, CGFloat(peaks[i]) * Metrics.waveformHeight * 0.78)
-                let rect = CGRect(x: x, y: ((size.height - h) / 2 * scale).rounded() / scale, width: barWidth, height: h)
-                let played = (Double(i) + 0.5) / Double(n) <= progress
-                var alpha = played ? 1 : unplayedAlpha
-                if !played, let hoverBar {
-                    let d = abs(Double(i) - hoverBar)
-                    if d < 10 { alpha = unplayedAlpha + (hoverMaxAlpha - unplayedAlpha) * (1 - d / 10) }
-                }
-                context.fill(Path(rect), with: .color(ink.opacity(alpha)))
+            guard let peaks else { return }
+            for bar in WaveformBars.layout(peaks: peaks, size: size, scale: scale, progress: progress, hover: hover,
+                                           unplayedAlpha: unplayedAlpha, hoverMaxAlpha: hoverMaxAlpha) {
+                context.fill(Path(bar.rect), with: .color(ink.opacity(bar.alpha)))
             }
             if let hover {
                 let x = (CGFloat(hover) * size.width).rounded(.down) + 0.5
@@ -145,5 +133,51 @@ struct WaveformView: View {
         } else {
             model.seekPreview(rowID, toFraction: 0)
         }
+    }
+}
+
+/// Where the bars go and how strong each is (DESIGN_DIRECTION 3.4), apart
+/// from the drawing so the rule can be checked without drawing.
+enum WaveformBars {
+    struct Bar: Equatable {
+        var rect: CGRect
+        var alpha: Double
+    }
+
+    /// From 200 pt up: one bar per peak, `max(1, pitch − 1)` wide, each x
+    /// rounded to the backing pixel. Narrower, a bar would be under 1 pt and
+    /// neighbours would overlap, stacking their alpha until an unplayed
+    /// waveform looked played (review, 26 Oct). There each 1 pt column draws
+    /// the loudest of its peaks, so bars touch and never overlap; the played
+    /// test and the hover falloff use the column's place in the track.
+    static func layout(peaks: [Float], size: CGSize, scale: CGFloat, progress: Double, hover: Double?,
+                       unplayedAlpha: Double, hoverMaxAlpha: Double) -> [Bar] {
+        guard !peaks.isEmpty, size.width >= 1 else { return [] }
+        let n = peaks.count
+        let columns = size.width / CGFloat(n) < 1 ? max(1, Int(size.width)) : n
+        let pitch = size.width / CGFloat(columns)
+        let barWidth = max(1, pitch - 1)
+        let hoverBar = hover.map { $0 * Double(n) - 0.5 }
+        var bars: [Bar] = []
+        bars.reserveCapacity(columns)
+        for c in 0..<columns {
+            let first = c * n / columns
+            let last = max(first + 1, (c + 1) * n / columns)
+            let peak = peaks[first..<min(n, last)].max() ?? 0
+            let x = (CGFloat(c) * pitch * scale).rounded() / scale
+            let h = max(1, CGFloat(peak) * Metrics.waveformHeight * 0.78)
+            let rect = CGRect(x: x, y: ((size.height - h) / 2 * scale).rounded() / scale, width: barWidth, height: h)
+            // The bar's centre as a fraction of the track; with one bar per
+            // peak this is (i + 0.5) / 200, and `position × 200 − 0.5` is i.
+            let position = (Double(c) + 0.5) / Double(columns)
+            let played = position <= progress
+            var alpha = played ? 1 : unplayedAlpha
+            if !played, let hoverBar {
+                let d = abs(position * Double(n) - 0.5 - hoverBar)
+                if d < 10 { alpha = unplayedAlpha + (hoverMaxAlpha - unplayedAlpha) * (1 - d / 10) }
+            }
+            bars.append(Bar(rect: rect, alpha: alpha))
+        }
+        return bars
     }
 }

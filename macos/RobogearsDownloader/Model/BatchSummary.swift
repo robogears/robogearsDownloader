@@ -25,7 +25,7 @@ struct BatchSummary: Equatable, Sendable, Identifiable {
         var title: String {
             switch self {
             case .openFolder: "Open Folder"
-            case .retryFailed(let n): "Retry Failed (\(Formatting.count(n)))"
+            case .retryFailed(let n): "Retry All Failed (\(Formatting.count(n)))"
             case .chooseFolder: "Choose Folder…"
             case .signIn: "Sign In…"
             case .openExportify: "Open Exportify"

@@ -4,9 +4,10 @@ import SwiftUI
 
 // Settings (DESIGN_DIRECTION 4.12): General · Folders · TIDAL · Updates in the
 // system pane switcher; each pane a grouped Form, 480 pt wide and sized to
-// its content; changes apply at once (no Done); system colours only (the
-// black canvas is content, not chrome). The window title is the pane name
+// its content; changes apply at once (no Done); system colours (the black
+// canvas is content, not chrome). The window title is the pane name
 // and minimize and zoom are dimmed: the Settings scene does both itself.
+// Error text uses StatusFailed, the one failure red the whole app uses.
 
 struct SettingsWindow: View {
     @Bindable var model: AppModel
@@ -103,7 +104,7 @@ private struct GeneralPane: View {
         Form {
             Section {
                 Toggle("Play sound effects", isOn: $model.settings.playSoundEffects)
-                Toggle("Notify When Downloads Finish", isOn: $model.settings.notifyWhenDownloadsFinish)
+                Toggle("Notify when downloads finish", isOn: $model.settings.notifyWhenDownloadsFinish)
                 if model.settings.notifyWhenDownloadsFinish, model.notificationsBlocked {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Notifications for robogears Downloader are turned off in System Settings.")
@@ -169,19 +170,19 @@ private struct FoldersPane: View {
                 if case .library(let message) = model.folderProblem {
                     ProblemLine(message)
                 }
-                LabeledContent("Library index") {
+                // The status is the label's second line (the grouped form
+                // draws it as secondary text), so it never wraps beside Refresh.
+                LabeledContent {
                     HStack(spacing: 8) {
                         if model.libraryStatus.isScanning {
                             ProgressView().controlSize(.small)
                         }
-                        Text(model.libraryStatus.text)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
                         Button("Refresh") { model.rescanLibrary() }
                             .disabled(model.settings.libraryFolder == nil || model.libraryStatus.isScanning)
                     }
+                } label: {
+                    Text("Library index")
+                    Text(model.libraryStatus.text).monospacedDigit()
                 }
                 HStack {
                     Spacer()
@@ -229,14 +230,15 @@ private struct FolderRow: View {
     }
 }
 
-/// Why a folder choice was refused: the symbol, the words, the system red.
+/// Why a folder choice was refused: the symbol, the words, the app's one
+/// failure red (StatusFailed: system red is under 4.5:1 for 13 pt text).
 private struct ProblemLine: View {
     let message: String
     init(_ message: String) { self.message = message }
 
     var body: some View {
         Label(message, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(Color(nsColor: .systemRed))
+            .foregroundStyle(Palette.statusFailed)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -253,7 +255,7 @@ private struct TIDALPane: View {
                 HStack(alignment: .firstTextBaseline) {
                     if model.signInState == .invalid {
                         Label(model.signInStatusText, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Color(nsColor: .systemRed))
+                            .foregroundStyle(Palette.statusFailed)
                     } else {
                         Text(model.signInStatusText)
                     }

@@ -6,8 +6,9 @@ import SwiftUI
 /// everything outside the main window, rendered off-screen at 2× in Light,
 /// Dark and both Increase Contrast looks. Sheets draw on the system window
 /// background in a borderless window (a real sheet hangs from its window's
-/// title bar; the content and controls are the same). Alerts are the real
-/// NSAlert the app presents. Settings panes sit under a real preference-style
+/// title bar; the content and controls are the same). Alerts are NSAlerts
+/// built from the app's AlertContent: the quit alert as presented, the
+/// SwiftUI-presented ones approximately. Settings panes sit under a real preference-style
 /// toolbar. No window is ever shown, nothing is saved, nothing is loaded.
 @MainActor
 enum SnapshotWindows {
@@ -96,7 +97,9 @@ enum SnapshotWindows {
             sheet(OldFilesSheet(model: model(oldItems: ["settings.json", "queue.json", "Cache"])), look: look, to: url)
         })
 
-        // Alerts, exactly as presented (AlertContent → NSAlert).
+        // Alerts from the same AlertContent. The quit alert with the window
+        // closed is exactly this NSAlert; the others are presented through
+        // SwiftUI's `.alert`, so these are close approximations of them.
         let pending = PendingAdd(source: .tracklist(text: "", name: nil), description: "2 tracks from pasted text")
         let alerts: [(String, AlertRoute)] = [
             ("sign-in-to-continue", .signInToContinue(pending)),
@@ -233,7 +236,7 @@ enum SnapshotWindows {
             - Waveforms come back from the disk cache at launch, so nothing downloads again.
             - The **play/pause** key and Control Center work while a preview plays.
             ## Downloads
-            - A track that fails now says why on its row, and **Retry Failed** tries it again.
+            - A track that fails now says why on its row, and **Retry All Failed** tries it again.
             - The Dock icon shows the batch's progress while the window is closed.
 
             ## Requirements

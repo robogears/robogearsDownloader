@@ -10,7 +10,16 @@ extension AppModel {
             break
         case .signIn(let pending):
             // The alert is still leaving; the sheet comes up once it's gone.
-            afterAlertCloses { $0.sheet = .signIn(resumeAdd: pending) }
+            // One sign-in at a time, never during a batch (D4 1.2, 1.3).
+            afterAlertCloses { model in
+                guard model.canChangeSignIn, !model.isSigningIn else {
+                    model.activity.add(.warning, model.canChangeSignIn
+                                       ? "Finish signing in to TIDAL in Settings, then try again."
+                                       : "You can sign in to TIDAL once the downloads finish, then try again.")
+                    return
+                }
+                model.sheet = .signIn(resumeAdd: pending)
+            }
         case .quit:
             quitConfirmed = true
             NSApp.terminate(nil)

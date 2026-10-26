@@ -29,6 +29,9 @@ struct PendingAdd: Equatable, Sendable {
     var source: AddSource
     /// "2 tracks from pasted text", for the alert's sentence.
     var description: String
+    /// Search TIDAL… on this row: after sign-in the search comes back in
+    /// pick-one mode for the row, not as a new add.
+    var pickOneRowID: UUID?
 }
 
 /// System alerts on the main window.

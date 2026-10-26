@@ -78,8 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     /// ⌘Q, Quit and logging out during a batch ask first, app-modal so the
     /// question shows even with the window closed or a sheet up; Keep
-    /// Downloading is the default and Escape (4.9, D4 2.5). An update that
-    /// is quitting to install, or a Quit already chosen, goes straight through.
+    /// Downloading is the default (Return) and Quit has no key, so Escape
+    /// can never quit (4.9, D4 2.5). An update that is quitting to install,
+    /// or a Quit already chosen, goes straight through.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = AppModel.shared
         let decision = QuitDecision.make(batch: model.batch, quitConfirmed: model.quitConfirmed,

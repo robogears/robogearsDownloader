@@ -173,7 +173,8 @@ extension AppModel {
         let query = [row.item.originalTitle ?? row.item.title, row.item.originalArtist ?? row.item.artist]
             .filter { !$0.isEmpty }.joined(separator: " ")
         guard isSignedIn else {
-            alert = .signInToContinue(PendingAdd(source: .line(query), description: "a search for “\(query)”"))
+            alert = .signInToContinue(PendingAdd(source: .line(query), description: "a search for “\(query)”",
+                                                 pickOneRowID: rowID))
             return
         }
         adding = AddingState()
@@ -244,6 +245,10 @@ extension AppModel {
 
     func continueAfterSignIn(_ pending: PendingAdd?) {
         guard let pending else { return }
+        if let rowID = pending.pickOneRowID {
+            searchTIDAL(for: rowID)
+            return
+        }
         switch pending.source {
         case .line(let text) where AddInputKind.classify(text) != .link && !Self.hasSeparator(text):
             beginSearch(text)

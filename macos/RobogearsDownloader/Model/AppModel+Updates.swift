@@ -117,6 +117,12 @@ extension AppModel {
         Task {
             await stageUpdate()
             guard update.phase == .readyToInstall else { return }
+            // A batch started while the update downloaded: it installs when
+            // that batch ends instead of stopping it.
+            if batch != nil {
+                updateAfterBatch = true
+                return
+            }
             await flushQueue()
             update.installStagedUpdate { NSApp.terminate(nil) }
             if case .failed(let message) = update.phase { activity.add(.failed, message) }
@@ -161,7 +167,13 @@ extension AppModel {
     }
 
     /// Update When Downloads Finish: download now, relaunch when the batch ends.
+    /// The batch may have ended while the alert was up: then it updates now.
     func updateWhenDownloadsFinish() {
+        guard batch != nil else {
+            updateAfterBatch = false
+            performUpdate()
+            return
+        }
         updateAfterBatch = true
         if let info = updateInfo {
             activity.add(.update, "robogears Downloader \(info.version) installs when the downloads finish.")
@@ -169,8 +181,14 @@ extension AppModel {
         Task { await stageUpdate() }
     }
 
-    /// Update Now during a batch: stop the batch; the update installs as it ends.
+    /// Update Now during a batch: stop the batch; the update installs as it
+    /// ends. If the batch already ended while the alert was up, it updates now.
     func updateNowDuringBatch() {
+        guard batch != nil else {
+            updateAfterBatch = false
+            performUpdate()
+            return
+        }
         updateAfterBatch = true
         stopDownloads()
     }

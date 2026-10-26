@@ -76,11 +76,9 @@ private struct QueueMenu: View {
         Button(model.downloadButtonTitle) { model.downloadAll() }
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!model.canDownload || model.isModalUp)
-        Button(model.batch == nil && model.adding != nil ? "Stop Adding Tracks" : "Stop Downloads") {
-            model.cancelFrontmost()
-        }
-        .keyboardShortcut(".", modifiers: .command)
-        .disabled(model.batch == nil && model.adding == nil)
+        Button(model.stopCommandTitle) { model.cancelFrontmost() }
+            .keyboardShortcut(".", modifiers: .command)
+            .disabled(!model.canStopFromMenu)
         Button(model.retryTitle ?? "Retry All Failed") { model.retryFromHeader() }
             .keyboardShortcut("r")
             .disabled(model.retryTitle == nil || model.batch != nil)

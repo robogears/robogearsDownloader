@@ -351,12 +351,18 @@ struct SearchResultRow: View {
             Text("In Queue").foregroundStyle(.secondary).fixedSize()
         } else if let match = track.libraryMatch {
             let exact = match.kind == .exact
-            Label(exact ? "In your library" : "Similar version in library",
-                  systemImage: exact ? "books.vertical" : "exclamationmark.triangle.fill")
-                .imageScale(.small)
-                .foregroundStyle(exact ? Color.secondary : Palette.statusSimilar)
-                .fixedSize()
-                .help("Library: \(Formatting.abbreviatedPath(match.path))")
+            // Symbol and words in a plain stack, not a Label: the list starts
+            // a row's separator under a Label's title, which put it under the
+            // mark on these rows and under the title on the rest.
+            HStack(spacing: 4) {
+                Image(systemName: exact ? "books.vertical" : "exclamationmark.triangle.fill")
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+                Text(exact ? "In your library" : "Similar version in library")
+            }
+            .foregroundStyle(exact ? Color.secondary : Palette.statusSimilar)
+            .fixedSize()
+            .help("Library: \(Formatting.abbreviatedPath(match.path))")
         }
     }
 }
@@ -528,7 +534,7 @@ struct OldFilesSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     if let problem {
-                        Text(problem).foregroundStyle(Color(nsColor: .systemRed))
+                        Text(problem).foregroundStyle(Palette.statusFailed)
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -537,7 +543,8 @@ struct OldFilesSheet: View {
                 Button("Show Old Files") { model.showOldFiles() }
                 Spacer()
                 if showsDelete {
-                    Button("Delete Old Sign-in") {
+                    // Can't be undone: red, unlike Move to Trash beside it.
+                    Button("Delete Old Sign-in", role: .destructive) {
                         problem = model.deleteOldSignIn()
                         if problem == nil { signInDeleted = true }
                     }

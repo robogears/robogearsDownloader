@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The app's colours (DESIGN_DIRECTION 3.1). Every one lives in the asset
 /// catalog with Light, Dark and Increase Contrast variants, so they follow
-/// the appearance on their own. Only the main window's content area uses
-/// them; chrome, sheets, Settings and alerts keep the system's colours.
+/// the appearance on their own. The main window's content area uses them;
+/// chrome, sheets, Settings and alerts keep the system's colours, except
+/// that error text everywhere is StatusFailed (system red is under 4.5:1).
 enum Palette {
     /// Asset colours go through NSColor so AppKit resolves them in the
     /// drawing appearance, including the Increase Contrast variants.

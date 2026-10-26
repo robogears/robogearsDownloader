@@ -61,7 +61,16 @@ struct UpdateControl: View {
             }
         }
         .animation(Motion.ease(Motion.fadeIn, reduceMotion: prefs.reduceMotion), value: model.updateControl != nil)
-        .padding(.trailing, model.updateControl != nil ? 8 : 0)
+        .padding(.trailing, Self.trailingSpace(hasControl: model.updateControl != nil))
+    }
+
+    /// macOS 26 puts each toolbar item in its own glass capsule with space
+    /// between them; padding there would sit inside the capsule and push the
+    /// label off-centre. Earlier systems draw no capsules and need the space.
+    static func trailingSpace(hasControl: Bool) -> CGFloat {
+        guard hasControl else { return 0 }
+        if #available(macOS 26, *) { return 0 }
+        return 8
     }
 }
 
