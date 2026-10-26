@@ -765,6 +765,19 @@ struct DownloadBatchTests {
         #expect(!keepAwake.isHeld)
     }
 
+    @Test func aRowRemovedBeforeTheStartIsNeverShownAsWaiting() async {
+        let rows = BatchFixtures.rows(3)
+        let downloader = BatchScriptedDownloader()
+        let batch = BatchFixtures.batch(rows, downloader: downloader)
+        let log = BatchEventLog.listen(to: batch)
+        await batch.remove(rows[1].id)
+        _ = await runToEnd(batch, log)
+        #expect(log.updates(for: rows[1].id).isEmpty)
+        #expect(log.all.contains(.started(rowIDs: [rows[0].id, rows[2].id], folder: BatchFixtures.folder)))
+        #expect(downloader.calledRows == [rows[0].id, rows[2].id])
+        #expect(log.counters.allSatisfy { $0.total == 2 })
+    }
+
     @Test func removingAFinishedRowChangesNothing() async {
         let rows = BatchFixtures.rows(2)
         let batch = BatchFixtures.batch(rows, downloader: BatchScriptedDownloader())

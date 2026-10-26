@@ -253,9 +253,11 @@ public actor DownloadBatch {
             _ = finish()
             return
         }
-        emit(.started(rowIDs: rowIDs, folder: folder))
-        for entry in entries {
-            emit(.row(RowUpdate(rowID: entry.track.rowID, state: .queued)))
+        emit(.started(rowIDs: pendingRowIDs(), folder: folder))
+        // A row removed before the start has left the batch (2.13): it
+        // isn't marked "Waiting".
+        for rowID in pendingRowIDs() {
+            emit(.row(RowUpdate(rowID: rowID, state: .queued)))
         }
         emitCounter()
         setAwake(true)
@@ -421,7 +423,7 @@ public actor DownloadBatch {
                 return
             }
             finishRow(index, .failure(failure))
-            if false {
+            if tidalFailuresInARow >= options.tidalFailuresInARowToStop, nextPending() != nil {
                 stopReason = .tidalFailing(tracksInARow: tidalFailuresInARow)
             }
             return
@@ -590,6 +592,10 @@ public actor DownloadBatch {
         entries.firstIndex { if case .pending = $0.status { true } else { false } }
     }
 
+    private func pendingRowIDs() -> [UUID] {
+        entries.compactMap { if case .pending = $0.status { $0.track.rowID } else { nil } }
+    }
+
     private func isRunning(_ index: Int) -> Bool {
         if case .running = entries[index].status { return true }
         return false
@@ -687,8 +693,10 @@ public actor DownloadBatch {
             }
             Task {
                 let summary = await task.value
-                timer.cancel()
+                // Answer first: a cancelled timer wakes at once and would
+                // otherwise answer "ran out" ahead of the real summary.
                 answer.give(summary)
+                timer.cancel()
             }
         }
     }
