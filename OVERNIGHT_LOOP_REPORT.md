@@ -1,6 +1,8 @@
 # Overnight Loop Report — 2026-10-21
 
-STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane (sheets+Settings), 4 download lanes, resolver lane — all resumed after the usage limit
+STATUS: STOPPED · cycle 0 · 16 done · build+tests GREEN (748) · last: stopped by the owner; six unfinished lanes shelved on their own branches
+
+**TL;DR:** The Swift core is solid on the loop branch (748 tests pass, no warnings, the app target builds). The download pipeline, the resolver and most of the native window are built but unreviewed; each is saved on its own `overnight-loop/shelved/…` branch, and none is merged.
 
 ## Run
 - Started: 22:35 · Branch: overnight-loop/2026-10-21-2235 from main · Ceiling: none
@@ -15,6 +17,7 @@ STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane (
 - 💡 Replace the Electron CI with a macOS-only Swift build — why: the workflow still builds Electron for Windows and Mac, its release job has no actions/checkout (the likely cause of every empty release body) and it pins Node 20 actions — how: one macos-latest job running macos/scripts/package-release.sh, uploading the dmg, zip and both .sha256 files to a draft release, with actions/checkout in the release job. Left for you because the loop doesn't change CI or release config unattended.
 
 ## Progress log (last 20; older lines roll into the tally)
+- 26 Oct, stopped by the owner (/overnightprotocol stop). The three running workflows were stopped and the one leftover test run from this project ended (other projects' builds left alone). None of the six lanes had finished its review, so none was merged into the loop branch: each lane's work, including uncommitted changes saved as "(unverified)" WIP, is pushed to its own shelved branch (see Skipped / shelved). Lane worktrees removed. Loop branch re-verified: 748 tests pass, no warnings.
 - 26 Oct, resumed: all three workflows had been stopped by the usage limit on 22 Oct. The UI lane finished the main window (waveform queue, toolbar, menu bar; 68 self-checks pass, Debug build clean) before the sheets-and-Settings part was cut off; the four download lanes and the resolver were cut off mid-build. Each lane's partial work was saved as an unverified WIP commit on its own branch, and all three workflows were restarted to continue from it. No harm done; nothing reached the loop branch unverified.
 - 01:35 The app now keeps its settings, queue and TIDAL sign-in in a folder of its own (Application Support/com.robogears.downloader) instead of the old Electron folder, as D4 5.11 asks; a helper behind the first-launch notice finds the old app's files by exact name (Move Old Files to Trash leaves update-cache.json and anything unknown alone; Delete Old Sign-in removes token.json for good). Previews show in Control Center's Now Playing (5.13). 748 tests pass.
 - 01:10 Download pipeline started (item 9): the shared shapes are committed (a79f82c) and four lanes are building in parallel — the per-track downloader, the download-folder checks and naming (includes D4 2.6/2.7), a native AAC (.m4a) writer and the batch runner. Resolver and shared TIDAL pace started as its own lane. Done here meanwhile: one version rule for the app (L1), the library index joined to the matcher (L5), and preview part 1 — 200-bar waveform peaks and a 1 GB preview cache with Clear Preview Cache (12 new tests; two checked by breaking the code). 740 tests pass.
@@ -35,11 +38,19 @@ STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane (
 ## Cycle log
 
 ## Completed
-- Total: 14 · recent: ✅ Core lanes 4–8 merged · ✅ Library scanner — 25m · ✅ Windows farewell branch · ✅ Decision-4 document — 20m · ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
+- Total: 16 · recent: ✅ App's own data folder + old-files helper (5.11) · ✅ Now Playing (5.13) · ✅ Waveform peaks + preview cache · ✅ One version rule (L1) · ✅ Library index joined to the matcher (L5) · ✅ Core lanes 4–8 merged · ✅ Library scanner — 25m · ✅ Windows farewell branch · ✅ Decision-4 document — 20m · ✅ App state — 18m · ✅ Release packaging script — 8m · ✅ Design brief — 13m · ✅ Updater core — 25m · ✅ Sound effects — 14m · ✅ Swift project scaffold — 6m
 
 ## Blocked (environment)
 
 ## Skipped / shelved
+Each branch is pushed to GitHub. None has had its independent review yet, and several end in an "(unverified)" WIP commit, so treat them as drafts.
+- `overnight-loop/shelved/download-track` (f613b8d): the per-track downloader (item 9), with audio fetcher, cover fetcher, temporary files, disk space and tagging; its review had started when stopped.
+- `overnight-loop/shelved/download-folder` (4d0dcc7): download-folder decisions, clash naming (D4 2.6/2.7, item L4), the existing-file check and the no-replace move.
+- `overnight-loop/shelved/download-m4a` (482ed8c): the native AAC (.m4a) writer; its last commits are verified by its own tests, no WIP.
+- `overnight-loop/shelved/download-batch` (2a6923d): the batch runner (stop-once, offline pause, honest summary, keep-awake, preflight).
+- `overnight-loop/shelved/resolver` (27fbd6f): links, Spotify, tracklists and search to queue rows, with one shared TIDAL pace (item 16).
+- `overnight-loop/shelved/native-ui` (492351c): the SwiftUI app; main window done and self-checked (64c6cfe), sheets/Settings/About/Dock part-built.
+To continue one later: check it out in its own worktree (`git worktree add ../swiftRobotDownloader-lane-<name> overnight-loop/shelved/<name>`), finish it, run its review → fix round, then merge the lanes one at a time into the loop branch with an integration review.
 
 ## Excluded from commits (secret-shaped or too big — commit them yourself if they're fine)
 
@@ -49,14 +60,14 @@ STATUS: LOOPING · cycle 0 · 16 done · build+tests GREEN · running: UI lane (
 - Kickoff questions went unanswered; these defaults are the direction:
   - Assumed git setup is fine: `git init`, remote `origin` = robogears/robogearsDownloader, `main` pointed at origin/main (b60576d) with a mixed reset, no file changed. Undo: delete the `.git` folder.
   - Assumed no deny rules: the repo tracks `.claude/settings.local.json`, so adding them would commit them. The loop relies on its own rules (branch-only pushes, stage-safe, no force-push).
-  - Assumed decision 4 = my recommended answers, except 2.6 and 2.7, which stay on your literal title-only rule until you confirm.
+  - ~~Assumed decision 4 = my recommended answers, except 2.6 and 2.7, which stay on your literal title-only rule until you confirm.~~ Superseded 21 Oct 23:05 by your "all of the recommended stuff", which includes 2.6 and 2.7.
   - Assumed Light + Dark appearance, with today's pure-black look as the signature.
   - Assumed FFmpeg vs native tagging is decided by tonight's experiment (prefer native if it reproduces the old files' tags exactly).
 - Assumed the Swift app lives in `macos/` and the Electron code stays at the repo root untouched, because the reference documents cite it by path.
 
 ## Test status
 - Baseline: Electron JS files pass `node --check` (11/11); no test suite exists; `node_modules` absent, so the Electron app can't be built or run here; Xcode 27.1 and Swift 6.4 available; no Swift project yet. Full output in .overnight-loop/baseline.txt
-- Latest: RobogearsCore 726/726 tests pass (43 suites), no warnings; app builds (Debug)
+- Latest (26 Oct, at stop): RobogearsCore 748/748 tests pass (47 suites), no build warnings. The shelved branches weren't re-run at stop.
 
 ## Usage-limit waits
 - 22 Oct ~02:00 → 26 Oct: every running workflow agent hit the session limit; resumed from WIP commits on the lane branches.
@@ -69,11 +80,13 @@ git checkout main && git merge --no-ff overnight-loop/2026-10-21-2235
 # if the branch tip is an unverified WIP commit (its message ends "(unverified)"), merge the newest verified one instead:
 #   git merge --no-ff "$(git log -1 --format=%h --invert-grep --grep='(unverified)' overnight-loop/2026-10-21-2235)"
 # to discard a loop-created branch:  git branch -D overnight-loop/2026-10-21-2235
+# the shelved branches are drafts: don't merge them until their review → fix round is done
+git branch -a --list '*overnight-loop/shelved/*'
 ```
 
 <!-- machine-readable footer -->
 ```json
 {"date": "2026-10-21", "branch": "overnight-loop/2026-10-21-2235", "base": "main",
- "cycles": 0, "done": 14, "shelved": 0, "blocked": 0,
- "state": "looping", "build": "green"}
+ "cycles": 0, "done": 16, "shelved": 6, "blocked": 0,
+ "state": "stopped", "build": "green", "tests": 748}
 ```
