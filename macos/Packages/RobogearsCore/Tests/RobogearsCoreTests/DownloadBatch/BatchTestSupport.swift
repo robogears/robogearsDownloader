@@ -109,6 +109,11 @@ final class BatchScriptedDownloader: TrackDownloading {
 
     private let state: Mutex<State>
 
+    /// How long a "downloading until cancelled" step lasts if nothing
+    /// cancels it. Short enough that a batch which stops cancelling makes
+    /// its tests fail in seconds instead of hanging the run for an hour.
+    static let longestDownload: Duration = .seconds(30)
+
     init(_ scripts: [UUID: [Step]] = [:]) {
         state = Mutex(State(scripts: scripts))
     }
@@ -155,7 +160,7 @@ final class BatchScriptedDownloader: TrackDownloading {
         case let .hang(ticks):
             for tick in ticks { progress(tick) }
             do {
-                try await Task.sleep(for: .seconds(3600))
+                try await Task.sleep(for: Self.longestDownload)
             } catch {
                 state.withLock { $0.cleanedUp.append(request.rowID) }
                 throw CancellationError()
@@ -170,7 +175,7 @@ final class BatchScriptedDownloader: TrackDownloading {
             }
             return Self.defaultOutcome(for: request)
         case .saveDespiteCancel:
-            try? await Task.sleep(for: .seconds(3600))
+            try? await Task.sleep(for: Self.longestDownload)
             return Self.defaultOutcome(for: request)
         case let .stuck(gate):
             try? await gate.wait()
