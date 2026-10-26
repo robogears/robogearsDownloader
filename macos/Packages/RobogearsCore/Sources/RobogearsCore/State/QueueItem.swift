@@ -59,6 +59,15 @@ public struct QueueItem: Codable, Equatable, Identifiable, Sendable {
     /// Exact library matches start left out; the person can + Add them.
     public var included: Bool
     public var state: DownloadState
+    /// True while the row waits for the library index to finish (D4 4.20):
+    /// it shows "Checking library…", and Download All holds it until the
+    /// mark is filled in, so no row is ever sent unchecked (rule 4). Nil
+    /// (or false) once checked. Optional so queues saved before this field
+    /// existed load unchanged.
+    public var libraryCheckPending: Bool?
+
+    /// Whether the row still waits for its library check (D4 4.20).
+    public var isLibraryCheckPending: Bool { libraryCheckPending == true }
 
     public init(id: UUID = UUID(), tidalID: Int64?, title: String, version: String? = nil, artist: String,
                 album: String? = nil, durationSeconds: Int? = nil, isrc: String? = nil, hiRes: Bool = false,
