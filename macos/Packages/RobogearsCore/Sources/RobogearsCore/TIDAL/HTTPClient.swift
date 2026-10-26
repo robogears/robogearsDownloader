@@ -686,7 +686,11 @@ private final class StreamingReceiver: NSObject, URLSessionDataDelegate, @unchec
         for (key, value) in http.allHeaderFields {
             if let key = key as? String { headers[key] = "\(value)" }
         }
-        let expected = http.expectedContentLength >= 0 ? http.expectedContentLength : nil
+        // A compressed body arrives decoded, so its length can't be held
+        // against the Content-Length; only an uncompressed one is checked.
+        let encoding = http.value(forHTTPHeaderField: "Content-Encoding")?.lowercased()
+        let isEncoded = encoding.map { !$0.isEmpty && $0 != "identity" } ?? false
+        let expected = !isEncoded && http.expectedContentLength >= 0 ? http.expectedContentLength : nil
         state.withLock { state in
             state.status = http.statusCode
             state.headers = headers

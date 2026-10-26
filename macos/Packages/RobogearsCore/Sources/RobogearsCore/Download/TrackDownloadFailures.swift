@@ -106,6 +106,19 @@ enum TrackDownloadFailures {
         }
     }
 
+    /// True for TIDAL's clear "no": a 404, a 403 or another 4xx other than
+    /// 401 and 429. That is an answer, not a hiccup, so the retries never
+    /// ran and trying again won't change it. For the album details it means
+    /// "Saved with limited tags": 2.15 fails a track only when timeouts,
+    /// server errors or "too many requests" outlast the retries.
+    static func isClearRefusal(_ error: RequestError) -> Bool {
+        switch error {
+        case .notFound, .forbidden: true
+        case let .unexpectedStatus(status, _): (400...499).contains(status)
+        default: false
+        }
+    }
+
     /// True when writing failed because the disk is full.
     static func isOutOfSpace(_ error: any Error) -> Bool {
         if let posix = error as? POSIXError, posix.code == .ENOSPC || posix.code == .EDQUOT { return true }

@@ -189,9 +189,10 @@ public struct TrackDownloader: TrackDownloading {
     }
 
     /// The album's details, which carry the release year, album artist and
-    /// copyright (2.15). An album TIDAL doesn't have is saved with the
-    /// track's own details and "Saved with limited tags"; temporary errors
-    /// that outlast the retries fail the track.
+    /// copyright (2.15). An album TIDAL doesn't have (it answers 404, or
+    /// refuses it outright) is saved with the track's own details and
+    /// "Saved with limited tags"; temporary errors that outlast the retries
+    /// fail the track.
     private func albumDetails(of track: TIDALTrack, request: TrackDownloadRequest) async throws -> (TIDALAlbum?, [SaveNote]) {
         guard let albumID = track.album?.id else {
             log("“\(request.title)”: TIDAL lists no album for this track; saving with its own details.")
@@ -203,8 +204,8 @@ public struct TrackDownloader: TrackDownloading {
                 throw TrackDownloadError.albumDetailsUnavailable
             }
             return (album, [])
-        } catch RequestError.notFound(_) {
-            log("“\(request.title)”: TIDAL has no details for this track's album; saving with the track's own details.")
+        } catch let error as RequestError where TrackDownloadFailures.isClearRefusal(error) {
+            log("“\(request.title)”: TIDAL has no details for this track's album (\(error)); saving with the track's own details.")
             return (nil, [.limitedTags])
         } catch {
             throw TrackDownloadFailures.mapped(error, during: .album)
@@ -446,7 +447,11 @@ public struct TrackDownloader: TrackDownloading {
     }
 
     /// The error the batch sees. A full disk found while writing reports
-    /// the room still missing for this track (2.20).
+    /// the room still missing for this track (2.20). A write that failed
+    /// because the download folder went away meanwhile (its drive was
+    /// unplugged, it was moved to the Trash) is that folder problem, which
+    /// stops the batch once instead of failing this row and then the next
+    /// one at its folder check (2.19, 2.1).
     private func finalError(_ error: any Error, request: TrackDownloadRequest, estimatedBytes: Int64?) -> any Error {
         if error is CancellationError { return error }
         if TrackDownloadFailures.isOutOfSpace(error) {
@@ -457,6 +462,9 @@ public struct TrackDownloader: TrackDownloading {
         let mapped = TrackDownloadFailures.mapped(error, during: .saving)
         if case let .writeFailed(detail)? = mapped as? TrackDownloadError {
             log("“\(request.title)”: saving failed: \(detail)")
+            if let message = DownloadFolderCheck.problem(with: request.folder, trashDirectories: trashDirectories()) {
+                return TrackDownloadError.folderUnavailable(message: message)
+            }
         } else if case let .unreadableAudio(detail)? = mapped as? TrackDownloadError {
             log("“\(request.title)”: TIDAL's audio couldn't be read: \(detail)")
         }

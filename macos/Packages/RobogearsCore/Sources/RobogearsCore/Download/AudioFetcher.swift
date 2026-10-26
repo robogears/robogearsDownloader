@@ -21,10 +21,16 @@ struct AudioFetcher: Sendable {
     let client: HTTPClient
     let retry: RetryPolicy
 
-    /// The CDN gets only the User-Agent, as `fetchBuffer` and
-    /// `downloadDirect` sent it (reference C2).
+    /// The CDN gets the User-Agent `fetchBuffer` and `downloadDirect` sent
+    /// (reference C2), and asks for the body uncompressed. Node sent no
+    /// Accept-Encoding, which means exactly that; URLSession would otherwise
+    /// offer gzip on its own, and a compressed body can't be measured
+    /// against its Content-Length to catch a cut-off transfer.
     static func request(_ url: URL) -> HTTPRequest {
-        HTTPRequest(method: .get, url: url, headers: ["User-Agent": TIDALHeaders.userAgent])
+        HTTPRequest(method: .get, url: url, headers: [
+            "User-Agent": TIDALHeaders.userAgent,
+            "Accept-Encoding": "identity",
+        ])
     }
 
     /// Writes the audio at `location` to a new file at `file`. `progress`

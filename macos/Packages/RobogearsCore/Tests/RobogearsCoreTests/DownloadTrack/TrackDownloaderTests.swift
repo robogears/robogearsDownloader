@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RobogearsCore
 
@@ -194,6 +195,20 @@ struct TrackDownloaderTests {
         #expect(try FLACMetadataReader.read(saved).pictures.count == 1)
     }
 
+    @Test func anAlbumTIDALRefusesOutrightIsSavedWithLimitedTagsRatherThanFailing() async throws {
+        var routes = TrackDLRoutes()
+        routes.album = { _ in .status(403, #"{"status":403,"subStatus":4033}"#) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        guard case let .saved(_, _, notes) = outcome else { Issue.record("not saved: \(outcome)"); return }
+        #expect(notes == [.limitedTags])
+        // A clear answer isn't retried.
+        #expect(world.server.requests(matching: "/v1/albums/").count == 1)
+    }
+
     @Test func albumDetailsThatStayBusyPastTheRetriesFailTheTrack() async throws {
         var routes = TrackDLRoutes()
         routes.album = { _ in .status(503) }
@@ -265,11 +280,14 @@ struct TrackDownloaderTests {
 
     @Test func aCoverThatStaysBusyPastTheRetriesFailsTheTrackAndSavesNothing() async throws {
         var routes = TrackDLRoutes()
-        routes.cover = { _, _ in .status(502, "<html>bad gateway</html>") }
+        routes.cover = { _, _ in .status(502) }
         let world = try TrackDLWorld(routes)
         defer { world.cleanUp() }
 
         await #expect(throws: TrackDownloadError.coverUnavailable) { _ = try await world.download() }
+        // Retried like the audio, and never stepped down to a smaller size.
+        #expect(world.server.requests(matching: "resources.tidal.com").map(\.url.lastPathComponent)
+            == Array(repeating: "1280x1280.jpg", count: 5))
         #expect(world.savedFiles.isEmpty)
         #expect(world.temporaries.registered.isEmpty)
     }
@@ -298,6 +316,29 @@ struct TrackDownloaderTests {
         await #expect(throws: TrackDownloadError.busy) { _ = try await world.download() }
         #expect(Set(world.server.qualitiesAsked) == ["HI_RES_LOSSLESS"])
         #expect(world.server.qualitiesAsked.count == 5)
+    }
+
+    @Test func aHiResRequestThatKeepsTimingOutNeverStepsDown() async throws {
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in .failure(.timedOut) }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.offline) { _ = try await world.download() }
+        #expect(world.server.qualitiesAsked == Array(repeating: "HI_RES_LOSSLESS", count: 5))
+    }
+
+    @Test func aDroppedConnectionOnTheHiResRequestIsRetriedAndNeverStepsDown() async throws {
+        var routes = TrackDLRoutes()
+        routes.playback = { _, attempt in
+            attempt == 0 ? .failure(.networkConnectionLost) : .json(200, TrackDLFixtures.playbackJSON(manifest: .bts(TrackDLFixtures.directURL)))
+        }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        _ = try await world.download()
+
+        #expect(world.server.qualitiesAsked == ["HI_RES_LOSSLESS", "HI_RES_LOSSLESS"])
     }
 
     @Test func tooManyRequestsPastTheRetriesFailsAsBusy() async throws {
@@ -469,6 +510,29 @@ struct TrackDownloaderTests {
         }
     }
 
+    @Test func aSegmentThatIsBusyOnceIsRetriedAndTheTrackIsStillWhole() async throws {
+        let parts = try TrackDLFixtures.dashSegments(of: AudioFixture.data("dash-24-96000.mp4"))
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in
+            .json(200, TrackDLFixtures.playbackJSON(manifest: .dash(segments: 3), audioQuality: "HI_RES_LOSSLESS", bitDepth: 24, sampleRate: 96000))
+        }
+        routes.audio = { path, attempt in
+            if path.hasSuffix("/init.mp4") { return .bytes(parts.initialization) }
+            let number = Int(path.split(separator: "/").last?.split(separator: ".").first ?? "") ?? 0
+            if number == 2 && attempt == 0 { return .status(503) }
+            return .bytes(parts.media[number - 1])
+        }
+        let world = try TrackDLWorld(routes)
+        defer { world.cleanUp() }
+
+        let outcome = try await world.download()
+
+        #expect(outcome == .saved(fileName: "Blue Lantern.flac", quality: .flac(bitDepth: 24, sampleRate: 96000), notes: []))
+        #expect(world.server.requests(matching: "/dash/2.mp4").count == 2)
+        let saved = try Data(contentsOf: world.folder.appendingPathComponent("Blue Lantern.flac"))
+        #expect(try AudioFixture.frames(ofFLAC: saved) == AudioFixture.frames(ofFLAC: AudioFixture.data("ffmpeg-dash-24-96000.flac")))
+    }
+
     @Test func aSegmentLinkThatStopsWorkingFailsTheTrackAndCleansUp() async throws {
         let parts = try TrackDLFixtures.dashSegments(of: AudioFixture.data("dash-24-96000.mp4"))
         var routes = TrackDLRoutes()
@@ -494,13 +558,68 @@ struct TrackDownloaderTests {
         let world = try TrackDLWorld()
         defer { world.cleanUp() }
 
+        let asked = Mutex<[URL]>([])
+
         // 1 s of 16-bit/44.1 kHz stereo FLAC: 123,480 bytes estimated, twice that needed.
         await #expect(throws: TrackDownloadError.diskFull(bytesNeeded: 2 * 123_480 - 1_000)) {
-            _ = try await world.download(using: world.downloader(freeSpace: { _ in 1_000 }))
+            _ = try await world.download(using: world.downloader(freeSpace: { url in
+                asked.withLock { $0.append(url) }
+                return 1_000
+            }))
         }
         #expect(world.server.requests(matching: "audio.example.test").isEmpty)
         #expect(world.temporaries.registered.isEmpty)
+        #expect(asked.withLock { $0 } == [world.folder])
         #expect(TrackDownloadError.diskFull(bytesNeeded: 1).stopsBatch)
+    }
+
+    @Test func aDiskThatFillsUpWhileSavingStopsTheBatchAsFull() async throws {
+        let planner = TrackDLFolderPlanner(beforeMove: { _ in throw POSIXError(.ENOSPC) })
+        let world = try TrackDLWorld(planner: planner)
+        defer { world.cleanUp() }
+
+        // The room still missing can't be less than the track itself.
+        await #expect(throws: TrackDownloadError.diskFull(bytesNeeded: 123_480)) { _ = try await world.download() }
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporariesAreGone)
+    }
+
+    @Test func aDriveUnpluggedWhileSavingStopsTheBatchWithTheFolderMessage() async throws {
+        let planner = TrackDLFolderPlanner(beforeMove: { request in
+            try FileManager.default.removeItem(at: request.folder)
+        })
+        let world = try TrackDLWorld(planner: planner)
+        defer { world.cleanUp() }
+
+        await #expect(throws: TrackDownloadError.folderUnavailable(
+            message: "The download folder “TIDAL” no longer exists. Create it again or choose another folder."
+        )) {
+            _ = try await world.download()
+        }
+        #expect(world.temporariesAreGone)
+        #expect(!FileManager.default.fileExists(atPath: world.folder.path))
+    }
+
+    @Test func anAACWriteThatFailsFailsTheTrackAndLeavesNothingBehind() async throws {
+        var routes = TrackDLRoutes()
+        routes.playback = { _, _ in
+            .json(200, TrackDLFixtures.playbackJSON(
+                manifest: .bts(TrackDLFixtures.directURL, mimeType: "audio/mp4", codecs: "mp4a.40.2"),
+                audioQuality: "HIGH", bitDepth: nil, sampleRate: nil
+            ))
+        }
+        routes.audio = { _, _ in .bytes((try? AudioFixture.data("aac-320.m4a")) ?? Data()) }
+        let world = try TrackDLWorld(routes, m4a: TrackDLM4AWriter { throw CocoaError(.fileWriteUnknown) })
+        defer { world.cleanUp() }
+
+        do {
+            _ = try await world.download()
+            Issue.record("a failed AAC write was reported as saved")
+        } catch TrackDownloadError.writeFailed {
+        }
+        #expect(world.savedFiles.isEmpty)
+        #expect(world.temporaries.registered.isEmpty)
+        #expect(TrackDownloadError.writeFailed(detail: "x").rowMessage == "Failed: the file couldn't be saved. Retry to try again.")
     }
 
     // MARK: Damage and cancellation (2.2, 2.4)

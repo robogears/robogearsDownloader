@@ -330,12 +330,20 @@ final class TrackDLFolderPlanner: DownloadFolderPlanning {
 
     private let decisions: @Sendable (FileNaming.AudioExtension?) -> FolderDecision?
     private let moveNotes: [SaveNote]
+    private let beforeMove: @Sendable (TrackDownloadRequest) throws -> Void
     private let decided = Mutex<[FileNaming.AudioExtension?]>([])
     private let moved = Mutex<[Move]>([])
 
-    init(moveNotes: [SaveNote] = [], decisions: @escaping @Sendable (FileNaming.AudioExtension?) -> FolderDecision? = { _ in nil }) {
+    /// `beforeMove` runs just before the move, so a test can make it fail
+    /// (a full disk) or take the folder away (an unplugged drive).
+    init(
+        moveNotes: [SaveNote] = [],
+        decisions: @escaping @Sendable (FileNaming.AudioExtension?) -> FolderDecision? = { _ in nil },
+        beforeMove: @escaping @Sendable (TrackDownloadRequest) throws -> Void = { _ in }
+    ) {
         self.decisions = decisions
         self.moveNotes = moveNotes
+        self.beforeMove = beforeMove
     }
 
     var decideCalls: [FileNaming.AudioExtension?] { decided.withLock { $0 } }
@@ -350,6 +358,7 @@ final class TrackDLFolderPlanner: DownloadFolderPlanning {
     func moveIntoPlace(_ temporaryFile: URL, for request: TrackDownloadRequest, plannedName: String,
                        fileExtension: FileNaming.AudioExtension) async throws -> (fileName: String, notes: [SaveNote]) {
         moved.withLock { $0.append(Move(temporaryFile: temporaryFile, plannedName: plannedName, fileExtension: fileExtension)) }
+        try beforeMove(request)
         try FileManager.default.moveItem(at: temporaryFile, to: request.folder.appendingPathComponent(plannedName))
         return (plannedName, moveNotes)
     }
@@ -365,10 +374,17 @@ final class TrackDLM4AWriter: M4AWriting {
     }
 
     private let recorded = Mutex<[Call]>([])
+    private let beforeWrite: @Sendable () throws -> Void
     var calls: [Call] { recorded.withLock { $0 } }
+
+    /// `beforeWrite` runs first, so a test can make the write fail.
+    init(beforeWrite: @escaping @Sendable () throws -> Void = {}) {
+        self.beforeWrite = beforeWrite
+    }
 
     func writeM4A(from source: URL, tags: FLACTags, coverJPEG: Data?, to destination: URL) async throws -> M4AWriteResult {
         recorded.withLock { $0.append(Call(source: source, tags: tags, coverJPEG: coverJPEG)) }
+        try beforeWrite()
         let data = try Data(contentsOf: source)
         guard FileManager.default.createFile(atPath: destination.path, contents: data) else {
             throw CocoaError(.fileWriteUnknown)
@@ -405,11 +421,14 @@ final class TrackDLWorld: Sendable {
     let folder: URL
     let temporaries: TemporaryDownloads
     let planner: TrackDLFolderPlanner
-    let m4a = TrackDLM4AWriter()
+    let m4a: TrackDLM4AWriter
     let log = TrackDLLog()
     let progress = TrackDLProgress()
 
-    init(_ routes: TrackDLRoutes = TrackDLRoutes(), planner: TrackDLFolderPlanner = TrackDLFolderPlanner()) throws {
+    init(
+        _ routes: TrackDLRoutes = TrackDLRoutes(), planner: TrackDLFolderPlanner = TrackDLFolderPlanner(),
+        m4a: TrackDLM4AWriter = TrackDLM4AWriter()
+    ) throws {
         server = TrackDLServer(routes)
         store = TIDALMemoryStore(TIDALClientFixtures.credential())
         let apiClient = server.makeClient(limits: .api, clock: clock)
@@ -421,6 +440,7 @@ final class TrackDLWorld: Sendable {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         temporaries = TemporaryDownloads(registryFile: base.appendingPathComponent("temporary-downloads.json"))
         self.planner = planner
+        self.m4a = m4a
     }
 
     func downloader(

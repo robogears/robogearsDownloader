@@ -149,6 +149,63 @@ struct TrackDownloadPartsTests {
         #expect(TrackDownloader.checkLength(report(declared: 0, decoded: 0), tidalSeconds: 245) == .cannotJudge)
     }
 
+    // MARK: Errors in the row's terms (1.4, 1.6, 1.7, 2.15)
+
+    /// What the downloader turns `error` into, through the same entry point
+    /// it uses for every failure.
+    private func row(_ error: any Error, _ step: TrackDownloadStep) -> TrackDownloadError? {
+        TrackDownloadFailures.mapped(error, during: step) as? TrackDownloadError
+    }
+
+    @Test func temporaryProblemsWithTheAlbumOrCoverHaveTheirOwnReasons() {
+        let timeout = RequestError.offline(detail: RequestError.offlineDetail(for: .timedOut))
+        #expect(row(RequestError.server(status: 503), .album) == .albumDetailsUnavailable)
+        #expect(row(RequestError.busy(retryAfter: nil), .cover) == .coverUnavailable)
+        #expect(row(timeout, .album) == .albumDetailsUnavailable)
+        #expect(row(timeout, .cover) == .coverUnavailable)
+        // Elsewhere a busy TIDAL is "busy", and no internet pauses the batch.
+        #expect(row(RequestError.server(status: 500), .playback) == .busy)
+        #expect(row(RequestError.busy(retryAfter: nil), .audio) == .busy)
+        let noInternet = RequestError.offline(detail: RequestError.offlineDetail(for: .notConnectedToInternet))
+        #expect(row(noInternet, .cover) == .offline)
+        #expect(row(timeout, .playback) == .offline)
+    }
+
+    @Test func everySignInProblemStopsTheBatchAsSignInRejected() {
+        #expect(row(TokenError.signInInvalid, .details) == .signInRejected)
+        #expect(row(TokenError.notSignedIn, .playback) == .signInRejected)
+        #expect(row(RequestError.unauthorized(subStatus: 11002), .playback) == .signInRejected)
+    }
+
+    @Test func cancellationAndRowErrorsPassThroughUnchanged() {
+        #expect(TrackDownloadFailures.mapped(CancellationError(), during: .audio) is CancellationError)
+        #expect(row(TrackDownloadError.previewOnly, .saving) == .previewOnly)
+    }
+
+    @Test func onlyAClearFourHundredCountsAsTIDALsRefusal() {
+        #expect(TrackDownloadFailures.isClearRefusal(.notFound(subStatus: nil)))
+        #expect(TrackDownloadFailures.isClearRefusal(.forbidden(subStatus: 4033)))
+        #expect(TrackDownloadFailures.isClearRefusal(.unexpectedStatus(410, subStatus: nil)))
+        #expect(!TrackDownloadFailures.isClearRefusal(.unexpectedStatus(204, subStatus: nil)))
+        #expect(!TrackDownloadFailures.isClearRefusal(.unauthorized(subStatus: nil)))
+        #expect(!TrackDownloadFailures.isClearRefusal(.busy(retryAfter: nil)))
+        #expect(!TrackDownloadFailures.isClearRefusal(.server(status: 503)))
+        #expect(!TrackDownloadFailures.isClearRefusal(.offline(detail: "no internet connection")))
+    }
+
+    @Test func aFullDiskIsRecognisedHoweverTheFileSystemSaysIt() {
+        #expect(TrackDownloadFailures.isOutOfSpace(POSIXError(.ENOSPC)))
+        #expect(TrackDownloadFailures.isOutOfSpace(POSIXError(.EDQUOT)))
+        #expect(TrackDownloadFailures.isOutOfSpace(CocoaError(.fileWriteOutOfSpace)))
+        #expect(TrackDownloadFailures.isOutOfSpace(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))))
+        let wrapped = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)),
+        ])
+        #expect(TrackDownloadFailures.isOutOfSpace(wrapped))
+        #expect(!TrackDownloadFailures.isOutOfSpace(POSIXError(.EACCES)))
+        #expect(!TrackDownloadFailures.isOutOfSpace(CocoaError(.fileWriteNoPermission)))
+    }
+
     // MARK: Notes
 
     @Test func notesAppearOnceWithTheMovesNewNameReplacingThePlannedOne() {
@@ -252,6 +309,25 @@ struct TrackDownloadPartsTests {
         #expect(seen.values.last == Double(Self.body.count))
         #expect(server.requests.count == 1)
         #expect(server.requests.first?.headers["User-Agent"] == "okhttp/5.3.2")
+        #expect(server.requests.first?.headers["Accept-Encoding"] == "identity")
+    }
+
+    @Test func aCompressedBodyIsNotMeasuredAgainstItsContentLength() async throws {
+        // URLSession hands over a compressed body decoded, so its length and
+        // the Content-Length never agree; that must not read as a cut-off.
+        var routes = TrackDLRoutes()
+        routes.audio = { _, _ in
+            .data(status: 200, headers: ["Content-Length": "1200", "Content-Encoding": "gzip"], body: Self.body, chunks: 8)
+        }
+        let (server, client, _) = audioClient(routes)
+        let base = try AudioFixture.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("download.flac")
+
+        _ = try await client.download(AudioFetcher.request(TrackDLFixtures.directURL), to: file)
+
+        #expect(try Data(contentsOf: file) == Self.body)
+        #expect(server.requests.count == 1)
     }
 
     @Test func aBodyCutShortOfItsContentLengthIsRetriedFromTheStart() async throws {
@@ -421,7 +497,7 @@ struct TrackDownloadPartsTests {
         try await Task.sleep(for: .milliseconds(20))
         task.cancel()
 
-        #expect(throws: CancellationError.self) { try await task.result.get() }
+        await #expect(throws: CancellationError.self) { try await task.result.get() }
         #expect(!cleaned.isSet)
         gate.set()
         #expect(try await cleaned.wait(upTo: .seconds(5)))
