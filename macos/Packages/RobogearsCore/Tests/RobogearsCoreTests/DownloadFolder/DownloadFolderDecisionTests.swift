@@ -413,6 +413,35 @@ struct DownloadFolderDecisionTests {
         }
         #expect(!FileManager.default.fileExists(atPath: folder.url.path))
     }
+
+    @Test func aFolderReachedThroughALinkWhoseDiskGoesAwayMidBatchStopsTheBatch() async throws {
+        // Picked as ".../Link/TIDAL" where Link leads to a drive. Once the
+        // drive is gone the link leads nowhere: that is an unavailable folder
+        // (2.19), not a track for some other folder.
+        let folder = try TestFolder()
+        let drive = folder.root.appendingPathComponent("Drive", isDirectory: true)
+        let link = folder.root.appendingPathComponent("Link", isDirectory: true)
+        try FileManager.default.createDirectory(at: drive.appendingPathComponent("TIDAL"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: drive)
+        let downloads = link.appendingPathComponent("TIDAL", isDirectory: true)
+        let planner = folder.planner(folder: downloads)
+        var request = folder.request(title: "Blue Lantern")
+        request.folder = downloads
+        #expect(try await planner.decide(for: request, fileExtension: .flac) == .save(fileName: "Blue Lantern.flac", notes: []))
+
+        try FileManager.default.removeItem(at: drive)
+        do {
+            _ = try await planner.decide(for: request, fileExtension: .flac)
+            Issue.record("expected an error")
+        } catch let error as TrackDownloadError {
+            guard case .folderUnavailable = error else {
+                Issue.record("expected an unavailable folder, got \(error)")
+                return
+            }
+            #expect(error.stopsBatch)
+        }
+        #expect(!FileManager.default.fileExists(atPath: drive.path))
+    }
 }
 
 /// Shorthand for the clash note in the ordering test.

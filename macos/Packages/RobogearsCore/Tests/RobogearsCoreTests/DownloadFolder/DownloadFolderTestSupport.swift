@@ -34,8 +34,10 @@ final class TestFolder: @unchecked Sendable {
     /// The planner with the stand-in Trash; `noTrash` acts out a network
     /// share without one. `rename` replaces the exclusive rename (paths in,
     /// errno out). `tags` stands in for the tags of .m4a files by name.
+    /// `folder` plans for another folder than `url`, still with the stand-in
+    /// Trash.
     func planner(noTrash: Bool = false, tags: [String: AudioTags] = [:],
-                 rename: (@Sendable (String, String) -> Int32)? = nil) -> DownloadFolder {
+                 rename: (@Sendable (String, String) -> Int32)? = nil, folder: URL? = nil) -> DownloadFolder {
         let trashFolder = self.trashFolder
         let operations = FileOperations(
             trash: { url in
@@ -44,7 +46,7 @@ final class TestFolder: @unchecked Sendable {
             },
             renameExclusive: rename ?? FileOperations.system.renameExclusive
         )
-        return DownloadFolder(folder: url, tagReader: StubTagReader(byName: tags), fileOperations: operations)
+        return DownloadFolder(folder: folder ?? url, tagReader: StubTagReader(byName: tags), fileOperations: operations)
     }
 
     func request(title: String, version: String? = nil, artist: String = "Placeholder Artist",

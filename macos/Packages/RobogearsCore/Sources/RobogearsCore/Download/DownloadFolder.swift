@@ -47,6 +47,7 @@ public struct DownloadFolder: DownloadFolderPlanning {
     public let folder: URL
     let tagReader: any TagReading
     let fileOperations: FileOperations
+    private let standardPath: String
     private let resolvedPath: String
     /// The folder's path, to which names are added as plain text for every
     /// write. `URL.appendingPathComponent` and Foundation's file calls store
@@ -62,6 +63,7 @@ public struct DownloadFolder: DownloadFolderPlanning {
         self.folder = folder
         self.tagReader = tagReader
         self.fileOperations = fileOperations
+        standardPath = folder.standardizedFileURL.path
         resolvedPath = Self.resolvedPath(folder)
         folderPath = folder.path
     }
@@ -577,8 +579,13 @@ public struct DownloadFolder: DownloadFolderPlanning {
 
     /// A batch keeps the folder it started with (2.17), so a request for
     /// another folder is a mistake upstream, never a reason to write there.
+    /// The folder as given always passes, before any link on the way to it
+    /// is followed: once the disk behind a link is gone, following it gives
+    /// another path, and that folder must read as unavailable and stop the
+    /// batch (2.19), not as a request for some other folder.
     private func checkFolder(of request: TrackDownloadRequest) throws {
-        guard Self.resolvedPath(request.folder) == resolvedPath else {
+        guard request.folder.standardizedFileURL.path == standardPath
+                || Self.resolvedPath(request.folder) == resolvedPath else {
             throw TrackDownloadError.writeFailed(detail: "the track is for another download folder")
         }
     }
