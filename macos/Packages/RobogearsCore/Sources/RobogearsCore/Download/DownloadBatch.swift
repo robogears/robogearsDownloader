@@ -421,7 +421,7 @@ public actor DownloadBatch {
                 return
             }
             finishRow(index, .failure(failure))
-            if tidalFailuresInARow >= options.tidalFailuresInARowToStop, nextPending() != nil {
+            if false {
                 stopReason = .tidalFailing(tracksInARow: tidalFailuresInARow)
             }
             return
