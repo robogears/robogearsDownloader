@@ -569,8 +569,8 @@ struct OldFilesSheet: View {
 
 extension View {
     /// ⌘. cancels like Escape (`keyboards.md`: both are Cancel). The Queue
-    /// menu's ⌘. reaches a sheet first while a batch runs; this covers the
-    /// rest of the time, when that menu item is unavailable.
+    /// menu's ⌘. item is unavailable while a sheet is up, so this is what
+    /// answers, and a batch behind the sheet keeps going.
     func cancelsOnCommandPeriod(_ action: @escaping () -> Void) -> some View {
         background {
             Button("Cancel", action: action)

@@ -74,6 +74,7 @@ enum SelfChecks {
         presentationRules()
         textRules()
         waveformRules()
+        chromeRules()
         contrastTableMatchesAssets()
         await addFlows()
         await undoFlows()
@@ -175,6 +176,44 @@ enum SelfChecks {
         let wide = layout(600, hover: 100.5 / 200).map(\.alpha)
         expect(abs((narrow.max() ?? 0) - 0.60) < 0.001 && abs((wide.max() ?? 0) - 0.60) < 0.001
                && narrow.min() == 0.22 && wide.min() == 0.22, "hover brightens the bar under the pointer to 60 % at any width")
+    }
+
+    // MARK: Dock tile and toolbar (3.3, 4.2)
+
+    /// Review, 26 Oct: the Dock bar hung past the icon's bottom edge and
+    /// rounded corners, and the toolbar's space after the update control sat
+    /// inside its glass capsule, pushing "Update to 0.1.32" off-centre.
+    private static func chromeRules() {
+        let size = CGSize(width: 128, height: 128)
+        let bar = DockProgressView.barRect(in: size)
+        if let icon = NSApp.applicationIconImage,
+           let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 128, bitsPerSample: 8,
+                                      samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                      bytesPerRow: 0, bitsPerPixel: 0) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            icon.draw(in: NSRect(origin: .zero, size: size))
+            NSGraphicsContext.restoreGraphicsState()
+            // Every pixel the bar covers, its rounded ends included, is on
+            // the icon's opaque body (bitmap rows run top-down).
+            let outline = NSBezierPath(roundedRect: bar, xRadius: bar.height / 2, yRadius: bar.height / 2)
+            var covered = 0, offBody = 0
+            for y in Int(bar.minY)..<Int(bar.maxY.rounded(.up)) {
+                for x in Int(bar.minX)..<Int(bar.maxX.rounded(.up))
+                where outline.contains(NSPoint(x: Double(x) + 0.5, y: Double(y) + 0.5)) {
+                    covered += 1
+                    if (rep.colorAt(x: x, y: 127 - y)?.alphaComponent ?? 0) < 0.98 { offBody += 1 }
+                }
+            }
+            expect(Double(covered) > bar.width * bar.height * 0.9 && offBody == 0, "the Dock bar sits on the icon's body, never past its edge or corners")
+        } else {
+            expect(false, "the app icon draws for the Dock bar check")
+        }
+        if #available(macOS 26, *) {
+            expect(UpdateControl.trailingSpace(hasControl: true) == 0,
+                   "the update control adds no space inside its toolbar capsule (the system spaces the capsules)")
+        }
+        expect(UpdateControl.trailingSpace(hasControl: false) == 0, "no space when there's no update control")
     }
 
     // MARK: Colours
