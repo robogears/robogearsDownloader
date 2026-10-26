@@ -13,6 +13,14 @@ public enum BatchPreflight {
         case signIn
         /// Refused, with the warning honk and a plain message.
         case blocked(Blocked)
+
+        /// The sound to play for this verdict now: the honk when refused.
+        /// Nothing for `go` (the batch plays the start chime once it has
+        /// really started) or for the sign-in sheet (2.18).
+        public var sound: SoundEffect? {
+            if case let .blocked(blocked) = self { return blocked.sound }
+            return nil
+        }
     }
 
     public struct Blocked: Sendable, Equatable {

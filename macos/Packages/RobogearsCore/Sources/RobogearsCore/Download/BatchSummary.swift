@@ -33,9 +33,9 @@ extension DownloadBatch {
                 case .savedAsAAC, .savedUnderAnotherName:
                     continue
                 case .withoutCoverArt:
-                    parts.append("No cover art: TIDAL has none for this album")
+                    parts.append("Without cover art: TIDAL has none for this album")
                 case .limitedTags:
-                    parts.append("Limited tags: TIDAL didn't return the album details")
+                    parts.append("With limited tags: TIDAL has no details for this album")
                 case .belowHiRes:
                     parts.append("Below Hi-Res: TIDAL had only \(quality.label)")
                 case let .savedNextToAAC(aacName):
@@ -89,8 +89,11 @@ extension DownloadBatch {
         public enum Reason: Sendable, Equatable {
             /// TIDAL no longer accepts the sign-in, even after one renewal (1.6).
             case signInRejected
-            /// The plan isn't active, or the first track came back as a preview (1.10, 2.23).
+            /// TIDAL said the plan isn't active (1.10).
             case subscriptionInactive
+            /// The first track TIDAL streamed in this batch was only a
+            /// preview: probably the plan, but TIDAL didn't say so (2.23).
+            case previewsOnly
             /// The folder's own message, from 2.19's list.
             case folderUnavailable(message: String)
             case diskFull(bytesNeeded: Int64)
@@ -126,7 +129,7 @@ extension DownloadBatch {
             switch reason {
             case .signInRejected: .signIn
             case .folderUnavailable: .chooseFolder
-            case .subscriptionInactive, .diskFull, .tidalFailing: nil
+            case .subscriptionInactive, .previewsOnly, .diskFull, .tidalFailing: nil
             }
         }
 
@@ -136,6 +139,8 @@ extension DownloadBatch {
                 return "your TIDAL sign-in is no longer valid."
             case .subscriptionInactive:
                 return "your TIDAL subscription isn't active. Downloads need a TIDAL plan with lossless streaming."
+            case .previewsOnly:
+                return "TIDAL sent only a preview instead of the full track."
             case let .folderUnavailable(message):
                 // Folder messages start "The download folder …" (Folders.message).
                 var text = message.hasPrefix("The ") ? "the " + message.dropFirst(4) : message
@@ -152,6 +157,7 @@ extension DownloadBatch {
             switch reason {
             case .diskFull: "Free up space, then choose Download All."
             case .tidalFailing: "Try Download All again in a few minutes."
+            case .previewsOnly: "Check that your TIDAL subscription is active, then choose Download All."
             case .signInRejected, .subscriptionInactive, .folderUnavailable: nil
             }
         }
@@ -279,7 +285,7 @@ extension DownloadBatch {
             case .cancelled, .quit:
                 var parts = ["\(c.downloaded) downloaded"] + resultParts(includeDownloaded: false)
                 if c.unfinished > 0 { parts.append("\(c.unfinished) still in your queue") }
-                return "Stopped: " + parts.joined(separator: ", ") + "."
+                return (ending == .cancelled ? "Cancelled: " : "Stopped: ") + parts.joined(separator: ", ") + "."
             case .finished:
                 if c.finished == 0 { return "Nothing downloaded." }
                 if everythingWorked {
@@ -374,5 +380,39 @@ extension DownloadBatch {
         private static func sentence(_ text: String) -> String {
             text.hasSuffix(".") || text.hasSuffix("…") ? text : text + "."
         }
+    }
+
+    // MARK: - Quit and Settings
+
+    /// The question before quitting during a batch (2.5), with Cancel and
+    /// Quit as its buttons.
+    public struct QuitQuestion: Sendable, Equatable {
+        /// "Quit while 12 tracks are still downloading?"
+        public var title: String
+        /// What quitting does to the track in progress and the rest.
+        public var message: String
+    }
+
+    /// Nil when nothing would be interrupted, so the app quits without asking.
+    public static func quitQuestion(unfinished: Int) -> QuitQuestion? {
+        guard unfinished > 0 else { return nil }
+        if unfinished == 1 {
+            return QuitQuestion(title: "Quit while 1 track is still downloading?",
+                                message: "The track in progress is discarded. It stays in your queue for next time.")
+        }
+        return QuitQuestion(title: "Quit while \(unfinished) tracks are still downloading?",
+                            message: "The track in progress is discarded. The others stay in your queue for next time.")
+    }
+
+    /// Settings' line under the download folder while a batch runs (2.17):
+    /// "Downloads in progress are saved to “TIDAL”. The new folder is used
+    /// from the next batch."
+    public static func inProgressFolderNote(folderName: String) -> String {
+        "Downloads in progress are saved to “\(folderName)”. The new folder is used from the next batch."
+    }
+
+    /// The same line for this batch's folder.
+    public nonisolated var inProgressFolderNote: String {
+        Self.inProgressFolderNote(folderName: folder.lastPathComponent)
     }
 }

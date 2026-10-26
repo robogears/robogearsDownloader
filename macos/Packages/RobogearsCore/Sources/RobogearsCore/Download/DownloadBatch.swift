@@ -145,6 +145,9 @@ public actor DownloadBatch {
         /// How long to wait before trying again when the Mac has a connection
         /// but TIDAL can't be reached (a hotel login page), round by round.
         public var unreachableRecheckDelays: [Duration] = [.seconds(10), .seconds(20), .seconds(40), .seconds(60)]
+        /// The longest Cancel waits for the current track to stop before the
+        /// batch ends anyway, so the button is back within a second (2.4).
+        public var cancelTimeLimit: Duration = .seconds(1)
         /// The longest Quit waits for the current track to clean up. Its
         /// temporary file is removed at the next launch if it runs over (2.2).
         public var quitTimeLimit: Duration = .seconds(5)
@@ -270,13 +273,25 @@ public actor DownloadBatch {
     /// Cancel and ⌘. (2.4): stops the current track at once (the track's
     /// own clean-up deletes its temporary file) and puts every unfinished
     /// row back as it was; nothing is newly marked failed. Works while
-    /// paused. Plays the cancel chime now; the batch ends within a moment.
+    /// paused. Plays the cancel chime now; the batch ends as soon as the
+    /// track has stopped, and never later than `Options.cancelTimeLimit`.
     public func cancel() {
         guard finalSummary == nil, halt == nil else { return }
         halt = .cancel
+        // Not started: nothing to stop, and no sound before an action (2.18).
+        guard let runTask else {
+            _ = finish()
+            return
+        }
         sounds?.play(.cancelChime)
         interruptCurrentWork()
-        if runTask == nil { _ = finish() }
+        let limit = options.cancelTimeLimit
+        let clock = self.clock
+        Task {
+            if await Self.value(of: runTask, within: limit, clock: clock) == nil {
+                self.endNow()
+            }
+        }
     }
 
     /// Takes a row out of the batch when it's removed from the queue (2.13).
@@ -340,10 +355,16 @@ public actor DownloadBatch {
         return finish()
     }
 
+    /// Ends the batch now, when a stopped track is slow to return. Its
+    /// late result is ignored: the row has already gone back (2.4, 2.5).
+    private func endNow() {
+        _ = finish()
+    }
+
     // MARK: - The run
 
     private func runAll() async -> Summary {
-        while halt == nil, stopReason == nil, let index = nextPending() {
+        while halt == nil, stopReason == nil, finalSummary == nil, let index = nextPending() {
             await runTrack(index)
         }
         return finish()
@@ -356,6 +377,8 @@ public actor DownloadBatch {
         while halt == nil, isRunning(index) {
             emit(.row(RowUpdate(rowID: rowID, state: .downloading(percent: 0))))
             let result = await attempt(index)
+            // Cancel or Quit ran out of patience and ended the batch already.
+            guard finalSummary == nil else { return }
             if case .removed = entries[index].status {
                 if case let .success(outcome) = result { entries[index].status = .removed(savedAnyway: outcome) }
                 return
@@ -388,10 +411,13 @@ public actor DownloadBatch {
                 stopReason = reason
                 return
             }
-            // A preview before any track of this batch has streamed in full
-            // means the plan, not the track (2.23, 1.10).
+            // A preview on the first track TIDAL streams in this batch means
+            // the plan, not the track (2.23, 1.10). "First" counts from the
+            // first track saved, so rows skipped as already in the folder
+            // at the start can't hide it; after a save, a preview fails only
+            // its own row.
             if failure == .previewOnly, !savedATrack {
-                stopReason = .subscriptionInactive
+                stopReason = .previewsOnly
                 return
             }
             finishRow(index, .failure(failure))
@@ -427,8 +453,13 @@ public actor DownloadBatch {
         let update: RowUpdate
         switch result {
         case let .success(outcome):
-            if case .saved = outcome { savedATrack = true }
-            tidalFailuresInARow = 0
+            // Only a save shows TIDAL working: a row skipped as already in
+            // the folder never asked TIDAL, so it doesn't break a run of
+            // TIDAL failures (2.1, 2.16).
+            if case .saved = outcome {
+                savedATrack = true
+                tidalFailuresInARow = 0
+            }
             update = RowUpdate(rowID: rowID, state: Self.rowState(for: outcome), outcome: outcome,
                                message: Self.message(for: outcome))
         case let .failure(error):
@@ -469,6 +500,7 @@ public actor DownloadBatch {
         pauseTask = wait
         var resume = (try? await wait.value) != nil
         pauseTask = nil
+        guard finalSummary == nil else { return false }
         if resume, halt == nil, options.askBeforeResumingOnMeteredNetwork,
            await network.currentStatus().isMetered, halt == nil {
             emit(.askToResume)
@@ -619,7 +651,12 @@ public actor DownloadBatch {
             switch error {
             case .offline: return .offline
             case .busy, .server: return .busy
-            default: return .writeFailed(detail: error.description)
+            // The token keeper has already renewed once and retried (1.8),
+            // so a 401 that gets this far is a rejected sign-in (1.6).
+            case .unauthorized: return .signInRejected
+            // 1.10's honest fallback when TIDAL's refusal isn't recognised.
+            case .notFound, .forbidden, .unexpectedStatus: return .notAvailable(reason: "TIDAL refused this stream")
+            case .decoding: return .unreadableAudio(detail: error.description)
             }
         case let error as TokenError:
             switch error {
@@ -665,6 +702,34 @@ extension TrackDownloadError {
         switch self {
         case .busy, .coverUnavailable, .albumDetailsUnavailable: true
         default: false
+        }
+    }
+}
+
+// MARK: - Applying events to the queue
+
+extension Array where Element == QueueItem {
+    /// Applies one batch event to the queue: a row's new state and outcome,
+    /// or a downloading row's percent. Other events change no row. Rows
+    /// already removed from the queue are skipped.
+    public mutating func apply(_ event: DownloadBatch.Event) {
+        switch event {
+        case let .row(update):
+            guard let index = firstIndex(where: { $0.id == update.rowID }) else { return }
+            update.apply(to: &self[index])
+        case let .rowProgress(rowID, percent):
+            guard let index = firstIndex(where: { $0.id == rowID }),
+                  case .downloading = self[index].state else { return }
+            self[index].state = .downloading(percent: percent)
+        case let .finished(summary):
+            // The returned rows were sent as row events already; applying
+            // them again lets a queue that missed events (Quit) catch up.
+            for update in summary.returnedRows {
+                guard let index = firstIndex(where: { $0.id == update.rowID }) else { continue }
+                update.apply(to: &self[index])
+            }
+        case .started, .rowRemoved, .counter, .waitingForNetwork, .askToResume, .resumed, .stopped:
+            return
         }
     }
 }

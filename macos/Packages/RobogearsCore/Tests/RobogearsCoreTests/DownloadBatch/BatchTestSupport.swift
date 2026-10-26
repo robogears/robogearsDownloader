@@ -89,6 +89,12 @@ final class BatchScriptedDownloader: TrackDownloading {
         case saveDespiteCancel
         /// Ignores Cancel until the gate opens; then cleans up and throws.
         case stuck(BatchGate)
+        /// Takes a moment (real time), then saves: lets two downloads overlap
+        /// if the batch ever ran them side by side.
+        case saveAfter(Duration)
+        /// Saves, but keeps its progress callback so the test can call it
+        /// after the row has finished.
+        case saveKeepingProgress
     }
 
     private struct State {
@@ -98,6 +104,7 @@ final class BatchScriptedDownloader: TrackDownloading {
         var running = 0
         var mostAtOnce = 0
         var cleanedUp: [UUID] = []
+        var keptProgress: [UUID: @Sendable (Double) -> Void] = [:]
     }
 
     private let state: Mutex<State>
@@ -111,6 +118,7 @@ final class BatchScriptedDownloader: TrackDownloading {
     var active: UUID? { state.withLock { $0.active } }
     var mostAtOnce: Int { state.withLock { $0.mostAtOnce } }
     var cleanedUp: [UUID] { state.withLock { $0.cleanedUp } }
+    func keptProgress(for row: UUID) -> (@Sendable (Double) -> Void)? { state.withLock { $0.keptProgress[row] } }
 
     static func defaultOutcome(for request: TrackDownloadRequest) -> TrackDownloadOutcome {
         .saved(fileName: "\(request.title).flac", quality: .flac(bitDepth: 16, sampleRate: 44_100), notes: [])
@@ -168,6 +176,12 @@ final class BatchScriptedDownloader: TrackDownloading {
             try? await gate.wait()
             state.withLock { $0.cleanedUp.append(request.rowID) }
             throw CancellationError()
+        case let .saveAfter(duration):
+            try await Task.sleep(for: duration)
+            return Self.defaultOutcome(for: request)
+        case .saveKeepingProgress:
+            state.withLock { $0.keptProgress[request.rowID] = progress }
+            return Self.defaultOutcome(for: request)
         }
     }
 }
@@ -180,41 +194,35 @@ struct BatchOtherError: Error, Sendable, CustomStringConvertible {
 
 /// The "Wi-Fi", switched by the test.
 final class BatchStandInNetwork: NetworkMonitoring {
-    private let online: BatchGate
-    private let metered = Mutex(false)
+    private let gate: BatchGate
+    private let flags: Mutex<(online: Bool, metered: Bool)>
 
     init(online: Bool = true, metered: Bool = false) {
-        self.online = BatchGate(open: online)
-        self.metered.withLock { $0 = metered }
+        gate = BatchGate(open: online)
+        flags = Mutex((online, metered))
     }
 
     func currentStatus() async -> NetworkStatus {
-        NetworkStatus(isOnline: isOnline, isMetered: metered.withLock { $0 })
+        let now = flags.withLock { $0 }
+        return NetworkStatus(isOnline: now.online, isMetered: now.metered)
     }
 
     func waitUntilOnline() async throws {
-        try await online.wait()
+        try await gate.wait()
     }
 
-    private let onlineFlag = Mutex(true)
-    var isOnline: Bool { onlineFlag.withLock { $0 } }
+    var isOnline: Bool { flags.withLock { $0.online } }
 
     func set(online: Bool, metered: Bool? = nil) {
-        if let metered { self.metered.withLock { $0 = metered } }
-        onlineFlag.withLock { $0 = online }
-        self.online.set(open: online)
+        flags.withLock { f in
+            f.online = online
+            if let metered { f.metered = metered }
+        }
+        gate.set(open: online)
     }
 
     /// Tasks waiting for the connection now.
-    var waiting: Int { online.waiting }
-}
-
-extension BatchStandInNetwork {
-    static func offline(metered: Bool = false) -> BatchStandInNetwork {
-        let network = BatchStandInNetwork(online: false, metered: metered)
-        network.set(online: false)
-        return network
-    }
+    var waiting: Int { gate.waiting }
 }
 
 final class BatchRecordingKeepAwake: SleepPreventing {
@@ -319,6 +327,13 @@ final class BatchEventLog: Sendable {
     }
 }
 
+extension Array where Element == QueueItem {
+    /// Applies a whole event log, as the queue store would one by one.
+    mutating func apply(_ events: [DownloadBatch.Event]) {
+        for event in events { apply(event) }
+    }
+}
+
 // MARK: - Waiting
 
 /// Polls `condition` until it holds; records an issue after `timeout`.
@@ -340,11 +355,16 @@ func batchEventually(_ timeout: Duration = .seconds(10), sourceLocation: SourceL
 
 enum BatchFixtures {
     static let folder = URL(fileURLWithPath: "/Volumes/Test SSD/TIDAL", isDirectory: true)
+    private static let nextTIDALID = Mutex<Int64>(100_000)
 
     static func row(_ title: String, artist: String = "Placeholder Artist", hiRes: Bool = false,
-                    state: QueueItem.DownloadState = .waiting) -> QueueItem {
-        QueueItem(tidalID: Int64(abs(title.hashValue % 1_000_000)) + 1, title: title, artist: artist,
-                  hiRes: hiRes, source: .tidal, state: state)
+                    state: QueueItem.DownloadState = .waiting, lastOutcome: TrackDownloadOutcome? = nil) -> QueueItem {
+        let id = nextTIDALID.withLock { next -> Int64 in
+            next += 1
+            return next
+        }
+        return QueueItem(tidalID: id, title: title, artist: artist, hiRes: hiRes, source: .tidal, state: state,
+                         lastOutcome: lastOutcome)
     }
 
     static func tracks(_ rows: [QueueItem], folder: URL = folder) -> [DownloadBatch.Track] {
