@@ -39,8 +39,12 @@ final class AppModel {
     // MARK: Routing and transient UI state
 
     var sheet: SheetRoute?
-    var alert: AlertRoute?
+    var alert: AlertRoute? {
+        didSet { if alert == nil, oldValue != nil { presentNextFirstLaunchNotice() } }
+    }
     var signInState: SignInState = .signedOut
+    /// A sign-in sheet is up (on the main window or Settings): one at a time (D4 1.3).
+    var isSigningIn = false
     /// An add in flight: the adding cover is up.
     var adding: AddingState?
     var batch: BatchState?
@@ -52,10 +56,36 @@ final class AppModel {
     var focusAddFieldRequest = 0
     /// Install the update as soon as the running batch ends (4.8).
     var updateAfterBatch = false
+    /// What's New › Install on Quit: the staged update installs at the next quit.
+    var installOnQuit = false
     /// Set once the person chose Quit in the quit-during-batch alert.
     var quitConfirmed = false
     /// The snapshot harness shows the update control without a network check.
     var updateControlOverride: UpdateControlState?
+    /// The snapshot harness shows What's New and Settings › Updates without a check.
+    var updateInfoOverride: UpdateInfo?
+    var updateStatusOverride: UpdateStatusLine?
+    @ObservationIgnored var stageTask: Task<Void, Never>?
+
+    // MARK: Settings window state
+
+    /// The library index, for Settings › Folders ("1,240 files indexed").
+    var libraryStatus: LibraryStatus = .none
+    @ObservationIgnored var libraryScanTask: Task<Void, Never>?
+    /// Bytes in the preview cache (Settings › General); nil until measured.
+    var previewCacheBytes: Int64?
+    /// Why the last folder choice was refused, shown under the folder in Settings.
+    var folderProblem: FolderProblem?
+    /// macOS has notifications turned off for the app (Settings › General).
+    var notificationsBlocked = false
+    /// First-launch questions still to ask, one after the other.
+    @ObservationIgnored var firstLaunchQueue: [AlertRoute] = []
+    /// Reopens the main window (set by the window; used after it was closed).
+    @ObservationIgnored var openMainWindowAction: (@MainActor () -> Void)?
+    /// The main window, once it exists (for the quit question and attention).
+    @ObservationIgnored weak var mainWindow: NSWindow?
+    /// The snapshot harness pins whether the main window is key.
+    @ObservationIgnored var mainWindowIsKeyOverride: Bool?
 
     // MARK: Preview
 
@@ -134,9 +164,16 @@ final class AppModel {
     func start() {
         guard !started else { return }
         started = true
+        if let moved = AppLocation.trashMovedOriginalIfNeeded() { activity.add(.notice, moved) }
         Task {
             signInState = await services.signIn.currentState()
             await restoreQueue()
+            rescanLibrary()
+            refreshNotificationPermission()
+            // The first-launch questions wait until the window has settled.
+            try? await Task.sleep(for: .milliseconds(600))
+            firstLaunchQueue = FirstLaunch.pendingNotices()
+            presentNextFirstLaunchNotice()
         }
         // The launch check is silent and only in release builds: debug builds
         // never reach GitHub on their own (manual Check for Updates… still does).
@@ -238,7 +275,12 @@ final class AppModel {
             return .downloading(percent: percent)
         case .verifying:
             return .downloading(percent: 100)
-        case .readyToInstall, .applying:
+        case .readyToInstall:
+            // Staged and waiting: for the batch to end (D4 5.12), or for a quit.
+            if updateAfterBatch, batch != nil { return .afterDownloads }
+            if installOnQuit { return .relaunchToUpdate }
+            return .relaunching
+        case .applying:
             return .relaunching
         }
     }
@@ -294,14 +336,35 @@ enum UpdateControlState: Equatable {
     case available(version: String)
     case downloading(percent: Int)
     case relaunching
+    /// Downloaded and waiting for the running batch (Update When Downloads Finish).
+    case afterDownloads
+    /// Downloaded and waiting for a quit (Install on Quit); a click installs now.
+    case relaunchToUpdate
 
     var title: String {
         switch self {
         case .available(let v): "Update to \(v)"
         case .downloading(let p): "Downloading \(p)%"
         case .relaunching: "Relaunching…"
+        case .afterDownloads: "Updates After Downloads"
+        case .relaunchToUpdate: "Relaunch to Update"
         }
     }
 
-    var isEnabled: Bool { if case .available = self { true } else { false } }
+    var isEnabled: Bool {
+        switch self {
+        case .available, .relaunchToUpdate: true
+        case .downloading, .relaunching, .afterDownloads: false
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .available: "Download the update and relaunch"
+        case .downloading: "Downloading the update"
+        case .relaunching: "Installing the update"
+        case .afterDownloads: "The update installs when the downloads finish"
+        case .relaunchToUpdate: "Install the downloaded update now"
+        }
+    }
 }

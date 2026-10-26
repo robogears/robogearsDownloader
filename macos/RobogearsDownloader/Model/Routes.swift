@@ -38,6 +38,15 @@ enum AlertRoute: Identifiable, Equatable {
     case updateDuringBatch(remaining: Int)
     /// A huge tracklist: "This file has 12,000 lines. Import the first 2,000?" (D4 4.8)
     case largeImport(lines: Int, text: String, name: String?)
+    /// Settings › Folders › Reset Folders… (4.12). Shown on the Settings window.
+    case resetFolders
+    /// First launch only, outside Applications (4.11, D4 5.15).
+    case moveToApplications
+    /// First launch only, when the previous version's files are found (4.11, D4 5.11).
+    case oldFiles(folder: String)
+    /// A plain answer with OK: the result of Check for Updates… when there's
+    /// nothing to install, or why Move to Applications didn't work.
+    case information(title: String, message: String?)
 
     var id: String {
         switch self {
@@ -45,6 +54,10 @@ enum AlertRoute: Identifiable, Equatable {
         case .quitDuringBatch: "quit"
         case .updateDuringBatch: "update"
         case .largeImport: "largeImport"
+        case .resetFolders: "resetFolders"
+        case .moveToApplications: "moveToApplications"
+        case .oldFiles: "oldFiles"
+        case .information: "information"
         }
     }
 }

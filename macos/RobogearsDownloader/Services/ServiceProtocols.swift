@@ -69,12 +69,25 @@ struct ServiceError: Error, Sendable, Equatable {
 
 // MARK: - Library and download folder checks
 
+/// The library scan's progress, for Settings › Folders ("Scanning 120 / 500…",
+/// then "1,240 files indexed"). The scanner reports about every 25 files.
+enum LibraryScanEvent: Sendable, Equatable {
+    case progress(done: Int, total: Int)
+    case finished(files: Int)
+    /// The folder couldn't be read (an unplugged drive): the sentence says
+    /// what happened and what to do. Earlier duplicate marks stay.
+    case unavailable(String)
+}
+
 protocol LibraryChecking: Sendable {
     /// The library verdict for each row (a missing key means no match).
     /// Never writes to the library folder.
     func check(_ items: [QueueItem]) async -> [UUID: QueueItem.LibraryMatch]
     /// Whether a file for this row already sits in the download folder (D4 2.16).
     func isInDownloadFolder(_ item: QueueItem, folder: URL) async -> Bool
+    /// Reads (or re-reads) the library folder's index. Read-only; cancelling
+    /// the consuming task stops it. Ends with `.finished` or `.unavailable`.
+    func scan(_ folder: URL) -> AsyncStream<LibraryScanEvent>
 }
 
 // MARK: - Downloading
@@ -147,6 +160,11 @@ protocol PreviewProviding: Sendable {
     func cachedPeaks(for tidalID: Int64) async -> [Float]?
     /// Peaks and a playable file for a track. Throws `ServiceError`.
     func preview(for tidalID: Int64) async throws -> PreviewAsset
+    /// Bytes the preview cache holds on disk (Settings › General).
+    func cacheSize() async -> Int64
+    /// Clear Preview Cache: removes cached previews and peaks. Never touches
+    /// the download or library folder.
+    func clearCache() async
 }
 
 /// Exactly one preview player (D4 5.16). Main-actor bound: it drives the UI.

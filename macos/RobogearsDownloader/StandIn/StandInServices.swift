@@ -26,6 +26,31 @@ struct StandInLibrary: LibraryChecking {
         let fm = FileManager.default
         return ["flac", "m4a"].contains { fm.fileExists(atPath: folder.appendingPathComponent("\(item.title).\($0)").path) }
     }
+
+    /// Pretends to index 1,240 files in steps of 25 without reading the
+    /// folder's contents; a folder that isn't there reads as unavailable.
+    func scan(_ folder: URL) -> AsyncStream<LibraryScanEvent> {
+        AsyncStream { continuation in
+            let task = Task {
+                guard FileManager.default.fileExists(atPath: folder.path) else {
+                    continuation.yield(.unavailable("The music library “\(folder.lastPathComponent)” isn't available. Connect its drive, then click Refresh."))
+                    continuation.finish()
+                    return
+                }
+                let total = 1_240
+                var done = 0
+                while done < total {
+                    try? await Task.sleep(for: .milliseconds(12))
+                    if Task.isCancelled { continuation.finish(); return }
+                    done = min(total, done + 25)
+                    continuation.yield(.progress(done: done, total: total))
+                }
+                continuation.yield(.finished(files: total))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 /// Pretends to download: progress ticks and deterministic outcomes. It never
@@ -122,7 +147,7 @@ actor StandInPreviews: PreviewProviding {
         }
         let peaks = StandIn.peaks(for: tidalID)
         let duration = TimeInterval(StandIn.duration(for: tidalID))
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("robogears-stand-in-previews", isDirectory: true)
+        let folder = Self.folder
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appendingPathComponent("\(tidalID).wav")
         if !FileManager.default.fileExists(atPath: file.path) {
@@ -131,6 +156,29 @@ actor StandInPreviews: PreviewProviding {
         let asset = PreviewAsset(peaks: peaks, file: file, duration: duration)
         made[tidalID] = asset
         return asset
+    }
+
+    /// The stand-in's own tone files, in a folder only it uses.
+    static var folder: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("robogears-stand-in-previews", isDirectory: true)
+    }
+
+    func cacheSize() async -> Int64 {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: Self.folder, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        return files.reduce(Int64(0)) { sum, url in
+            sum + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    /// Removes only the stand-in's generated tone files.
+    func clearCache() async {
+        made.removeAll()
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: Self.folder, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension == "wav" {
+            try? fm.removeItem(at: file)
+        }
     }
 
     /// 8 kHz, 8-bit mono WAV: two soft sines whose loudness follows the peaks.

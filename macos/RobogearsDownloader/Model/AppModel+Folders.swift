@@ -8,7 +8,11 @@ extension AppModel {
 
     // MARK: Folders
 
-    /// Choose Folder… (empty state, summary notice, Settings).
+    static let downloadInsideLibraryMessage = "The download folder can't be inside your music library. Choose another folder."
+    static let libraryContainsDownloadMessage = "This folder contains your download folder, and the app never writes to your music library. Choose another folder."
+
+    /// Choose Folder… (empty state, summary notice, Settings). The panel
+    /// opens at the current download folder (D4 2.11).
     func chooseDownloadFolder() {
         let panel = NSOpenPanel()
         panel.title = "Choose Download Folder"
@@ -16,50 +20,91 @@ extension AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
+        panel.directoryURL = currentURL(of: settings.downloadFolder)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         setDownloadFolder(url)
     }
 
-    func setDownloadFolder(_ url: URL) {
+    @discardableResult
+    func setDownloadFolder(_ url: URL) -> Bool {
         // The download folder can't be the library or inside it (D4 2.11).
-        if let library = settings.libraryFolder,
-           case .available(let libraryURL) = Folders.status(of: library, requireWritable: false),
+        if let libraryURL = currentURL(of: settings.libraryFolder),
            Folders.check(downloadFolder: url, libraryFolder: libraryURL) == .insideLibrary {
-            refuse("The download folder can't be inside your music library. Choose another folder.")
-            return
+            folderProblem = .download(Self.downloadInsideLibraryMessage)
+            refuse(Self.downloadInsideLibraryMessage)
+            return false
         }
         do {
             settings.downloadFolder = try FolderReference(url: url)
             saveSettingsNow()
+            folderProblem = nil
             if summary?.outcome == .noFolder { summary = nil }
             let suffix = batch != nil ? " The running batch keeps saving to its folder; the change applies from the next batch." : ""
             activity.add(.notice, "Downloads go to \(Formatting.abbreviatedPath(url.path)).\(suffix)")
             checkDownloadFolder(for: rows)
+            return true
         } catch {
             refuse("That folder can't be remembered (\(error.localizedDescription)). Choose another folder.")
+            return false
         }
     }
 
+    /// The panel opens at the current library folder (D4 2.11).
     func chooseLibraryFolder() {
         let panel = NSOpenPanel()
         panel.title = "Choose Music Library Folder"
         panel.prompt = "Choose"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.directoryURL = currentURL(of: settings.libraryFolder)
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        setLibraryFolder(url)
+    }
+
+    @discardableResult
+    func setLibraryFolder(_ url: URL) -> Bool {
+        // A library that contains the download folder is refused too (D4 2.11).
+        if let downloadURL = currentURL(of: settings.downloadFolder),
+           Folders.check(downloadFolder: downloadURL, libraryFolder: url) == .insideLibrary {
+            folderProblem = .library(Self.libraryContainsDownloadMessage)
+            refuse(Self.libraryContainsDownloadMessage)
+            return false
+        }
         do {
             settings.libraryFolder = try FolderReference(url: url)
             saveSettingsNow()
+            folderProblem = nil
             activity.add(.library, "Music library set to \(Formatting.abbreviatedPath(url.path)). It's only ever read.")
+            rescanLibrary()
             checkLibrary(for: rows)
+            return true
         } catch {
             refuse("That folder can't be remembered (\(error.localizedDescription)). Choose another folder.")
+            return false
         }
     }
 
     func clearLibraryFolder() {
         settings.libraryFolder = nil
         saveSettingsNow()
+        if case .library = folderProblem { folderProblem = nil }
+        rescanLibrary()
+        activity.add(.library, "No music library: the duplicate check is off.")
+    }
+
+    /// Where a remembered folder is now, when its disk is connected.
+    func currentURL(of reference: FolderReference?) -> URL? {
+        guard let reference, case .available(let url) = Folders.status(of: reference, requireWritable: false) else { return nil }
+        return url
+    }
+
+    func showLibraryFolder() {
+        if let url = currentURL(of: settings.libraryFolder) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else if let reference = settings.libraryFolder {
+            let status = Folders.status(of: reference, requireWritable: false)
+            refuse(Folders.message(for: status, reference: reference, role: "music library") ?? "The music library isn't available.")
+        }
     }
 
     /// The folder the running batch saves to, else the chosen one (D4 2.17).
@@ -122,7 +167,7 @@ extension AppModel {
     // MARK: Sign-in
 
     func showSignIn() {
-        guard batch == nil, sheet == nil else { return }
+        guard batch == nil, sheet == nil, !isSigningIn else { return }
         sheet = .signIn(resumeAdd: nil)
     }
 

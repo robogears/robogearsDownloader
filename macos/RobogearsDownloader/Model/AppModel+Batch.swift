@@ -235,8 +235,11 @@ extension AppModel {
         if let awakeActivity { ProcessInfo.processInfo.endActivity(awakeActivity) }
         awakeActivity = nil
         dockProgress.clear()
-        if NSApp.keyWindow == nil || !NSApp.isActive {
+        // The end of a batch while the window isn't key: one Dock bounce, and
+        // a notification only when the person turned them on (4.11, D4 2.12).
+        if !isMainWindowKey {
             NSApp.requestUserAttention(.informationalRequest)
+            postBatchNotification(notice)
         }
         resumePreloading()
         if updateAfterBatch {
@@ -287,59 +290,5 @@ extension AppModel {
             record(outcome, for: row, in: &scratch)
             queueDidChange()
         }
-    }
-
-    // MARK: Updates (4.8, D4 5.12)
-
-    func updateControlClicked() {
-        if let batch {
-            alert = .updateDuringBatch(remaining: max(0, batch.total - batch.finished))
-        } else {
-            performUpdate()
-        }
-    }
-
-    func performUpdate() {
-        guard let update, let available = update.available else { return }
-        guard update.canSelfInstall else {
-            if let page = available.releaseURL { NSWorkspace.shared.open(page) }
-            return
-        }
-        activity.add(.update, "Downloading robogears Downloader \(available.version)…")
-        Task {
-            await update.downloadAndStage()
-            switch update.phase {
-            case .readyToInstall:
-                await flushQueue()
-                update.installStagedUpdate { NSApp.terminate(nil) }
-            case .failed(let message):
-                activity.add(.failed, message)
-            default:
-                break
-            }
-        }
-    }
-
-    func checkForUpdates() {
-        guard let update else { return }
-        Task {
-            await update.check(silent: false)
-            switch update.phase {
-            case .available:
-                if let v = update.available?.version {
-                    activity.add(.update, "robogears Downloader \(v) is available.")
-                    announce("robogears Downloader \(v) is available.")
-                }
-            case .upToDate: activity.add(.update, "robogears Downloader is up to date.")
-            case .offline: activity.add(.warning, "No internet connection. Check for updates again when you're online.")
-            case .rateLimited: activity.add(.warning, "GitHub is limiting checks; try again in an hour.")
-            case .failed(let message): activity.add(.failed, message)
-            default: break
-            }
-        }
-    }
-
-    var isCheckingForUpdates: Bool {
-        if case .checking = update?.phase { true } else { false }
     }
 }

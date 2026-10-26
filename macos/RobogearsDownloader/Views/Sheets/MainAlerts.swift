@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The main window's system alerts (4.6, 4.8, 4.9; D4 4.8). The default is
-/// always the safe button; Escape picks Cancel or Keep Downloading.
+/// The main window's system alerts (4.6, 4.8, 4.9, 4.11; D4 4.8). Words and
+/// buttons come from `AlertRoute.content`; the default is always the safe
+/// button and Escape picks the cancel button.
 struct MainAlerts: ViewModifier {
     @Bindable var model: AppModel
 
@@ -11,58 +12,59 @@ struct MainAlerts: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.alert(Text(title), isPresented: isPresented, presenting: model.alert) { route in
-            actions(route)
-        } message: { route in
-            if let message = message(route) { Text(message) }
+        content.systemAlert(model.alert?.content, isPresented: isPresented) { action in
+            model.perform(action)
         }
     }
+}
 
-    private var title: String {
-        switch model.alert {
-        case .signInToContinue(let pending): "Sign in to TIDAL to add \(pending.description)."
-        case .quitDuringBatch(let n): "Quit while \(Formatting.tracks(n)) \(n == 1 ? "is" : "are") still downloading?"
-        case .updateDuringBatch: "Update now or when downloads finish?"
-        case .largeImport(let lines, _, _): "This file has \(Formatting.count(lines)) lines. Import the first \(Formatting.count(AppModel.largeImportLines))?"
-        case nil: ""
-        }
-    }
-
-    private func message(_ route: AlertRoute) -> String? {
-        switch route {
-        case .signInToContinue: "The tracks are added once you're signed in. Nothing downloads until you choose Download All."
-        case .quitDuringBatch: "Downloads stop. Finished tracks stay in your folder; the rest go back to Waiting."
-        case .updateDuringBatch(let n): "\(Formatting.tracks(n)) \(n == 1 ? "is" : "are") still downloading."
-        case .largeImport: "Lines after the first \(Formatting.count(AppModel.largeImportLines)) aren't added. Split the file to import the rest."
-        }
-    }
-
-    @ViewBuilder
-    private func actions(_ route: AlertRoute) -> some View {
-        switch route {
-        case .signInToContinue(let pending):
-            Button("Cancel", role: .cancel) {}
-            Button("Sign In…") { model.sheet = .signIn(resumeAdd: pending) }
-                .keyboardShortcut(.defaultAction)
-        case .quitDuringBatch:
-            Button("Quit") {
-                model.quitConfirmed = true
-                NSApp.terminate(nil)
+extension View {
+    /// Presents an `AlertContent` as a system alert on this window.
+    func systemAlert(_ content: AlertContent?, isPresented: Binding<Bool>,
+                     perform: @escaping (AlertAction) -> Void) -> some View {
+        alert(Text(content?.title ?? ""), isPresented: isPresented, presenting: content) { content in
+            ForEach(content.buttons) { button in
+                Button(button.title, role: button.role.swiftUI) { perform(button.action) }
+                    .keyboardShortcut(button.isDefault ? .defaultAction : nil)
             }
-            Button("Keep Downloading", role: .cancel) {}
-                .keyboardShortcut(.defaultAction)
-        case .updateDuringBatch:
-            Button("Cancel", role: .cancel) {}
-            Button("Update Now") {
-                model.stopDownloads()
-                model.updateAfterBatch = true
-            }
-            Button("Update When Downloads Finish") { model.updateAfterBatch = true }
-                .keyboardShortcut(.defaultAction)
-        case .largeImport(_, let text, let name):
-            Button("Cancel", role: .cancel) {}
-            Button("Import First \(Formatting.count(AppModel.largeImportLines))") { model.importFirstLines(text, name: name) }
-                .keyboardShortcut(.defaultAction)
+        } message: { content in
+            if let message = content.message { Text(message) }
         }
+    }
+}
+
+extension AlertButton.Role {
+    var swiftUI: ButtonRole? {
+        switch self {
+        case .normal: nil
+        case .cancel: .cancel
+        case .destructive: .destructive
+        }
+    }
+}
+
+extension AlertContent {
+    /// The same alert as an NSAlert: the app-modal quit question when the
+    /// window is closed, and the snapshot harness.
+    @MainActor
+    func makeNSAlert() -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message ?? ""
+        alert.alertStyle = .informational
+        let ordered = buttons.filter(\.isDefault) + buttons.filter { !$0.isDefault }
+        for spec in ordered {
+            let button = alert.addButton(withTitle: spec.title)
+            button.keyEquivalent = spec.isDefault ? "\r" : (spec.role == .cancel ? "\u{1b}" : "")
+            if spec.role == .destructive { button.hasDestructiveAction = true }
+        }
+        return alert
+    }
+
+    /// The action for an NSAlert response from `makeNSAlert()`.
+    func action(for response: NSApplication.ModalResponse) -> AlertAction {
+        let ordered = buttons.filter(\.isDefault) + buttons.filter { !$0.isDefault }
+        let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return ordered.indices.contains(index) ? ordered[index].action : .dismiss
     }
 }
