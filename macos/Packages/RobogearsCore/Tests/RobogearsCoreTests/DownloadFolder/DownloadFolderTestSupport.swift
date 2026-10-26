@@ -32,9 +32,10 @@ final class TestFolder: @unchecked Sendable {
     }
 
     /// The planner with the stand-in Trash; `noTrash` acts out a network
-    /// share without one. `rename` replaces the exclusive rename.
+    /// share without one. `rename` replaces the exclusive rename (paths in,
+    /// errno out). `tags` stands in for the tags of .m4a files by name.
     func planner(noTrash: Bool = false, tags: [String: AudioTags] = [:],
-                 rename: (@Sendable (URL, URL) -> Int32)? = nil) -> DownloadFolder {
+                 rename: (@Sendable (String, String) -> Int32)? = nil) -> DownloadFolder {
         let trashFolder = self.trashFolder
         let operations = FileOperations(
             trash: { url in
@@ -52,6 +53,21 @@ final class TestFolder: @unchecked Sendable {
         TrackDownloadRequest(rowID: UUID(), tidalID: 1, title: title, version: version, artist: artist, album: album,
                              durationSeconds: seconds, isrc: isrc, losslessOnTIDAL: lossless, folder: url,
                              replaceExisting: replace)
+    }
+
+    /// A finished download waiting in a temporary folder next to the
+    /// download folder, so on the same disk as the track lane guarantees.
+    func temporaryDownload(source: String = "bts-16-44100.flac", title: String = "Placeholder",
+                           artist: String = "Placeholder Artist", isrc: String? = nil) throws -> URL {
+        let staging = root.appendingPathComponent("Staging-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        return try writeFLAC("download.flac", title: title, artist: artist, isrc: isrc, source: source, in: staging)
+    }
+
+    /// The folder's names exactly as the disk stores them, as UTF-8 bytes,
+    /// for checks where composed and decomposed spellings matter.
+    func storedNameBytes() throws -> [[UInt8]] {
+        try names().map { Array($0.utf8) }
     }
 
     // MARK: - Files
@@ -95,6 +111,9 @@ final class TestFolder: @unchecked Sendable {
         try handle.write(contentsOf: bytes)
     }
 }
+
+/// An ISRC in the 12-character shape the matcher accepts: "ZZXX10000001"…
+func isrc(_ n: Int) -> String { String(format: "ZZXX1%07d", n) }
 
 /// Apple's and the package's tag readers, except for the names given, whose
 /// tags are made up: lets a real .m4a fixture stand for any song.

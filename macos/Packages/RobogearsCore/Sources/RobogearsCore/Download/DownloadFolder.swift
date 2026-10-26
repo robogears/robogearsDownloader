@@ -13,7 +13,9 @@
 //   the same ISRC, or, when either side has none, the same title (version
 //   included, as the title tag carries it, 2.7) and a shared artist. A file
 //   whose title and artist can't be read can't be told apart from the song,
-//   so the row keeps it and offers Save As….
+//   so the row keeps it and offers Save As…, unless the file is broken in
+//   itself (empty or cut off): then it is treated as a damaged copy, with
+//   Replace (2.3).
 // - The quick check (2.3) runs on any copy that would cause a skip: healthy
 //   skips, damaged stays untouched until the person chooses Replace, which
 //   moves it to the Trash.
@@ -25,12 +27,14 @@
 // - Electron leftovers "….tmp.flac" / "….tmp.m4a" (2.2) are left alone and
 //   never count as downloads: no name this app looks for ends that way,
 //   except for a title that itself ends in ".tmp", where the file's tags
-//   decide like any other file's.
+//   decide like any other file's. Nothing here deletes or moves them; D4
+//   2.2 asks for exactly that, so there is no helper for them.
 //
-// Only `moveIntoPlace`, Replace's move to the Trash and
-// `deleteDamagedCopyPermanently` write anything. The music library is never
-// touched here: the download folder can't be inside it (2.11, checked by
-// Settings and before each batch).
+// Only `moveIntoPlace`, Replace's move to the Trash,
+// `deleteDamagedCopyPermanently` and `removeLeftoverCopies` (the move's own
+// hidden copies) write anything. The music library is never touched here:
+// the download folder can't be inside it (2.11, checked by Settings and
+// before each batch).
 import Darwin
 import Foundation
 
@@ -44,6 +48,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
     let tagReader: any TagReading
     let fileOperations: FileOperations
     private let resolvedPath: String
+    /// The folder's path, to which names are added as plain text for every
+    /// write. `URL.appendingPathComponent` and Foundation's file calls store
+    /// "Café" decomposed ("e" plus an accent), while 2.14 keeps names
+    /// composed, so the names this type writes never pass through a URL.
+    private let folderPath: String
 
     public init(folder: URL) {
         self.init(folder: folder, tagReader: TagReader(), fileOperations: .system)
@@ -54,6 +63,12 @@ public struct DownloadFolder: DownloadFolderPlanning {
         self.tagReader = tagReader
         self.fileOperations = fileOperations
         resolvedPath = Self.resolvedPath(folder)
+        folderPath = folder.path
+    }
+
+    /// The path of a name in the folder, spelled exactly as given.
+    func path(of name: String) -> String {
+        folderPath.hasSuffix("/") ? folderPath + name : folderPath + "/" + name
     }
 
     // MARK: - DownloadFolderPlanning
@@ -79,7 +94,7 @@ public struct DownloadFolder: DownloadFolderPlanning {
         var notes: [SaveNote] = []
         // When the temporary file is on another disk, a hidden copy is made in
         // the folder first, then renamed like the original would have been.
-        var hiddenCopy: URL?
+        var hiddenCopy: String?
         do {
             for _ in 0..<Self.maxMoveAttempts {
                 var context = Context(listing: try listing())
@@ -92,23 +107,75 @@ public struct DownloadFolder: DownloadFolderPlanning {
                     name = newName
                     notes = newNotes
                 }
-                let destination = folder.appendingPathComponent(name)
-                switch try attemptMove(hiddenCopy ?? temporaryFile, to: destination) {
+                switch try attemptMove(hiddenCopy ?? temporaryFile.path, to: path(of: name), source: temporaryFile) {
                 case .moved:
                     if hiddenCopy != nil { try? FileManager.default.removeItem(at: temporaryFile) }
-                    return (name, name == plannedName ? [] : notes)
+                    return (name, Self.notesEarned(byMovingTo: name, plannedName: plannedName, request: request,
+                                                   fileExtension: fileExtension, replanNotes: notes))
                 case .nameTaken:
                     continue
                 case .otherDisk:
                     guard hiddenCopy == nil else { throw TrackDownloadError.writeFailed(detail: "the copy is on another disk") }
-                    hiddenCopy = try copyIntoFolder(temporaryFile, beside: name)
+                    hiddenCopy = try copyIntoFolder(temporaryFile)
                 }
             }
             throw TrackDownloadError.writeFailed(detail: "the name “\(plannedName)” kept being taken")
         } catch {
-            if let hiddenCopy { unlink(hiddenCopy.path) }
+            if let hiddenCopy { unlink(hiddenCopy) }
             throw error
         }
+    }
+
+    /// The notes the move adds to the decision's own. Only the name can be
+    /// new: a decision for the plain name had no "saved under another name"
+    /// note, so moving elsewhere earns one; a decision for a clash name
+    /// already carries it ("another song is already named Intro" still
+    /// holds), so nothing is repeated. The decision's other notes (an .m4a
+    /// next to it, 2.10) still apply as they were.
+    static func notesEarned(byMovingTo name: String, plannedName: String, request: TrackDownloadRequest,
+                            fileExtension: FileNaming.AudioExtension, replanNotes: [SaveNote]) -> [SaveNote] {
+        guard name != plannedName else { return [] }
+        let plain = FileNaming.fileName(title: request.title, extension: fileExtension)
+        guard FileNaming.comparisonKey(plannedName) == FileNaming.comparisonKey(plain) else { return [] }
+        return replanNotes.filter { if case .savedUnderAnotherName = $0 { true } else { false } }
+    }
+
+    // MARK: - Hidden copies from another disk
+
+    /// The hidden copy the move makes when the temporary file is on another
+    /// disk: ".robogears-copy-<32 hex digits>.part". Hidden, and never one of
+    /// the names a track looks for, so it can't count as a download. Short
+    /// whatever the title, so it always fits the 255-byte limit.
+    static let hiddenCopyPrefix = ".robogears-copy-"
+    static let hiddenCopySuffix = ".part"
+
+    static func hiddenCopyName() -> String {
+        hiddenCopyPrefix + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() + hiddenCopySuffix
+    }
+
+    static func isHiddenCopyName(_ name: String) -> Bool {
+        guard name.hasPrefix(hiddenCopyPrefix), name.hasSuffix(hiddenCopySuffix) else { return false }
+        let id = name.dropFirst(hiddenCopyPrefix.count).dropLast(hiddenCopySuffix.count)
+        return id.count == 32 && id.allSatisfy { $0.isASCII && $0.isHexDigit && !$0.isUppercase }
+    }
+
+    /// Deletes hidden copies a move left behind when the app stopped in the
+    /// middle of one (a crash or a power cut; every failure the app sees
+    /// cleans up at once). D4 2.2 deletes the app's own leftovers at the next
+    /// launch: call this then, or before a batch, never during one. Only
+    /// regular files with exactly the hidden-copy name are touched, so the
+    /// person's files and the Electron app's "….tmp.flac" files stay (2.2).
+    /// Returns how many were deleted.
+    @discardableResult
+    public func removeLeftoverCopies() -> Int {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return 0 }
+        var removed = 0
+        for name in names where Self.isHiddenCopyName(name) {
+            let url = folder.appendingPathComponent(name)
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            if unlink(url.path) == 0 { removed += 1 }
+        }
+        return removed
     }
 
     // MARK: - The queue's badge (2.16)
@@ -186,10 +253,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
         let url = folder.appendingPathComponent(fileName)
         let verdict = await ExistingFileCheck.check(url, as: lookup.ext, tidalSeconds: request.durationSeconds.map(Double.init))
         guard !verdict.isHealthy else { return false }
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch {
-            throw TrackDownloadError.writeFailed(detail: "Couldn't delete “\(fileName)”: \(error.localizedDescription)")
+        // The name exactly as listed: never a URL, which could spell it
+        // differently on a disk that tells composed and decomposed apart.
+        guard unlink(path(of: fileName)) == 0 else {
+            let code = errno
+            throw TrackDownloadError.writeFailed(detail: "Couldn't delete “\(fileName)”: \(String(cString: strerror(code)))")
         }
         return true
     }
@@ -293,8 +361,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
 
     /// Names count by their stem: "Intro.m4a" held by a different song also
     /// keeps a FLAC out of "Intro.flac", so one stem never names two songs.
-    /// A stem is free for this track when nothing holds the target name and
-    /// anything under the other extension is this same recording.
+    /// "Intro.flac" next to "Intro.m4a" reads as one song in two qualities,
+    /// which is exactly what 2.10 leaves behind and offers to tidy with Move
+    /// to Trash, so the person could bin a song they wanted. A stem is free
+    /// for this track when nothing holds the target name and anything under
+    /// the other extension is this same recording.
     private func stemState(_ stem: String, _ target: FileNaming.AudioExtension, _ request: TrackDownloadRequest,
                            _ context: inout Context) async -> StemState {
         if let holder = context.listing.holders(of: "\(stem).\(target.rawValue)").first {
@@ -311,11 +382,29 @@ public struct DownloadFolder: DownloadFolderPlanning {
 
     // MARK: - Identity
 
+    /// What an existing file under one of this track's names is. Two cases
+    /// go beyond comparing tags:
+    /// - Something that isn't a regular file (a folder named "Intro.flac")
+    ///   holds the name but is never a copy: it reads as unreadable.
+    /// - A file whose tags can't be read and that fails the quick check on
+    ///   its own (an empty or cut-off file a crash left, 2.2) is taken as a
+    ///   broken copy of this song, so its row says "looks damaged" and offers
+    ///   Replace (2.3) instead of Save As…, which would leave the broken file
+    ///   blocking the name for good. Replace only moves it to the Trash.
     private func identity(of name: String, as ext: FileNaming.AudioExtension, for request: TrackDownloadRequest,
                           context: inout Context) async -> FolderIdentity.Verdict {
         if let known = context.identities[name] { return known }
-        let tags = await readTags(folder.appendingPathComponent(name), as: ext)
-        let verdict = tags.map { FolderIdentity.compare($0, with: request) } ?? .unreadable
+        let url = folder.appendingPathComponent(name)
+        var verdict = FolderIdentity.Verdict.unreadable
+        if (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+            if let tags = await readTags(url, as: ext) {
+                verdict = FolderIdentity.compare(tags, with: request)
+            }
+            if verdict == .unreadable,
+               !(await ExistingFileCheck.check(url, as: ext, tidalSeconds: nil)).isHealthy {
+                verdict = .sameRecording
+            }
+        }
         context.identities[name] = verdict
         return verdict
     }
@@ -366,10 +455,11 @@ public struct DownloadFolder: DownloadFolderPlanning {
     /// `renamex_np(…, RENAME_EXCL)`. A disk that can't do an exclusive rename
     /// gets the name reserved with an exclusive create and then a plain
     /// rename over that empty placeholder; only a crash in that instant
-    /// could leave the empty file behind, which the quick check (2.3) would
-    /// then call damaged.
-    private func attemptMove(_ source: URL, to destination: URL) throws -> MoveResult {
-        let code = fileOperations.renameExclusive(source, destination)
+    /// could leave the empty file behind, which the next decision treats as a
+    /// damaged copy (Replace, 2.3). `source` is the temporary file, for the
+    /// size a full disk reports.
+    private func attemptMove(_ from: String, to destination: String, source: URL) throws -> MoveResult {
+        let code = fileOperations.renameExclusive(from, destination)
         switch code {
         case 0:
             return .moved
@@ -378,15 +468,16 @@ public struct DownloadFolder: DownloadFolderPlanning {
         case EXDEV:
             return .otherDisk
         case ENOTSUP, EOPNOTSUPP:
-            let placeholder = open(destination.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            let placeholder = open(destination, O_WRONLY | O_CREAT | O_EXCL, 0o644)
             guard placeholder >= 0 else {
-                if errno == EEXIST { return .nameTaken }
-                throw failure(errno, source: source)
+                let openError = errno
+                if openError == EEXIST { return .nameTaken }
+                throw failure(openError, source: source)
             }
             close(placeholder)
-            guard rename(source.path, destination.path) == 0 else {
+            guard rename(from, destination) == 0 else {
                 let renameError = errno
-                unlink(destination.path)
+                unlink(destination)
                 if renameError == EXDEV { return .otherDisk }
                 throw failure(renameError, source: source)
             }
@@ -396,24 +487,24 @@ public struct DownloadFolder: DownloadFolderPlanning {
         }
     }
 
-    /// A hidden copy of a file from another disk, made beside its final name
-    /// with an exclusive create, so the final step is still a rename within
-    /// the folder. A hidden name never counts as a download. Removes its own
-    /// partial copy when the copy fails.
-    private func copyIntoFolder(_ source: URL, beside name: String) throws -> URL {
+    /// A hidden copy of a file from another disk, made in the folder with an
+    /// exclusive create, so the final step is still a rename within the
+    /// folder. A hidden name never counts as a download. Removes its own
+    /// partial copy when the copy fails. Returns the copy's path.
+    private func copyIntoFolder(_ source: URL) throws -> String {
         for _ in 0..<5 {
-            let suffix = UUID().uuidString.prefix(6)
-            let hidden = folder.appendingPathComponent(".\(name).\(suffix)")
-            let target = open(hidden.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            let hidden = path(of: Self.hiddenCopyName())
+            let target = open(hidden, O_WRONLY | O_CREAT | O_EXCL, 0o644)
             if target < 0 {
-                if errno == EEXIST { continue }
-                throw failure(errno, source: source)
+                let openError = errno
+                if openError == EEXIST { continue }
+                throw failure(openError, source: source)
             }
             let input = open(source.path, O_RDONLY)
             guard input >= 0 else {
                 let openError = errno
                 close(target)
-                unlink(hidden.path)
+                unlink(hidden)
                 throw failure(openError, source: source)
             }
             var copied = fcopyfile(input, target, nil, copyfile_flags_t(COPYFILE_DATA)) == 0
@@ -423,9 +514,12 @@ public struct DownloadFolder: DownloadFolderPlanning {
                 copyError = errno
             }
             close(input)
-            close(target)
+            if close(target) != 0, copied {
+                copied = false
+                copyError = errno
+            }
             guard copied else {
-                unlink(hidden.path)
+                unlink(hidden)
                 throw failure(copyError, source: source)
             }
             return hidden
@@ -447,7 +541,7 @@ public struct DownloadFolder: DownloadFolderPlanning {
         case ENOENT, ENOTDIR:
             var isDirectory: ObjCBool = false
             if !FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
-                return .folderUnavailable(message: Self.unavailableMessage(folder))
+                return unavailable()
             }
             return .writeFailed(detail: "the temporary file is missing")
         default:
@@ -461,8 +555,24 @@ public struct DownloadFolder: DownloadFolderPlanning {
         do {
             return FolderListing(names: try FileManager.default.contentsOfDirectory(atPath: folder.path))
         } catch {
-            throw TrackDownloadError.folderUnavailable(message: Self.unavailableMessage(folder))
+            throw unavailable()
         }
+    }
+
+    /// Why the folder can't be used, in 2.19's words. The batch checks the
+    /// remembered folder before each track (with its bookmark and disk name);
+    /// this covers the folder vanishing in between. It never creates the
+    /// folder (2.19).
+    private func unavailable() -> TrackDownloadError {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        if fm.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return .folderUnavailable(message: Self.cantSaveMessage(folder))
+        }
+        if let volume = Folders.volumeRoot(of: folder.path), !fm.fileExists(atPath: volume) {
+            return .folderUnavailable(message: Self.unavailableMessage(folder))
+        }
+        return .folderUnavailable(message: Self.missingMessage(folder))
     }
 
     /// A batch keeps the folder it started with (2.17), so a request for
@@ -489,6 +599,10 @@ public struct DownloadFolder: DownloadFolderPlanning {
         "The download folder “\(folder.lastPathComponent)” isn't available. Connect its drive or choose another folder."
     }
 
+    static func missingMessage(_ folder: URL) -> String {
+        "The download folder “\(folder.lastPathComponent)” no longer exists. Create it again or choose another folder."
+    }
+
     static func cantSaveMessage(_ folder: URL) -> String {
         "robogears Downloader can't save into the download folder “\(folder.lastPathComponent)”. Check its permissions or choose another folder."
     }
@@ -497,23 +611,20 @@ public struct DownloadFolder: DownloadFolderPlanning {
 // MARK: - File operations
 
 /// The two operations tests replace: the Trash (so no test touches the real
-/// one) and the exclusive rename (to act out another disk or a disk without
-/// exclusive renames).
+/// one) and the exclusive rename (to act out another disk, a disk without
+/// exclusive renames, or a name taken at the last moment).
 struct FileOperations: Sendable {
     var trash: @Sendable (URL) throws -> Void
-    /// Returns 0, or the errno the rename failed with.
-    var renameExclusive: @Sendable (URL, URL) -> Int32
+    /// Renames the file at the first path to the second, never over an
+    /// existing file. Returns 0, or the errno the rename failed with. Paths
+    /// are plain text, so the composed name FileNaming made is the one
+    /// stored (a URL would decompose it).
+    var renameExclusive: @Sendable (_ from: String, _ to: String) -> Int32
 
     static let system = FileOperations(
         trash: { url in try FileManager.default.trashItem(at: url, resultingItemURL: nil) },
-        renameExclusive: { source, destination in
-            // The path's own UTF-8, so the composed name FileNaming made is
-            // the one stored.
-            source.path.withCString { from in
-                destination.path.withCString { to in
-                    renamex_np(from, to, UInt32(RENAME_EXCL)) == 0 ? 0 : errno
-                }
-            }
+        renameExclusive: { from, to in
+            renamex_np(from, to, UInt32(RENAME_EXCL)) == 0 ? 0 : errno
         }
     )
 }
